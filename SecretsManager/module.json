@@ -1,0 +1,12 @@
+{
+    "id": "{E5AA629B-75BD-45C0-9BCB-845C102B0411}",
+    "name": "SecretsManager",
+    "type": 3,
+    "vendor": "SymconSecrets",
+    "aliases": ["PasswordSafe", "CredentialStore"],
+    "url": "",
+    "parentRequirements": [],
+    "childRequirements": [],
+    "implemented": [],
+    "prefix": "SEC"
+}
