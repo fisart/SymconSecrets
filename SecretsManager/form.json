@@ -5,6 +5,11 @@
             "caption": "Security Configuration"
         },
         {
+            "type": "Label",
+            "name": "HookInfo",
+            "caption": "WebHook URL: (Save settings to generate)"
+        },
+        {
             "type": "Select",
             "name": "OperationMode",
             "caption": "System Role",
@@ -32,7 +37,7 @@
             "add": true,
             "delete": true,
             "columns": [
-                { "caption": "URL (e.g., https://192.168.1.5:3777/hook/secrets)", "name": "Url", "width": "auto", "edit": { "type": "ValidationTextBox" } }
+                { "caption": "URL (e.g., https://192.168.1.5:3777/hook/secrets_12345)", "name": "Url", "width": "auto", "edit": { "type": "ValidationTextBox" } }
             ]
         },
         {
