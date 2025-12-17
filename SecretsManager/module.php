@@ -23,16 +23,14 @@ class SecretsManager extends IPSModuleStrict {
         // Internal Storage (ReadOnly by default in Strict)
         $this->RegisterVariableString("Vault", "Encrypted Vault");
         
-        // WebHook: NOW UNIQUE per Instance to prevent conflicts
-        // Note: The hook is registered dynamically in ApplyChanges or we use a fixed pattern.
-        // In Create(), InstanceID is available. We register "secrets_<ID>"
-        $this->RegisterHook("secrets_" . $this->InstanceID);
+        // REMOVED RegisterHook from here to prevent duplicate registration warning
     }
 
     public function ApplyChanges(): void {
         parent::ApplyChanges();
         
-        // Ensure Hook is registered correctly if InstanceID changed (rare but safe)
+        // Register WebHook (Only do this here)
+        // This links /hook/secrets_12345 to this instance
         $this->RegisterHook("secrets_" . $this->InstanceID);
 
         // Clear Cache
@@ -54,8 +52,9 @@ class SecretsManager extends IPSModuleStrict {
         // Show the WebHook URL to the user
         $hookUrl = "/hook/secrets_" . $this->InstanceID;
         $this->UpdateFormField("HookInfo", "caption", "This Instance WebHook: " . $hookUrl);
-        // Hide Hook info if Master (optional, but Slaves really need to see it)
-        $this->UpdateFormField("HookInfo", "visible", ($mode === 0));
+        // Show Hook info on Slave, Hide on Master (optional preference)
+        // Showing it on Master is also fine so you can see what ID it has.
+        $this->UpdateFormField("HookInfo", "visible", true);
 
         // Hide Input fields if Slave (0)
         $this->UpdateFormField("InputJson", "visible", ($mode === 1));
