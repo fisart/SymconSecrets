@@ -49,10 +49,10 @@
             "caption": "Master: Secret Management (Data entered here is encrypted and cleared upon saving)"
         },
         {
-            "type": "TextEditor",
+            "type": "ValidationTextBox",
             "name": "InputJson",
-            "caption": "Paste Secrets JSON Here",
-            "rows": 15
+            "caption": "Paste Secrets JSON Here (One line or minified)",
+            "value": ""
         },
         {
             "type": "Button",
