@@ -25,9 +25,19 @@
             "caption": "External Key File Path (e.g. /var/lib/symcon_keys/master.key)"
         },
         {
+            "type": "Label",
+            "caption": "Synchronization Token (Shared Secret)"
+        },
+        {
             "type": "PasswordTextBox",
             "name": "AuthToken",
-            "caption": "Sync Token (Shared Secret between all systems)"
+            "caption": "Sync Token"
+        },
+        { 
+            "type": "Button", 
+            "name": "BtnGenToken", 
+            "caption": "Generate Random Token", 
+            "onClick": "SEC_GenerateToken($id);" 
         },
         {
             "type": "List",

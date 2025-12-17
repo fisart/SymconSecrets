@@ -9,57 +9,51 @@ class SecretsManager extends IPSModuleStrict {
 
         // 0 = Slave, 1 = Master
         $this->RegisterPropertyInteger("OperationMode", 0);
-        
-        // Configuration
         $this->RegisterPropertyString("KeyFilePath", "");
         $this->RegisterPropertyString("AuthToken", "");
-        
-        // Input Buffer
         $this->RegisterPropertyString("InputJson", "");
-        
-        // Slave Configuration
         $this->RegisterPropertyString("SlaveURLs", "[]"); 
 
-        // Internal Storage (ReadOnly by default in Strict)
         $this->RegisterVariableString("Vault", "Encrypted Vault");
-        
-        // Note: RegisterHook is NOT called here.
     }
 
     public function ApplyChanges(): void {
         parent::ApplyChanges();
         
-        // REGISTER WEBHOOK
-        // We use '@' to suppress the "Already Registered" warning.
-        // This is necessary because IP-Symcon does not provide a function to check 
-        // if a Module-Hook already exists before registering.
+        // Suppress warning if hook already exists
         @$this->RegisterHook("secrets_" . $this->InstanceID);
 
-        // Clear Cache
         $this->SetBuffer("DecryptedCache", ""); 
-
-        // UI
         $this->UpdateUI();
         
-        // Validate Key File
         $path = $this->ReadPropertyString("KeyFilePath");
         if ($path !== "" && !file_exists($path) && $this->ReadPropertyInteger("OperationMode") === 1) {
              $this->LogMessage("Master Key missing at: $path", KL_WARNING);
         }
     }
 
+    // -------------------------------------------------------------------------
+    // NEW: TOKEN GENERATOR
+    // -------------------------------------------------------------------------
+    public function GenerateToken(): void {
+        // Generate 32 bytes (64 Hex Characters)
+        $token = bin2hex(random_bytes(32));
+        
+        // 1. Fill the field in the UI
+        $this->UpdateFormField("AuthToken", "value", $token);
+        
+        // 2. Show it to the user so they can copy it for the Slaves
+        echo "Token Generated!\n\n$token\n\n(It has been inserted into the field. Copy this to use on Slaves!)";
+    }
+
     public function UpdateUI(): void {
         $mode = $this->ReadPropertyInteger("OperationMode");
         
-        // Show the WebHook URL to the user
         $hookUrl = "/hook/secrets_" . $this->InstanceID;
         $this->UpdateFormField("HookInfo", "caption", "This Instance WebHook: " . $hookUrl);
         $this->UpdateFormField("HookInfo", "visible", true);
 
-        // Hide Input fields if Slave (0)
         $this->UpdateFormField("InputJson", "visible", ($mode === 1));
-        
-        // Hide Buttons
         $this->UpdateFormField("BtnEncrypt", "visible", ($mode === 1));
         $this->UpdateFormField("SlaveURLs", "visible", ($mode === 1));
         $this->UpdateFormField("BtnSync", "visible", ($mode === 1));
@@ -71,7 +65,6 @@ class SecretsManager extends IPSModuleStrict {
         if ($cache === null) {
             $cache = $this->_decryptVault();
             if ($cache === false) {
-                // Only log error if we actually have data but failed to read it
                 if($this->GetValue("Vault") !== "") {
                     $this->LogMessage("Decryption failed. Check Key File.", KL_ERROR);
                 }
