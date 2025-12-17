@@ -19,11 +19,17 @@
             ],
             "onChange": "SEC_UpdateUI($id);"
         },
+        
         {
-            "type": "ValidationTextBox",
-            "name": "KeyFilePath",
-            "caption": "External Key File Path (e.g. /var/lib/symcon_keys/master.key)"
+            "type": "Label",
+            "caption": "Key Storage (Filename 'master.key' is added automatically)"
         },
+        { 
+            "type": "ValidationTextBox", 
+            "name": "KeyFolderPath", 
+            "caption": "Directory Path (e.g. /var/lib/symcon_keys/)" 
+        },
+        
         {
             "type": "Label",
             "caption": "Synchronization Token (Shared Secret)"
@@ -39,6 +45,7 @@
             "caption": "Generate Random Token", 
             "onClick": "SEC_GenerateToken($id);" 
         },
+
         {
             "type": "List",
             "name": "SlaveURLs",

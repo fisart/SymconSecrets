@@ -4,12 +4,18 @@ declare(strict_types=1);
 
 class SecretsManager extends IPSModuleStrict {
 
+    // HARDCODED FILENAME for security consistency
+    private const KEY_FILENAME = 'master.key';
+
     public function Create(): void {
         parent::Create();
 
         // 0 = Slave, 1 = Master
         $this->RegisterPropertyInteger("OperationMode", 0);
-        $this->RegisterPropertyString("KeyFilePath", "");
+        
+        // Configuration: Now stores the Folder, not the full file path
+        $this->RegisterPropertyString("KeyFolderPath", ""); 
+        
         $this->RegisterPropertyString("AuthToken", "");
         $this->RegisterPropertyString("InputJson", "");
         $this->RegisterPropertyString("SlaveURLs", "[]"); 
@@ -20,29 +26,44 @@ class SecretsManager extends IPSModuleStrict {
     public function ApplyChanges(): void {
         parent::ApplyChanges();
         
-        // Suppress warning if hook already exists
+        // Register WebHook (Suppress warning if exists)
         @$this->RegisterHook("secrets_" . $this->InstanceID);
 
+        // Clear RAM Cache
         $this->SetBuffer("DecryptedCache", ""); 
+
+        // Update UI visibility
         $this->UpdateUI();
         
-        $path = $this->ReadPropertyString("KeyFilePath");
-        if ($path !== "" && !file_exists($path) && $this->ReadPropertyInteger("OperationMode") === 1) {
-             $this->LogMessage("Master Key missing at: $path", KL_WARNING);
+        // VALIDATION LOGIC
+        $folder = $this->ReadPropertyString("KeyFolderPath");
+        
+        if ($folder !== "") {
+            // 1. Check if Directory Exists
+            if (!is_dir($folder)) {
+                $this->LogMessage("Security Alert: The Key Directory does not exist: $folder", KL_ERROR);
+                $this->UpdateFormField("StatusLabel", "caption", "Error: Directory not found!");
+            } 
+            // 2. Check Permissions (If Master, must be writable)
+            elseif ($this->ReadPropertyInteger("OperationMode") === 1 && !is_writable($folder)) {
+                $this->LogMessage("Security Alert: The Key Directory is not writable: $folder", KL_ERROR);
+                $this->UpdateFormField("StatusLabel", "caption", "Error: Directory not writable!");
+            }
+            // 3. Check if Key File exists inside
+            else {
+                $fullPath = $this->_getFullPath();
+                if (file_exists($fullPath)) {
+                    $this->UpdateFormField("StatusLabel", "caption", "OK: Key found at " . self::KEY_FILENAME);
+                } else {
+                    $this->UpdateFormField("StatusLabel", "caption", "Setup: Key will be created on save.");
+                }
+            }
         }
     }
 
-    // -------------------------------------------------------------------------
-    // NEW: TOKEN GENERATOR
-    // -------------------------------------------------------------------------
     public function GenerateToken(): void {
-        // Generate 32 bytes (64 Hex Characters)
         $token = bin2hex(random_bytes(32));
-        
-        // 1. Fill the field in the UI
         $this->UpdateFormField("AuthToken", "value", $token);
-        
-        // 2. Show it to the user so they can copy it for the Slaves
         echo "Token Generated!\n\n$token\n\n(It has been inserted into the field. Copy this to use on Slaves!)";
     }
 
@@ -65,6 +86,7 @@ class SecretsManager extends IPSModuleStrict {
         if ($cache === null) {
             $cache = $this->_decryptVault();
             if ($cache === false) {
+                // Only log if vault has data
                 if($this->GetValue("Vault") !== "") {
                     $this->LogMessage("Decryption failed. Check Key File.", KL_ERROR);
                 }
@@ -171,6 +193,17 @@ class SecretsManager extends IPSModuleStrict {
         echo "OK";
     }
 
+    // --- INTERNAL HELPERS ---
+
+    // Construct the full path safely
+    private function _getFullPath(): string {
+        $folder = $this->ReadPropertyString("KeyFolderPath");
+        if ($folder === "") return "";
+        
+        // Remove trailing slashes and append standard filename
+        return rtrim($folder, '/\\') . DIRECTORY_SEPARATOR . self::KEY_FILENAME;
+    }
+
     private function _encryptAndSave(array $dataArray): bool {
         $keyHex = $this->_loadOrGenerateKey();
         if (!$keyHex) return false;
@@ -221,7 +254,7 @@ class SecretsManager extends IPSModuleStrict {
     }
 
     private function _loadOrGenerateKey() {
-        $path = $this->ReadPropertyString("KeyFilePath");
+        $path = $this->_getFullPath();
         if ($path === "") return false;
 
         if (file_exists($path)) {
@@ -241,7 +274,7 @@ class SecretsManager extends IPSModuleStrict {
     }
 
     private function _writeKey(string $hexKey): void {
-        $path = $this->ReadPropertyString("KeyFilePath");
+        $path = $this->_getFullPath();
         if ($path !== "") {
             file_put_contents($path, $hexKey);
         }
