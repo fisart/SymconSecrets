@@ -25,6 +25,17 @@
             "caption": "Sync Token (Shared Secret between all systems)"
         },
         {
+            "type": "List",
+            "name": "SlaveURLs",
+            "caption": "Slave WebHooks (Master Only)",
+            "rowCount": 5,
+            "add": true,
+            "delete": true,
+            "columns": [
+                { "caption": "URL (e.g., https://192.168.1.5:3777/hook/secrets)", "name": "Url", "width": "auto", "edit": { "type": "ValidationTextBox" } }
+            ]
+        },
+        {
             "type": "Label",
             "caption": "________________________________________________________________________________"
         },
@@ -40,6 +51,7 @@
         },
         {
             "type": "Button",
+            "name": "BtnEncrypt",
             "caption": "Encrypt & Save Local",
             "onClick": "SEC_EncryptAndSave($id);"
         }
@@ -53,6 +65,12 @@
             "type": "Label",
             "name": "StatusLabel",
             "caption": "Idle"
+        },
+        {
+            "type": "Button",
+            "name": "BtnSync",
+            "caption": "Manually Sync to Slaves",
+            "onClick": "SEC_SyncSlaves($id);"
         }
     ]
 }

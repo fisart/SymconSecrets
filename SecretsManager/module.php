@@ -14,74 +14,64 @@ class SecretsManager extends IPSModuleStrict {
         $this->RegisterPropertyString("KeyFilePath", "");
         $this->RegisterPropertyString("AuthToken", "");
         
-        // This property acts as a temporary input buffer for the JSON
+        // Input Buffer
         $this->RegisterPropertyString("InputJson", "");
         
         // Slave Configuration
         $this->RegisterPropertyString("SlaveURLs", "[]"); 
 
-        // Internal Storage for the Encrypted Vault
-        // In Strict mode, variables are ReadOnly by default (Perfect for us)
+        // Internal Storage (ReadOnly by default in Strict)
         $this->RegisterVariableString("Vault", "Encrypted Vault");
         
-        // Register WebHook for receiving updates
+        // WebHook
         $this->RegisterHook("secrets");
     }
 
     public function ApplyChanges(): void {
         parent::ApplyChanges();
         
-        // Clear Cache when config changes
+        // Clear Cache
         $this->SetBuffer("DecryptedCache", ""); 
 
-        // Update UI Visibility
+        // UI
         $this->UpdateUI();
         
-        // Validate Key File (Just a check, no logic changes)
+        // Validate Key File
         $path = $this->ReadPropertyString("KeyFilePath");
         if ($path !== "" && !file_exists($path) && $this->ReadPropertyInteger("OperationMode") === 1) {
-             // If Master and key missing, we log a warning but don't auto-create until user saves
              $this->LogMessage("Master Key missing at: $path", KL_WARNING);
         }
     }
 
-    // Helper to control form visibility
     public function UpdateUI(): void {
         $mode = $this->ReadPropertyInteger("OperationMode");
+        
         // Hide Input fields if Slave (0)
         $this->UpdateFormField("InputJson", "visible", ($mode === 1));
-        $this->UpdateFormAction("Encrypt & Save Local", "visible", ($mode === 1));
+        
+        // Hide Buttons (Using the new names from form.json)
+        $this->UpdateFormField("BtnEncrypt", "visible", ($mode === 1));
         $this->UpdateFormField("SlaveURLs", "visible", ($mode === 1));
-        $this->UpdateFormAction("Manually Sync to Slaves", "visible", ($mode === 1));
+        $this->UpdateFormField("BtnSync", "visible", ($mode === 1));
     }
 
-    // -------------------------------------------------------------------------
-    // PUBLIC FUNCTIONS
-    // -------------------------------------------------------------------------
-
-    /**
-     * Gets a decrypted secret by its identifier.
-     * Usage: SEC_GetSecret(12345, 'Spotify');
-     */
     public function GetSecret(string $ident): string {
         $cache = $this->_getCache();
 
         if ($cache === null) {
             $cache = $this->_decryptVault();
             if ($cache === false) {
-                // Return empty string on failure to avoid fatal PHP errors in strict mode, 
-                // but log error.
                 $this->LogMessage("Decryption failed. Check Key File.", KL_ERROR);
                 return "";
             }
             $this->_setCache($cache);
         }
 
-        // Handle complex objects vs simple strings
         if (isset($cache[$ident])) {
             $val = $cache[$ident];
             if (is_array($val) || is_object($val)) {
-                return json_encode($val);
+                $json = json_encode($val);
+                return $json === false ? "" : $json;
             }
             return (string)$val;
         }
@@ -90,9 +80,6 @@ class SecretsManager extends IPSModuleStrict {
         return "";
     }
 
-    /**
-     * Called by the button "Encrypt & Save Local"
-     */
     public function EncryptAndSave(): void {
         if ($this->ReadPropertyInteger("OperationMode") !== 1) {
             echo "Only Master can encrypt data.";
@@ -111,25 +98,18 @@ class SecretsManager extends IPSModuleStrict {
             return;
         }
 
-        // Perform Encryption
         $result = $this->_encryptAndSave($decoded);
 
         if ($result) {
-            // Security: Clear the input field
             IPS_SetProperty($this->InstanceID, "InputJson", "");
             IPS_ApplyChanges($this->InstanceID);
             echo "Success: Data encrypted and saved.";
-            
-            // Auto-Sync
             $this->SyncSlaves();
         } else {
-            echo "Error: Encryption failed (Check Key File permissions).";
+            echo "Error: Encryption failed.";
         }
     }
 
-    /**
-     * Called by button "Manually Sync to Slaves"
-     */
     public function SyncSlaves(): void {
         if ($this->ReadPropertyInteger("OperationMode") !== 1) return;
 
@@ -163,9 +143,6 @@ class SecretsManager extends IPSModuleStrict {
         $this->LogMessage("Synced to $count slaves.", KL_MESSAGE);
     }
 
-    // -------------------------------------------------------------------------
-    // WEBHOOK (Receiver)
-    // -------------------------------------------------------------------------
     protected function ProcessHookData(): void {
         $input = file_get_contents("php://input");
         $data = json_decode($input, true);
@@ -176,29 +153,19 @@ class SecretsManager extends IPSModuleStrict {
             return;
         }
 
-        // 1. Write Key
         if (isset($data['key'])) {
             $this->_writeKey($data['key']);
         }
 
-        // 2. Write Vault (Using Strict SetValue)
         if (isset($data['vault'])) {
             $this->SetValue("Vault", $data['vault']);
-            // Invalidate Cache
             $this->SetBuffer("DecryptedCache", ""); 
         }
 
         echo "OK";
     }
 
-    // -------------------------------------------------------------------------
-    // INTERNAL HELPERS
-    // -------------------------------------------------------------------------
-
     private function _encryptAndSave(array $dataArray): bool {
-        // Generate new key or load existing? 
-        // Strategy: Use existing key if possible, only generate if missing.
-        // Or: Rotate key on every save? Let's keep it simple: Load or Generate.
         $keyHex = $this->_loadOrGenerateKey();
         if (!$keyHex) return false;
 
@@ -207,6 +174,7 @@ class SecretsManager extends IPSModuleStrict {
         
         $cipher = "aes-128-gcm";
         $iv = random_bytes(openssl_cipher_iv_length($cipher));
+        $tag = ""; 
         
         $cipherText = openssl_encrypt($plain, $cipher, $newKeyBin, 0, $iv, $tag);
 
@@ -219,9 +187,7 @@ class SecretsManager extends IPSModuleStrict {
             'data'=> $cipherText
         ]);
 
-        // Strict Mode SetValue
         $this->SetValue("Vault", $vaultData);
-        // Update Cache
         $this->_setCache($dataArray);
         
         return true;
@@ -229,7 +195,7 @@ class SecretsManager extends IPSModuleStrict {
 
     private function _decryptVault() {
         $vaultJson = $this->GetValue("Vault");
-        if (!$vaultJson) return [];
+        if (!$vaultJson) return false;
 
         $meta = json_decode($vaultJson, true);
         $keyHex = $this->_readKey();
@@ -256,7 +222,6 @@ class SecretsManager extends IPSModuleStrict {
             return trim(file_get_contents($path));
         }
 
-        // Create if Master
         if ($this->ReadPropertyInteger("OperationMode") === 1) {
             $newKey = bin2hex(random_bytes(16)); 
             if (file_put_contents($path, $newKey) === false) return false;
