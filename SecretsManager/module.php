@@ -13,7 +13,7 @@ class SecretsManager extends IPSModuleStrict {
         // 0 = Slave, 1 = Master
         $this->RegisterPropertyInteger("OperationMode", 0);
         
-        // Configuration: Now stores the Folder, not the full file path
+        // Configuration: Stores the Folder Path
         $this->RegisterPropertyString("KeyFolderPath", ""); 
         
         $this->RegisterPropertyString("AuthToken", "");
@@ -35,28 +35,28 @@ class SecretsManager extends IPSModuleStrict {
         // Update UI visibility
         $this->UpdateUI();
         
-        // VALIDATION LOGIC
+        // --- VALIDATION LOGIC (Now with Popups) ---
         $folder = $this->ReadPropertyString("KeyFolderPath");
+        $mode = $this->ReadPropertyInteger("OperationMode");
         
         if ($folder !== "") {
             // 1. Check if Directory Exists
             if (!is_dir($folder)) {
-                $this->LogMessage("Security Alert: The Key Directory does not exist: $folder", KL_ERROR);
-                $this->UpdateFormField("StatusLabel", "caption", "Error: Directory not found!");
+                // THROW EXCEPTION triggers the RED POPUP in the Console
+                throw new Exception("Configuration Error: The Directory does not exist: " . $folder);
             } 
+            
             // 2. Check Permissions (If Master, must be writable)
-            elseif ($this->ReadPropertyInteger("OperationMode") === 1 && !is_writable($folder)) {
-                $this->LogMessage("Security Alert: The Key Directory is not writable: $folder", KL_ERROR);
-                $this->UpdateFormField("StatusLabel", "caption", "Error: Directory not writable!");
+            if ($mode === 1 && !is_writable($folder)) {
+                throw new Exception("Configuration Error: The Directory is not writable: " . $folder);
             }
-            // 3. Check if Key File exists inside
-            else {
-                $fullPath = $this->_getFullPath();
-                if (file_exists($fullPath)) {
-                    $this->UpdateFormField("StatusLabel", "caption", "OK: Key found at " . self::KEY_FILENAME);
-                } else {
-                    $this->UpdateFormField("StatusLabel", "caption", "Setup: Key will be created on save.");
-                }
+
+            // 3. Status Update (Only if no error occurred)
+            $fullPath = $this->_getFullPath();
+            if (file_exists($fullPath)) {
+                $this->UpdateFormField("StatusLabel", "caption", "OK: Key found at " . self::KEY_FILENAME);
+            } else {
+                $this->UpdateFormField("StatusLabel", "caption", "Setup: Key will be created on save.");
             }
         }
     }
@@ -64,6 +64,7 @@ class SecretsManager extends IPSModuleStrict {
     public function GenerateToken(): void {
         $token = bin2hex(random_bytes(32));
         $this->UpdateFormField("AuthToken", "value", $token);
+        // ECHO creates a POPUP for Button Clicks
         echo "Token Generated!\n\n$token\n\n(It has been inserted into the field. Copy this to use on Slaves!)";
     }
 
@@ -86,7 +87,6 @@ class SecretsManager extends IPSModuleStrict {
         if ($cache === null) {
             $cache = $this->_decryptVault();
             if ($cache === false) {
-                // Only log if vault has data
                 if($this->GetValue("Vault") !== "") {
                     $this->LogMessage("Decryption failed. Check Key File.", KL_ERROR);
                 }
@@ -111,6 +111,17 @@ class SecretsManager extends IPSModuleStrict {
     public function EncryptAndSave(): void {
         if ($this->ReadPropertyInteger("OperationMode") !== 1) {
             echo "Only Master can encrypt data.";
+            return;
+        }
+
+        // PRE-CHECK: Validate Folder before trying anything
+        $folder = $this->ReadPropertyString("KeyFolderPath");
+        if (!is_dir($folder)) {
+            echo "Error: The Key Directory does not exist!\n($folder)";
+            return;
+        }
+        if (!is_writable($folder)) {
+            echo "Error: The Key Directory is not writable!\n($folder)";
             return;
         }
 
