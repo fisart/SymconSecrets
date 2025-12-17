@@ -1,12 +1,12 @@
 {
-  "id": "{34992594-5564-4484-9121-872886361730}",
-  "author": "Artur Fischer",
-  "name": "SymconSecrets",
-  "url": "https://github.com/YOUR_GITHUB_USER/SymconSecrets",
-  "version": "1.0",
-  "build": 0,
-  "date": 0,
-  "compatibility": {
-    "version": "8.1"
-  }
+    "id": "{42A66C02-B833-46F6-9630-B1F758066792}",
+    "author": "Artur Fischer",
+    "name": "SymconSecrets",
+    "url": "https://github.com/fisart/SymconSecrets",
+    "version": "1.0",
+    "build": 0,
+    "date": 0,
+    "compatibility": {
+        "version": "8.1"
+    }
 }

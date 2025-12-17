@@ -1,10 +1,13 @@
 {
-    "id": "{E5AA629B-75BD-45C0-9BCB-845C102B0411}",
+    "id": "{7C5A3841-3F7B-4D2A-9E1C-5B6D8F9A0E12}",
     "name": "SecretsManager",
     "type": 3,
     "vendor": "SymconSecrets",
-    "aliases": ["PasswordSafe", "CredentialStore"],
-    "url": "",
+    "aliases": [
+        "CredentialStore",
+        "PasswordSafe"
+    ],
+    "url": "https://github.com/fisart/SymconSecrets",
     "parentRequirements": [],
     "childRequirements": [],
     "implemented": [],
