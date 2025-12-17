@@ -121,6 +121,31 @@ class SecretsManager extends IPSModuleStrict {
         $this->UpdateFormField("BtnSync", "visible", ($mode === 1));
     }
 
+    // -------------------------------------------------------------------------
+    // PUBLIC FUNCTIONS
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns a JSON encoded array of all available top-level keys.
+     * Use this to populate Select/Dropdown fields in other modules.
+     * Example return: '["Spotify", "MQTT", "Camera1"]'
+     */
+    public function GetKeys(): string {
+        // Stop if instance is broken
+        if ($this->GetStatus() !== 102) return json_encode([]);
+
+        $cache = $this->_getCache();
+
+        if ($cache === null) {
+            $cache = $this->_decryptVault();
+            if ($cache === false) return json_encode([]);
+            $this->_setCache($cache);
+        }
+
+        // Return just the keys
+        return json_encode(array_keys($cache));
+    }
+
     public function GetSecret(string $ident): string {
         // Stop if instance is broken
         if ($this->GetStatus() !== 102) return "";
