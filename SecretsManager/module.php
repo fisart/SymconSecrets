@@ -35,29 +35,42 @@ class SecretsManager extends IPSModuleStrict {
         // Update UI visibility
         $this->UpdateUI();
         
-        // --- VALIDATION LOGIC (Now with Popups) ---
+        // --- VALIDATION LOGIC (Graceful Status Handling) ---
         $folder = $this->ReadPropertyString("KeyFolderPath");
         $mode = $this->ReadPropertyInteger("OperationMode");
         
-        if ($folder !== "") {
-            // 1. Check if Directory Exists
-            if (!is_dir($folder)) {
-                // THROW EXCEPTION triggers the RED POPUP in the Console
-                throw new Exception("Configuration Error: The Directory does not exist: " . $folder);
-            } 
-            
-            // 2. Check Permissions (If Master, must be writable)
-            if ($mode === 1 && !is_writable($folder)) {
-                throw new Exception("Configuration Error: The Directory is not writable: " . $folder);
-            }
+        // 1. If path is empty, set instance to Inactive (Grey)
+        if ($folder === "") {
+            $this->SetStatus(104); // IS_INACTIVE
+            return;
+        }
 
-            // 3. Status Update (Only if no error occurred)
-            $fullPath = $this->_getFullPath();
-            if (file_exists($fullPath)) {
-                $this->UpdateFormField("StatusLabel", "caption", "OK: Key found at " . self::KEY_FILENAME);
-            } else {
-                $this->UpdateFormField("StatusLabel", "caption", "Setup: Key will be created on save.");
-            }
+        // 2. Check if Directory Exists
+        if (!is_dir($folder)) {
+            // Set Status to ERROR (Red)
+            $this->SetStatus(202); // IS_EBASE (General Error)
+            $this->LogMessage("Configuration Error: The Directory does not exist: $folder", KL_ERROR);
+            $this->UpdateFormField("StatusLabel", "caption", "Error: Directory not found!");
+            return; // Stop here, do not use the path
+        } 
+        
+        // 3. Check Permissions (If Master, must be writable)
+        if ($mode === 1 && !is_writable($folder)) {
+            $this->SetStatus(202); // IS_EBASE
+            $this->LogMessage("Configuration Error: The Directory is not writable: $folder", KL_ERROR);
+            $this->UpdateFormField("StatusLabel", "caption", "Error: Directory not writable!");
+            return; // Stop here
+        }
+
+        // 4. If we got here, everything is OK -> Set Active (Green)
+        $this->SetStatus(102); // IS_ACTIVE
+        
+        // Check if Key File exists inside
+        $fullPath = $this->_getFullPath();
+        if (file_exists($fullPath)) {
+            $this->UpdateFormField("StatusLabel", "caption", "OK: Key found at " . self::KEY_FILENAME);
+        } else {
+            $this->UpdateFormField("StatusLabel", "caption", "Setup: Key will be created on save.");
         }
     }
 
@@ -82,6 +95,9 @@ class SecretsManager extends IPSModuleStrict {
     }
 
     public function GetSecret(string $ident): string {
+        // If Instance is in error state, return nothing
+        if ($this->GetStatus() !== 102) return "";
+
         $cache = $this->_getCache();
 
         if ($cache === null) {
@@ -206,12 +222,9 @@ class SecretsManager extends IPSModuleStrict {
 
     // --- INTERNAL HELPERS ---
 
-    // Construct the full path safely
     private function _getFullPath(): string {
         $folder = $this->ReadPropertyString("KeyFolderPath");
         if ($folder === "") return "";
-        
-        // Remove trailing slashes and append standard filename
         return rtrim($folder, '/\\') . DIRECTORY_SEPARATOR . self::KEY_FILENAME;
     }
 
