@@ -4,22 +4,20 @@ declare(strict_types=1);
 
 class SecretsManager extends IPSModuleStrict {
 
-    // HARDCODED FILENAME for security consistency
     private const KEY_FILENAME = 'master.key';
 
     public function Create(): void {
         parent::Create();
-
         // 0 = Slave, 1 = Master
         $this->RegisterPropertyInteger("OperationMode", 0);
         
-        // Configuration: Stores the Folder Path
+        // Configuration Properties
         $this->RegisterPropertyString("KeyFolderPath", ""); 
-        
         $this->RegisterPropertyString("AuthToken", "");
         $this->RegisterPropertyString("InputJson", "");
         $this->RegisterPropertyString("SlaveURLs", "[]"); 
 
+        // Internal Storage
         $this->RegisterVariableString("Vault", "Encrypted Vault");
     }
 
@@ -32,62 +30,91 @@ class SecretsManager extends IPSModuleStrict {
         // Clear RAM Cache
         $this->SetBuffer("DecryptedCache", ""); 
 
-        // Update UI visibility
-        $this->UpdateUI();
-        
-        // --- VALIDATION LOGIC (Graceful Status Handling) ---
+        // 1. Validate Directory Logic
         $folder = $this->ReadPropertyString("KeyFolderPath");
         $mode = $this->ReadPropertyInteger("OperationMode");
         
-        // 1. If path is empty, set instance to Inactive (Grey)
+        $errorMessage = "";
+        
+        // Check 1: Is path empty?
         if ($folder === "") {
             $this->SetStatus(104); // IS_INACTIVE
+        } 
+        // Check 2: Does directory exist?
+        elseif (!is_dir($folder)) {
+            $errorMessage = "Directory does not exist: " . $folder;
+            $this->SetStatus(202); // IS_EBASE (Error)
+        } 
+        // Check 3: Is it writable (Master only)?
+        elseif ($mode === 1 && !is_writable($folder)) {
+            $errorMessage = "Directory is not writable: " . $folder;
+            $this->SetStatus(202); // IS_EBASE (Error)
+        } 
+        // All Good
+        else {
+            $this->SetStatus(102); // IS_ACTIVE
+        }
+
+        // 2. Update UI (Show/Hide Error Header based on validation)
+        $this->UpdateUI($errorMessage);
+    }
+
+    /**
+     * Called by "Check Directory Permissions" button.
+     * Triggers a Modal Popup via echo.
+     */
+    public function CheckDirectory(): void {
+        $folder = $this->ReadPropertyString("KeyFolderPath");
+        $mode = $this->ReadPropertyInteger("OperationMode");
+
+        if ($folder === "") {
+            echo "No directory entered yet.";
             return;
         }
 
-        // 2. Check if Directory Exists
         if (!is_dir($folder)) {
-            // Set Status to ERROR (Red)
-            $this->SetStatus(202); // IS_EBASE (General Error)
-            $this->LogMessage("Configuration Error: The Directory does not exist: $folder", KL_ERROR);
-            $this->UpdateFormField("StatusLabel", "caption", "Error: Directory not found!");
-            return; // Stop here, do not use the path
-        } 
-        
-        // 3. Check Permissions (If Master, must be writable)
-        if ($mode === 1 && !is_writable($folder)) {
-            $this->SetStatus(202); // IS_EBASE
-            $this->LogMessage("Configuration Error: The Directory is not writable: $folder", KL_ERROR);
-            $this->UpdateFormField("StatusLabel", "caption", "Error: Directory not writable!");
-            return; // Stop here
+            echo "❌ ERROR: Directory not found!\n\nPath: $folder\n\nPlease ensure the path is absolute and accessible by the Symcon user.";
+            return;
         }
 
-        // 4. If we got here, everything is OK -> Set Active (Green)
-        $this->SetStatus(102); // IS_ACTIVE
-        
-        // Check if Key File exists inside
-        $fullPath = $this->_getFullPath();
-        if (file_exists($fullPath)) {
-            $this->UpdateFormField("StatusLabel", "caption", "OK: Key found at " . self::KEY_FILENAME);
-        } else {
-            $this->UpdateFormField("StatusLabel", "caption", "Setup: Key will be created on save.");
+        if ($mode === 1 && !is_writable($folder)) {
+            echo "❌ ERROR: Directory is NOT writable!\n\nPath: $folder\n\nMaster mode requires write permissions to create 'master.key'.";
+            return;
         }
+
+        $fullPath = $this->_getFullPath();
+        $fileStatus = file_exists($fullPath) ? "master.key found." : "master.key will be created on save.";
+        
+        echo "✅ SUCCESS!\n\nDirectory: $folder\nPermissions: OK\nFile: $fileStatus";
     }
 
+    /**
+     * Called by "Generate Random Token" button.
+     */
     public function GenerateToken(): void {
         $token = bin2hex(random_bytes(32));
         $this->UpdateFormField("AuthToken", "value", $token);
-        // ECHO creates a POPUP for Button Clicks
         echo "Token Generated!\n\n$token\n\n(It has been inserted into the field. Copy this to use on Slaves!)";
     }
 
-    public function UpdateUI(): void {
+    public function UpdateUI(string $errorMessage = ""): void {
         $mode = $this->ReadPropertyInteger("OperationMode");
         
+        // Handle Error Header Visibility
+        if ($errorMessage !== "") {
+            $this->UpdateFormField("HeaderError", "visible", true);
+            $this->UpdateFormField("HeaderError", "caption", "!!! CONFIGURATION ERROR: " . $errorMessage . " !!!");
+            $this->UpdateFormField("StatusLabel", "caption", "Error: " . $errorMessage);
+        } else {
+            $this->UpdateFormField("HeaderError", "visible", false);
+            $this->UpdateFormField("StatusLabel", "caption", "Instance OK");
+        }
+
+        // General UI
         $hookUrl = "/hook/secrets_" . $this->InstanceID;
         $this->UpdateFormField("HookInfo", "caption", "This Instance WebHook: " . $hookUrl);
-        $this->UpdateFormField("HookInfo", "visible", true);
-
+        
+        // Master/Slave Visibility
         $this->UpdateFormField("InputJson", "visible", ($mode === 1));
         $this->UpdateFormField("BtnEncrypt", "visible", ($mode === 1));
         $this->UpdateFormField("SlaveURLs", "visible", ($mode === 1));
@@ -95,7 +122,7 @@ class SecretsManager extends IPSModuleStrict {
     }
 
     public function GetSecret(string $ident): string {
-        // If Instance is in error state, return nothing
+        // Stop if instance is broken
         if ($this->GetStatus() !== 102) return "";
 
         $cache = $this->_getCache();
@@ -130,14 +157,10 @@ class SecretsManager extends IPSModuleStrict {
             return;
         }
 
-        // PRE-CHECK: Validate Folder before trying anything
+        // Stop if directory is bad
         $folder = $this->ReadPropertyString("KeyFolderPath");
-        if (!is_dir($folder)) {
-            echo "Error: The Key Directory does not exist!\n($folder)";
-            return;
-        }
-        if (!is_writable($folder)) {
-            echo "Error: The Key Directory is not writable!\n($folder)";
+        if (!is_dir($folder) || !is_writable($folder)) {
+            echo "Error: Directory invalid or not writable. Encryption aborted.";
             return;
         }
 
