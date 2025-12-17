@@ -9,57 +9,57 @@ class SecretsManager extends IPSModuleStrict {
 
         // 0 = Slave, 1 = Master
         $this->RegisterPropertyInteger("OperationMode", 0);
+        
+        // Configuration
         $this->RegisterPropertyString("KeyFilePath", "");
         $this->RegisterPropertyString("AuthToken", "");
+        
+        // Input Buffer
         $this->RegisterPropertyString("InputJson", "");
+        
+        // Slave Configuration
         $this->RegisterPropertyString("SlaveURLs", "[]"); 
 
+        // Internal Storage (ReadOnly by default in Strict)
         $this->RegisterVariableString("Vault", "Encrypted Vault");
+        
+        // Note: RegisterHook is NOT called here.
     }
 
     public function ApplyChanges(): void {
         parent::ApplyChanges();
         
-        // CLEAN REGISTRATION: Check if hook exists before trying to register
-        $this->_RegisterHookCheck("secrets_" . $this->InstanceID);
+        // REGISTER WEBHOOK
+        // We use '@' to suppress the "Already Registered" warning.
+        // This is necessary because IP-Symcon does not provide a function to check 
+        // if a Module-Hook already exists before registering.
+        @$this->RegisterHook("secrets_" . $this->InstanceID);
 
+        // Clear Cache
         $this->SetBuffer("DecryptedCache", ""); 
+
+        // UI
         $this->UpdateUI();
         
+        // Validate Key File
         $path = $this->ReadPropertyString("KeyFilePath");
         if ($path !== "" && !file_exists($path) && $this->ReadPropertyInteger("OperationMode") === 1) {
              $this->LogMessage("Master Key missing at: $path", KL_WARNING);
         }
     }
 
-    // -------------------------------------------------------------------------
-    // NEW HELPER: PREVENT "HOOK ALREADY EXISTS" WARNINGS
-    // -------------------------------------------------------------------------
-    private function _RegisterHookCheck(string $WebHook): void {
-        $ids = IPS_GetInstanceListByModuleID("{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}");
-        if (count($ids) > 0) {
-            $hooks = json_decode(IPS_GetProperty($ids[0], "Hooks"), true);
-            foreach ($hooks as $hook) {
-                if ($hook['Hook'] == "/hook/" . $WebHook) {
-                    if ($hook['TargetID'] == $this->InstanceID) {
-                        // It exists and belongs to us -> Do nothing
-                        return; 
-                    }
-                }
-            }
-        }
-        // Only register if not found
-        $this->RegisterHook($WebHook);
-    }
-
     public function UpdateUI(): void {
         $mode = $this->ReadPropertyInteger("OperationMode");
         
+        // Show the WebHook URL to the user
         $hookUrl = "/hook/secrets_" . $this->InstanceID;
         $this->UpdateFormField("HookInfo", "caption", "This Instance WebHook: " . $hookUrl);
         $this->UpdateFormField("HookInfo", "visible", true);
 
+        // Hide Input fields if Slave (0)
         $this->UpdateFormField("InputJson", "visible", ($mode === 1));
+        
+        // Hide Buttons
         $this->UpdateFormField("BtnEncrypt", "visible", ($mode === 1));
         $this->UpdateFormField("SlaveURLs", "visible", ($mode === 1));
         $this->UpdateFormField("BtnSync", "visible", ($mode === 1));
@@ -71,6 +71,7 @@ class SecretsManager extends IPSModuleStrict {
         if ($cache === null) {
             $cache = $this->_decryptVault();
             if ($cache === false) {
+                // Only log error if we actually have data but failed to read it
                 if($this->GetValue("Vault") !== "") {
                     $this->LogMessage("Decryption failed. Check Key File.", KL_ERROR);
                 }
