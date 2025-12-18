@@ -26,6 +26,40 @@ class SecretsManager extends IPSModuleStrict {
         $this->RegisterVariableString("Vault", "Encrypted Vault");
     }
 
+    /**
+     * NEW: Dynamically modifies the form before showing it.
+     * This ensures the correct fields are hidden immediately upon opening.
+     */
+    public function GetConfigurationForm(): string {
+        $json = json_decode(file_get_contents(__DIR__ . "/form.json"), true);
+        
+        $mode = $this->ReadPropertyInteger("OperationMode");
+        $isMaster = ($mode === 1);
+        $isSlave = ($mode === 0);
+
+        foreach ($json['elements'] as &$element) {
+            $name = $element['name'] ?? '';
+
+            // 1. Update WebHook Label URL
+            if ($name === 'HookInfo') {
+                $element['caption'] = "This Instance WebHook: /hook/secrets_" . $this->InstanceID;
+                $element['visible'] = $isSlave; 
+            }
+
+            // 2. Hide Slave-Specific items on Master
+            if (in_array($name, ['LabelHookAuth', 'HookUser', 'HookPass'])) {
+                if (!$isSlave) $element['visible'] = false;
+            }
+
+            // 3. Hide Master-Specific items on Slave
+            if (in_array($name, ['BtnGenToken', 'SlaveURLs', 'LabelSeparator', 'LabelMasterHead', 'InputJson', 'BtnEncrypt', 'BtnSync'])) {
+                if (!$isMaster) $element['visible'] = false;
+            }
+        }
+
+        return json_encode($json);
+    }
+
     public function ApplyChanges(): void {
         parent::ApplyChanges();
         
@@ -100,7 +134,7 @@ class SecretsManager extends IPSModuleStrict {
         $this->UpdateFormField("HookPass", "visible", $isSlave);
 
         // 3. Master Specific UI (Hidden on Slave)
-        $this->UpdateFormField("BtnGenToken", "visible", $isMaster); // Slaves copy token, Master gens it
+        $this->UpdateFormField("BtnGenToken", "visible", $isMaster); 
         
         $this->UpdateFormField("SlaveURLs", "visible", $isMaster);
         $this->UpdateFormField("LabelSeparator", "visible", $isMaster);
@@ -212,6 +246,7 @@ class SecretsManager extends IPSModuleStrict {
             return;
         }
 
+        // Stop if directory is bad
         $folder = $this->ReadPropertyString("KeyFolderPath");
         if (!is_dir($folder) || !is_writable($folder)) {
             echo "Error: Directory invalid or not writable. Encryption aborted.";
