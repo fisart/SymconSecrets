@@ -245,13 +245,14 @@ class SecretsManager extends IPSModuleStrict {
             'vault'=> $vault
         ]);
 
-        $count = 0;
+        $successCount = 0;
+        
         foreach ($slaves as $slave) {
             if (!isset($slave['Url']) || $slave['Url'] == "") continue;
 
             $headers = "Content-type: application/json\r\n";
             
-            // Add Basic Auth Header if columns are filled
+            // Basic Auth
             if (isset($slave['User']) && isset($slave['Pass']) && $slave['User'] !== "") {
                 $auth = base64_encode($slave['User'] . ":" . $slave['Pass']);
                 $headers .= "Authorization: Basic " . $auth . "\r\n";
@@ -261,13 +262,37 @@ class SecretsManager extends IPSModuleStrict {
                 'method' => 'POST',
                 'header' => $headers,
                 'content'=> $payload,
-                'timeout'=> 5
+                'timeout'=> 5,
+                'ignore_errors' => true // Required to read the error message body (e.g. "Invalid Token")
             ]]);
             
-            @file_get_contents($slave['Url'], false, $ctx);
-            $count++;
+            // Execute Request
+            $result = file_get_contents($slave['Url'], false, $ctx);
+            
+            // Analyze Result
+            if ($result === false) {
+                // Network Error (DNS, Timeout, Firewall)
+                $this->LogMessage("❌ Sync Network Error: Could not reach " . $slave['Url'], KL_ERROR);
+            } else {
+                // Check HTTP Response Code (e.g. 200, 401, 403)
+                // $http_response_header is a magic variable created by file_get_contents
+                $statusLine = $http_response_header[0]; // e.g., "HTTP/1.1 200 OK" or "HTTP/1.1 403 Forbidden"
+                
+                if (strpos($statusLine, "200") !== false && trim($result) === "OK") {
+                    $this->LogMessage("✅ Sync Success: " . $slave['Url'], KL_MESSAGE);
+                    $successCount++;
+                } else {
+                    // Logic Error (Wrong Password, Wrong Token)
+                    $this->LogMessage("❌ Sync Rejected: " . $slave['Url'] . " -> " . $statusLine . " (Msg: " . $result . ")", KL_ERROR);
+                }
+            }
         }
-        $this->LogMessage("Synced to $count slaves.", KL_MESSAGE);
+        
+        if ($successCount > 0) {
+            echo "Sync completed. Success: $successCount / Total: " . count($slaves);
+        } else {
+            echo "Sync FAILED. Check messages log for details.";
+        }
     }
 
     protected function ProcessHookData(): void {
