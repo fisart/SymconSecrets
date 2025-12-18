@@ -60,25 +60,27 @@ class SecretsManager extends IPSModuleStrict {
             $this->SetStatus(102); // IS_ACTIVE
         }
 
-        // 2. Update UI (Internal call to show/hide Error Header)
+        // 2. Update UI (Internal call)
         $this->UpdateFormLayout($errorMessage);
     }
 
     /**
      * Called by form.json "onChange".
-     * Accepts ZERO arguments to prevent ArgumentCountError.
+     * Must have ZERO arguments to ensure compatibility with IP-Symcon calls.
      */
     public function UpdateUI(): void {
         $this->UpdateFormLayout("");
     }
 
     /**
-     * Internal Logic to hide/show fields and Error Headers.
+     * Internal Logic to hide/show fields based on Master/Slave Role.
      */
     private function UpdateFormLayout(string $errorMessage): void {
         $mode = $this->ReadPropertyInteger("OperationMode");
+        $isMaster = ($mode === 1);
+        $isSlave = ($mode === 0);
         
-        // Handle Error Header Visibility
+        // 1. Handle Error Header Visibility
         if ($errorMessage !== "") {
             $this->UpdateFormField("HeaderError", "visible", true);
             $this->UpdateFormField("HeaderError", "caption", "!!! CONFIGURATION ERROR: " . $errorMessage . " !!!");
@@ -88,20 +90,24 @@ class SecretsManager extends IPSModuleStrict {
             $this->UpdateFormField("StatusLabel", "caption", "Instance OK");
         }
 
-        // General UI
+        // 2. Slave Specific UI (Hidden on Master)
         $hookUrl = "/hook/secrets_" . $this->InstanceID;
         $this->UpdateFormField("HookInfo", "caption", "This Instance WebHook: " . $hookUrl);
+        $this->UpdateFormField("HookInfo", "visible", $isSlave);
         
-        // Master/Slave Visibility
-        $this->UpdateFormField("InputJson", "visible", ($mode === 1));
-        $this->UpdateFormField("BtnEncrypt", "visible", ($mode === 1));
-        $this->UpdateFormField("SlaveURLs", "visible", ($mode === 1));
-        $this->UpdateFormField("BtnSync", "visible", ($mode === 1));
+        $this->UpdateFormField("LabelHookAuth", "visible", $isSlave);
+        $this->UpdateFormField("HookUser", "visible", $isSlave);
+        $this->UpdateFormField("HookPass", "visible", $isSlave);
+
+        // 3. Master Specific UI (Hidden on Slave)
+        $this->UpdateFormField("BtnGenToken", "visible", $isMaster); // Slaves copy token, Master gens it
         
-        // Basic Auth Fields (Visible on Slave, or Master if they want to self-protect)
-        // We keep them visible always for flexibility, or you can hide them on Master:
-        // $this->UpdateFormField("HookUser", "visible", ($mode === 0));
-        // $this->UpdateFormField("HookPass", "visible", ($mode === 0));
+        $this->UpdateFormField("SlaveURLs", "visible", $isMaster);
+        $this->UpdateFormField("LabelSeparator", "visible", $isMaster);
+        $this->UpdateFormField("LabelMasterHead", "visible", $isMaster);
+        $this->UpdateFormField("InputJson", "visible", $isMaster);
+        $this->UpdateFormField("BtnEncrypt", "visible", $isMaster);
+        $this->UpdateFormField("BtnSync", "visible", $isMaster);
     }
 
     /**
