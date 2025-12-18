@@ -1,0 +1,41 @@
+{
+    "translations": {
+        "de": {
+            "!!! CONFIGURATION ERROR !!!": "!!! KONFIGURATIONSFEHLER !!!",
+            "Security Configuration": "Sicherheitskonfiguration",
+            "WebHook URL: (Save settings to generate)": "WebHook URL: (Speichern zum Generieren)",
+            "System Role": "Systemrolle",
+            "Slave (Receiver)": "Slave (Empfänger)",
+            "Master (Sender)": "Master (Sender)",
+            "Key Storage (Filename 'master.key' is added automatically)": "Schlüsselspeicher (Dateiname 'master.key' wird automatisch ergänzt)",
+            "Directory Path (e.g. /var/lib/symcon_keys/)": "Verzeichnispfad (z.B. /var/lib/symcon_keys/)",
+            "Check Directory Permissions": "Verzeichnisberechtigungen prüfen",
+            "Synchronization Token (Shared Secret)": "Synchronisierungs-Token (Gemeinsames Geheimnis)",
+            "Sync Token": "Sync-Token",
+            "Generate Random Token": "Zufälliges Token generieren",
+            "Show/Copy Token": "Token anzeigen/kopieren",
+            "WebHook Protection (Optional Basic Auth)": "WebHook-Schutz (Optional Basic Auth)",
+            "WebHook User (Optional)": "WebHook Benutzer (Optional)",
+            "WebHook Password (Optional)": "WebHook Passwort (Optional)",
+            "Slave WebHooks (Master Only)": "Slave WebHooks (Nur Master)",
+            "URL (e.g., http://ip:3777/hook/secrets_ID)": "URL (z.B. http://ip:3777/hook/secrets_ID)",
+            "User (Optional)": "Benutzer (Optional)",
+            "Pass (Optional)": "Passwort (Optional)",
+            "Master: Secret Management (Data entered here is encrypted and cleared upon saving)": "Master: Geheimnisverwaltung (Eingegebene Daten werden verschlüsselt und nach dem Speichern gelöscht)",
+            "Paste Secrets JSON Here (One line or minified)": "Geheimnisse-JSON hier einfügen (Einzeilig oder minified)",
+            "Encrypt & Save Local": "Verschlüsseln & Lokal speichern",
+            "Status:": "Status:",
+            "Idle": "Leerlauf",
+            "Instance OK": "Instanz OK",
+            "Manually Sync to Slaves": "Manuell an Slaves synchronisieren",
+            "Token Generated & Inserted.": "Token generiert & eingefügt.",
+            "No token set.": "Kein Token gesetzt.",
+            "Master only.": "Nur Master.",
+            "Dir Error.": "Verzeichnisfehler.",
+            "Input empty.": "Eingabe leer.",
+            "Invalid JSON.": "Ungültiges JSON.",
+            "Saved & Encrypted.": "Gespeichert & Verschlüsselt.",
+            "Encryption failed.": "Verschlüsselung fehlgeschlagen."
+        }
+    }
+}
