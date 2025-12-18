@@ -15,7 +15,7 @@ class SecretsManager extends IPSModuleStrict {
         $this->RegisterPropertyString("KeyFolderPath", ""); 
         $this->RegisterPropertyString("AuthToken", "");
         
-        // New: Basic Auth Properties
+        // Basic Auth Properties
         $this->RegisterPropertyString("HookUser", "");
         $this->RegisterPropertyString("HookPass", "");
 
@@ -60,13 +60,12 @@ class SecretsManager extends IPSModuleStrict {
             $this->SetStatus(102); // IS_ACTIVE
         }
 
-        // 2. Update UI (Show/Hide Error Header based on validation)
+        // 2. Update UI
         $this->UpdateUI($errorMessage);
     }
 
     /**
      * Called by "Check Directory Permissions" button.
-     * Triggers a Modal Popup via echo.
      */
     public function CheckDirectory(): void {
         $folder = $this->ReadPropertyString("KeyFolderPath");
@@ -136,18 +135,13 @@ class SecretsManager extends IPSModuleStrict {
         $this->UpdateFormField("BtnEncrypt", "visible", ($mode === 1));
         $this->UpdateFormField("SlaveURLs", "visible", ($mode === 1));
         $this->UpdateFormField("BtnSync", "visible", ($mode === 1));
-        // We keep HookUser/HookPass visible for both (Master might want self-protection too)
     }
 
     // -------------------------------------------------------------------------
     // PUBLIC FUNCTIONS
     // -------------------------------------------------------------------------
 
-    /**
-     * Returns a JSON encoded array of all available top-level keys.
-     */
     public function GetKeys(): string {
-        // Stop if instance is broken
         if ($this->GetStatus() !== 102) return json_encode([]);
 
         $cache = $this->_getCache();
@@ -158,12 +152,10 @@ class SecretsManager extends IPSModuleStrict {
             $this->_setCache($cache);
         }
 
-        // Return just the keys
         return json_encode(array_keys($cache));
     }
 
     public function GetSecret(string $ident): string {
-        // Stop if instance is broken
         if ($this->GetStatus() !== 102) return "";
 
         $cache = $this->_getCache();
@@ -198,7 +190,6 @@ class SecretsManager extends IPSModuleStrict {
             return;
         }
 
-        // Stop if directory is bad
         $folder = $this->ReadPropertyString("KeyFolderPath");
         if (!is_dir($folder) || !is_writable($folder)) {
             echo "Error: Directory invalid or not writable. Encryption aborted.";
@@ -252,38 +243,39 @@ class SecretsManager extends IPSModuleStrict {
 
             $headers = "Content-type: application/json\r\n";
             
-            // Basic Auth
+            // Add Basic Auth Header if configured in the list
             if (isset($slave['User']) && isset($slave['Pass']) && $slave['User'] !== "") {
                 $auth = base64_encode($slave['User'] . ":" . $slave['Pass']);
                 $headers .= "Authorization: Basic " . $auth . "\r\n";
             }
 
+            // 'ignore_errors' allows us to read the 403/404 response body instead of just returning false
             $ctx = stream_context_create(['http' => [
                 'method' => 'POST',
                 'header' => $headers,
                 'content'=> $payload,
                 'timeout'=> 5,
-                'ignore_errors' => true // Required to read the error message body (e.g. "Invalid Token")
+                'ignore_errors' => true 
             ]]);
             
             // Execute Request
             $result = file_get_contents($slave['Url'], false, $ctx);
             
             // Analyze Result
+            // $http_response_header is a magic variable populated by file_get_contents
             if ($result === false) {
-                // Network Error (DNS, Timeout, Firewall)
+                // Network Error (DNS, Timeout, Firewall - no HTTP response)
                 $this->LogMessage("❌ Sync Network Error: Could not reach " . $slave['Url'], KL_ERROR);
             } else {
-                // Check HTTP Response Code (e.g. 200, 401, 403)
-                // $http_response_header is a magic variable created by file_get_contents
-                $statusLine = $http_response_header[0]; // e.g., "HTTP/1.1 200 OK" or "HTTP/1.1 403 Forbidden"
+                $statusLine = $http_response_header[0] ?? "Unknown"; 
                 
+                // Success is 200 OK
                 if (strpos($statusLine, "200") !== false && trim($result) === "OK") {
                     $this->LogMessage("✅ Sync Success: " . $slave['Url'], KL_MESSAGE);
                     $successCount++;
                 } else {
-                    // Logic Error (Wrong Password, Wrong Token)
-                    $this->LogMessage("❌ Sync Rejected: " . $slave['Url'] . " -> " . $statusLine . " (Msg: " . $result . ")", KL_ERROR);
+                    // Logic Error (403 Token Invalid, 401 Auth, 404 Wrong URL)
+                    $this->LogMessage("❌ Sync Rejected: " . $slave['Url'] . " -> " . $statusLine . " (Msg: " . trim($result) . ")", KL_ERROR);
                 }
             }
         }
@@ -318,10 +310,11 @@ class SecretsManager extends IPSModuleStrict {
 
         if (($data['auth'] ?? '') !== $this->ReadPropertyString("AuthToken")) {
             header("HTTP/1.1 403 Forbidden");
-            echo "Forbidden";
+            echo "Invalid Token";
             return;
         }
 
+        // 3. Process Data
         if (isset($data['key'])) {
             $this->_writeKey($data['key']);
         }

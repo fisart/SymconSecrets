@@ -63,7 +63,7 @@
             "onClick": "SEC_ShowToken($id);" 
         },
 
-        { "type": "Label", "caption": "WebHook Protection (Optional Basic Auth)" },
+        { "type": "Label", "name": "LabelHookAuth", "caption": "WebHook Protection (Optional Basic Auth)" },
         { "type": "ValidationTextBox", "name": "HookUser", "caption": "WebHook User (Optional)" },
         { "type": "PasswordTextBox", "name": "HookPass", "caption": "WebHook Password (Optional)" },
 
@@ -100,10 +100,12 @@
         },
         {
             "type": "Label",
+            "name": "LabelSeparator",
             "caption": "________________________________________________________________________________"
         },
         {
             "type": "Label",
+            "name": "LabelMasterHead",
             "caption": "Master: Secret Management (Data entered here is encrypted and cleared upon saving)"
         },
         {
