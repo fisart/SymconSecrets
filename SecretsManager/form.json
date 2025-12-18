@@ -56,6 +56,17 @@
             "caption": "Generate Random Token", 
             "onClick": "SEC_GenerateToken($id);" 
         },
+        { 
+            "type": "Button", 
+            "name": "BtnShowToken", 
+            "caption": "Show/Copy Token", 
+            "onClick": "SEC_ShowToken($id);" 
+        },
+
+        { "type": "Label", "caption": "WebHook Protection (Optional Basic Auth)" },
+        { "type": "ValidationTextBox", "name": "HookUser", "caption": "WebHook User (Optional)" },
+        { "type": "PasswordTextBox", "name": "HookPass", "caption": "WebHook Password (Optional)" },
+
         {
             "type": "List", 
             "name": "SlaveURLs", 
@@ -64,7 +75,9 @@
             "add": true, 
             "delete": true,
             "columns": [
-                { "caption": "URL (e.g., https://192.168.1.5:3777/hook/secrets_12345)", "name": "Url", "width": "auto", "edit": { "type": "ValidationTextBox" } }
+                { "caption": "URL (e.g., http://ip:3777/hook/secrets_ID)", "name": "Url", "width": "400px", "edit": { "type": "ValidationTextBox" } },
+                { "caption": "User (Optional)", "name": "User", "width": "150px", "edit": { "type": "ValidationTextBox" } },
+                { "caption": "Pass (Optional)", "name": "Pass", "width": "150px", "edit": { "type": "PasswordTextBox" } }
             ]
         },
         {

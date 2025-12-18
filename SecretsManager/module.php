@@ -14,6 +14,11 @@ class SecretsManager extends IPSModuleStrict {
         // Configuration Properties
         $this->RegisterPropertyString("KeyFolderPath", ""); 
         $this->RegisterPropertyString("AuthToken", "");
+        
+        // New: Basic Auth Properties
+        $this->RegisterPropertyString("HookUser", "");
+        $this->RegisterPropertyString("HookPass", "");
+
         $this->RegisterPropertyString("InputJson", "");
         $this->RegisterPropertyString("SlaveURLs", "[]"); 
 
@@ -97,6 +102,18 @@ class SecretsManager extends IPSModuleStrict {
         echo "Token Generated!\n\n$token\n\n(It has been inserted into the field. Copy this to use on Slaves!)";
     }
 
+    /**
+     * Called by "Show/Copy Token" button.
+     */
+    public function ShowToken(): void {
+        $token = $this->ReadPropertyString("AuthToken");
+        if ($token === "") {
+            echo "No token set yet.";
+        } else {
+            echo "YOUR SYNC TOKEN:\n\n" . $token . "\n\n(Select text and Ctrl+C to copy)";
+        }
+    }
+
     public function UpdateUI(string $errorMessage = ""): void {
         $mode = $this->ReadPropertyInteger("OperationMode");
         
@@ -119,6 +136,7 @@ class SecretsManager extends IPSModuleStrict {
         $this->UpdateFormField("BtnEncrypt", "visible", ($mode === 1));
         $this->UpdateFormField("SlaveURLs", "visible", ($mode === 1));
         $this->UpdateFormField("BtnSync", "visible", ($mode === 1));
+        // We keep HookUser/HookPass visible for both (Master might want self-protection too)
     }
 
     // -------------------------------------------------------------------------
@@ -127,8 +145,6 @@ class SecretsManager extends IPSModuleStrict {
 
     /**
      * Returns a JSON encoded array of all available top-level keys.
-     * Use this to populate Select/Dropdown fields in other modules.
-     * Example return: '["Spotify", "MQTT", "Camera1"]'
      */
     public function GetKeys(): string {
         // Stop if instance is broken
@@ -229,24 +245,49 @@ class SecretsManager extends IPSModuleStrict {
             'vault'=> $vault
         ]);
 
-        $ctx = stream_context_create(['http' => [
-            'method'  => 'POST',
-            'header'  => "Content-type: application/json\r\n",
-            'content' => $payload,
-            'timeout' => 5
-        ]]);
-
         $count = 0;
         foreach ($slaves as $slave) {
-            if (isset($slave['Url'])) {
-                @file_get_contents($slave['Url'], false, $ctx);
-                $count++;
+            if (!isset($slave['Url']) || $slave['Url'] == "") continue;
+
+            $headers = "Content-type: application/json\r\n";
+            
+            // Add Basic Auth Header if columns are filled
+            if (isset($slave['User']) && isset($slave['Pass']) && $slave['User'] !== "") {
+                $auth = base64_encode($slave['User'] . ":" . $slave['Pass']);
+                $headers .= "Authorization: Basic " . $auth . "\r\n";
             }
+
+            $ctx = stream_context_create(['http' => [
+                'method' => 'POST',
+                'header' => $headers,
+                'content'=> $payload,
+                'timeout'=> 5
+            ]]);
+            
+            @file_get_contents($slave['Url'], false, $ctx);
+            $count++;
         }
         $this->LogMessage("Synced to $count slaves.", KL_MESSAGE);
     }
 
     protected function ProcessHookData(): void {
+        // 1. Basic Auth Check (Defense Layer 1)
+        $hookUser = $this->ReadPropertyString("HookUser");
+        $hookPass = $this->ReadPropertyString("HookPass");
+
+        if ($hookUser !== "" && $hookPass !== "") {
+            if (!isset($_SERVER['PHP_AUTH_USER']) || 
+                $_SERVER['PHP_AUTH_USER'] !== $hookUser || 
+                $_SERVER['PHP_AUTH_PW'] !== $hookPass) 
+            {
+                header('WWW-Authenticate: Basic realm="SecretsManager"');
+                header('HTTP/1.0 401 Unauthorized');
+                echo 'Authentication Required';
+                return;
+            }
+        }
+
+        // 2. Token Check (Defense Layer 2)
         $input = file_get_contents("php://input");
         $data = json_decode($input, true);
 
