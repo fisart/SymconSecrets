@@ -75,9 +75,27 @@
             "add": true, 
             "delete": true,
             "columns": [
-                { "caption": "URL (e.g., http://ip:3777/hook/secrets_ID)", "name": "Url", "width": "400px", "edit": { "type": "ValidationTextBox" } },
-                { "caption": "User (Optional)", "name": "User", "width": "150px", "edit": { "type": "ValidationTextBox" } },
-                { "caption": "Pass (Optional)", "name": "Pass", "width": "150px", "edit": { "type": "PasswordTextBox" } }
+                { 
+                    "caption": "URL (e.g., http://ip:3777/hook/secrets_ID)", 
+                    "name": "Url", 
+                    "width": "400px", 
+                    "add": "",
+                    "edit": { "type": "ValidationTextBox" } 
+                },
+                { 
+                    "caption": "User (Optional)", 
+                    "name": "User", 
+                    "width": "150px", 
+                    "add": "",
+                    "edit": { "type": "ValidationTextBox" } 
+                },
+                { 
+                    "caption": "Pass (Optional)", 
+                    "name": "Pass", 
+                    "width": "150px", 
+                    "add": "",
+                    "edit": { "type": "PasswordTextBox" } 
+                }
             ]
         },
         {
