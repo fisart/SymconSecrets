@@ -23,7 +23,7 @@ class SecretsManager extends IPSModuleStrict {
         $this->RegisterPropertyString("SlaveURLs", "[]"); 
 
         // Internal Storage
-        $this->RegisterVariableString("Vault", "Encrypted Vault");
+        IPS_SetHidden($this->GetIDForIdent("Vault"), true);
     }
 
     /**
