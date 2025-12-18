@@ -60,8 +60,48 @@ class SecretsManager extends IPSModuleStrict {
             $this->SetStatus(102); // IS_ACTIVE
         }
 
-        // 2. Update UI
-        $this->UpdateUI($errorMessage);
+        // 2. Update UI (Internal call to show/hide Error Header)
+        $this->UpdateFormLayout($errorMessage);
+    }
+
+    /**
+     * Called by form.json "onChange".
+     * Accepts ZERO arguments to prevent ArgumentCountError.
+     */
+    public function UpdateUI(): void {
+        $this->UpdateFormLayout("");
+    }
+
+    /**
+     * Internal Logic to hide/show fields and Error Headers.
+     */
+    private function UpdateFormLayout(string $errorMessage): void {
+        $mode = $this->ReadPropertyInteger("OperationMode");
+        
+        // Handle Error Header Visibility
+        if ($errorMessage !== "") {
+            $this->UpdateFormField("HeaderError", "visible", true);
+            $this->UpdateFormField("HeaderError", "caption", "!!! CONFIGURATION ERROR: " . $errorMessage . " !!!");
+            $this->UpdateFormField("StatusLabel", "caption", "Error: " . $errorMessage);
+        } else {
+            $this->UpdateFormField("HeaderError", "visible", false);
+            $this->UpdateFormField("StatusLabel", "caption", "Instance OK");
+        }
+
+        // General UI
+        $hookUrl = "/hook/secrets_" . $this->InstanceID;
+        $this->UpdateFormField("HookInfo", "caption", "This Instance WebHook: " . $hookUrl);
+        
+        // Master/Slave Visibility
+        $this->UpdateFormField("InputJson", "visible", ($mode === 1));
+        $this->UpdateFormField("BtnEncrypt", "visible", ($mode === 1));
+        $this->UpdateFormField("SlaveURLs", "visible", ($mode === 1));
+        $this->UpdateFormField("BtnSync", "visible", ($mode === 1));
+        
+        // Basic Auth Fields (Visible on Slave, or Master if they want to self-protect)
+        // We keep them visible always for flexibility, or you can hide them on Master:
+        // $this->UpdateFormField("HookUser", "visible", ($mode === 0));
+        // $this->UpdateFormField("HookPass", "visible", ($mode === 0));
     }
 
     /**
@@ -111,30 +151,6 @@ class SecretsManager extends IPSModuleStrict {
         } else {
             echo "YOUR SYNC TOKEN:\n\n" . $token . "\n\n(Select text and Ctrl+C to copy)";
         }
-    }
-
-    public function UpdateUI(string $errorMessage = ""): void {
-        $mode = $this->ReadPropertyInteger("OperationMode");
-        
-        // Handle Error Header Visibility
-        if ($errorMessage !== "") {
-            $this->UpdateFormField("HeaderError", "visible", true);
-            $this->UpdateFormField("HeaderError", "caption", "!!! CONFIGURATION ERROR: " . $errorMessage . " !!!");
-            $this->UpdateFormField("StatusLabel", "caption", "Error: " . $errorMessage);
-        } else {
-            $this->UpdateFormField("HeaderError", "visible", false);
-            $this->UpdateFormField("StatusLabel", "caption", "Instance OK");
-        }
-
-        // General UI
-        $hookUrl = "/hook/secrets_" . $this->InstanceID;
-        $this->UpdateFormField("HookInfo", "caption", "This Instance WebHook: " . $hookUrl);
-        
-        // Master/Slave Visibility
-        $this->UpdateFormField("InputJson", "visible", ($mode === 1));
-        $this->UpdateFormField("BtnEncrypt", "visible", ($mode === 1));
-        $this->UpdateFormField("SlaveURLs", "visible", ($mode === 1));
-        $this->UpdateFormField("BtnSync", "visible", ($mode === 1));
     }
 
     // -------------------------------------------------------------------------
@@ -262,7 +278,6 @@ class SecretsManager extends IPSModuleStrict {
             $result = file_get_contents($slave['Url'], false, $ctx);
             
             // Analyze Result
-            // $http_response_header is a magic variable populated by file_get_contents
             if ($result === false) {
                 // Network Error (DNS, Timeout, Firewall - no HTTP response)
                 $this->LogMessage("❌ Sync Network Error: Could not reach " . $slave['Url'], KL_ERROR);
