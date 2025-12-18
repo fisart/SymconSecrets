@@ -27,33 +27,46 @@ class SecretsManager extends IPSModuleStrict {
     }
 
     /**
-     * NEW: Dynamically modifies the form before showing it.
-     * This ensures the correct fields are hidden immediately upon opening.
+     * DYNAMIC FORM GENERATION
+     * This function is called by IP-Symcon before showing the settings window.
+     * It modifies the JSON structure to hide irrelevant fields.
      */
     public function GetConfigurationForm(): string {
+        // Load the static JSON template
         $json = json_decode(file_get_contents(__DIR__ . "/form.json"), true);
         
+        // Determine Mode
         $mode = $this->ReadPropertyInteger("OperationMode");
         $isMaster = ($mode === 1);
         $isSlave = ($mode === 0);
 
+        // 1. Process Main Elements
         foreach ($json['elements'] as &$element) {
             $name = $element['name'] ?? '';
 
-            // 1. Update WebHook Label URL
+            // WebHook Info (Only for Slave)
             if ($name === 'HookInfo') {
                 $element['caption'] = "This Instance WebHook: /hook/secrets_" . $this->InstanceID;
                 $element['visible'] = $isSlave; 
             }
 
-            // 2. Hide Slave-Specific items on Master
+            // Hide Slave Auth fields on Master
             if (in_array($name, ['LabelHookAuth', 'HookUser', 'HookPass'])) {
                 if (!$isSlave) $element['visible'] = false;
             }
 
-            // 3. Hide Master-Specific items on Slave
-            if (in_array($name, ['BtnGenToken', 'SlaveURLs', 'LabelSeparator', 'LabelMasterHead', 'InputJson', 'BtnEncrypt', 'BtnSync'])) {
+            // Hide Master fields on Slave
+            if (in_array($name, ['BtnGenToken', 'SlaveURLs', 'LabelSeparator', 'LabelMasterHead', 'InputJson', 'BtnEncrypt'])) {
                 if (!$isMaster) $element['visible'] = false;
+            }
+        }
+
+        // 2. Process Action Buttons (Bottom Bar)
+        if (isset($json['actions'])) {
+            foreach ($json['actions'] as &$action) {
+                if (($action['name'] ?? '') === 'BtnSync') {
+                    $action['visible'] = $isMaster; // Only Master can sync
+                }
             }
         }
 
@@ -107,7 +120,7 @@ class SecretsManager extends IPSModuleStrict {
     }
 
     /**
-     * Internal Logic to hide/show fields based on Master/Slave Role.
+     * Internal Logic to hide/show fields dynamically while the form is open.
      */
     private function UpdateFormLayout(string $errorMessage): void {
         $mode = $this->ReadPropertyInteger("OperationMode");
@@ -141,6 +154,8 @@ class SecretsManager extends IPSModuleStrict {
         $this->UpdateFormField("LabelMasterHead", "visible", $isMaster);
         $this->UpdateFormField("InputJson", "visible", $isMaster);
         $this->UpdateFormField("BtnEncrypt", "visible", $isMaster);
+        
+        // 4. Action Buttons (Hidden on Slave)
         $this->UpdateFormField("BtnSync", "visible", $isMaster);
     }
 
