@@ -2,7 +2,7 @@
     "id": "{7C5A3841-3F7B-4D2A-9E1C-5B6D8F9A0E12}",
     "name": "SecretsManager",
     "type": 3,
-    "vendor": "SymconSecrets",
+    "vendor": "Secrets",
     "aliases": [
         "CredentialStore",
         "PasswordSafe"

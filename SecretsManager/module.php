@@ -23,49 +23,72 @@ class SecretsManager extends IPSModuleStrict {
         $this->RegisterPropertyString("SlaveURLs", "[]"); 
 
         // Internal Storage
+        $this->RegisterVariableString("Vault", "Encrypted Vault");
+        // Hide internal storage from WebFront
         IPS_SetHidden($this->GetIDForIdent("Vault"), true);
     }
 
     /**
      * DYNAMIC FORM GENERATION
-     * This function is called by IP-Symcon before showing the settings window.
-     * It modifies the JSON structure to hide irrelevant fields.
+     * Controls visibility of:
+     * 1. Master vs Slave fields
+     * 2. Editor Locked vs Unlocked state
      */
     public function GetConfigurationForm(): string {
-        // Load the static JSON template
         $json = json_decode(file_get_contents(__DIR__ . "/form.json"), true);
         
-        // Determine Mode
         $mode = $this->ReadPropertyInteger("OperationMode");
+        // We check the input field to see if we are in "Edit Mode"
+        $inputContent = $this->ReadPropertyString("InputJson");
+        
         $isMaster = ($mode === 1);
         $isSlave = ($mode === 0);
+        $isUnlocked = ($inputContent !== ""); 
 
         // 1. Process Main Elements
         foreach ($json['elements'] as &$element) {
             $name = $element['name'] ?? '';
 
-            // WebHook Info (Only for Slave)
+            // --- SLAVE SPECIFIC ---
             if ($name === 'HookInfo') {
                 $element['caption'] = "This Instance WebHook: /hook/secrets_" . $this->InstanceID;
                 $element['visible'] = $isSlave; 
             }
-
             // Hide Slave Auth fields on Master
             if (in_array($name, ['LabelHookAuth', 'HookUser', 'HookPass'])) {
                 if (!$isSlave) $element['visible'] = false;
             }
 
-            // Hide Master fields on Slave
-            if (in_array($name, ['BtnGenToken', 'SlaveURLs', 'LabelSeparator', 'LabelMasterHead', 'InputJson', 'BtnEncrypt'])) {
+            // --- MASTER SPECIFIC ---
+            // Hide General Master Setup fields on Slave
+            if (in_array($name, ['BtnGenToken', 'SlaveURLs', 'LabelSeparator', 'LabelMasterHead'])) {
                 if (!$isMaster) $element['visible'] = false;
+            }
+
+            // --- EDITOR WORKFLOW (Master Only) ---
+            if ($isMaster) {
+                // The "Unlock" button is visible only when LOCKED (empty input)
+                if ($name === 'BtnLoad') {
+                    $element['visible'] = !$isUnlocked;
+                }
+                
+                // The Editor, Save, Cancel, and Warning are visible only when UNLOCKED
+                if (in_array($name, ['InputJson', 'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning'])) {
+                    $element['visible'] = $isUnlocked;
+                }
+            } else {
+                // If Slave, hide ALL editor controls
+                if (in_array($name, ['BtnLoad', 'InputJson', 'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning'])) {
+                    $element['visible'] = false;
+                }
             }
         }
 
-        // 2. Process Action Buttons (Bottom Bar)
+        // 2. Process Actions (Bottom Bar) - FIX: Hide Sync Button on Slave
         if (isset($json['actions'])) {
             foreach ($json['actions'] as &$action) {
                 if (($action['name'] ?? '') === 'BtnSync') {
-                    $action['visible'] = $isMaster; // Only Master can sync
+                    $action['visible'] = $isMaster; 
                 }
             }
         }
@@ -158,6 +181,73 @@ class SecretsManager extends IPSModuleStrict {
         // 4. Action Buttons (Hidden on Slave)
         $this->UpdateFormField("BtnSync", "visible", $isMaster);
     }
+
+    // --- EDITOR ACTIONS ---
+
+    /**
+     * UNLOCK: Decrypts data and fills the input field for editing.
+     */
+    public function LoadVault(): void {
+        $cache = $this->_decryptVault();
+        
+        if ($cache === false) {
+            if ($this->GetValue("Vault") === "") {
+                $json = "{}"; // Empty vault
+            } else {
+                echo "❌ Error: Could not decrypt vault. Check Key File.";
+                return;
+            }
+        } else {
+            // Pretty Print for editing
+            $json = json_encode($cache, JSON_PRETTY_PRINT);
+        }
+
+        // Set input and save to unlock UI
+        IPS_SetProperty($this->InstanceID, "InputJson", $json);
+        IPS_ApplyChanges($this->InstanceID);
+    }
+
+    /**
+     * SAVE: Validates, Minifies, Encrypts, Saves, and Relocks.
+     */
+    public function EncryptAndSave(): void {
+        if ($this->ReadPropertyInteger("OperationMode") !== 1) { echo "Master only."; return; }
+        
+        $folder = $this->ReadPropertyString("KeyFolderPath");
+        if (!is_dir($folder) || !is_writable($folder)) { echo "Dir Error."; return; }
+
+        $jsonInput = $this->ReadPropertyString("InputJson");
+        if (trim($jsonInput) === "") { echo "Input empty."; return; }
+        
+        // Validation
+        $decoded = json_decode($jsonInput, true);
+        if ($decoded === null) { 
+            echo "❌ JSON Syntax Error!\nPlease check commas and brackets."; 
+            return; 
+        }
+
+        // Encrypt & Save
+        if ($this->_encryptAndSave($decoded)) {
+            // WIPE Input to Lock UI
+            IPS_SetProperty($this->InstanceID, "InputJson", "");
+            IPS_ApplyChanges($this->InstanceID);
+            
+            echo "✅ Saved & Encrypted. Form Locked.";
+            $this->SyncSlaves();
+        } else {
+            echo "❌ Error: Encryption failed.";
+        }
+    }
+
+    /**
+     * CANCEL: Wipes the input field without saving.
+     */
+    public function ClearVault(): void {
+        IPS_SetProperty($this->InstanceID, "InputJson", "");
+        IPS_ApplyChanges($this->InstanceID);
+    }
+
+    // --- STANDARD ACTIONS ---
 
     /**
      * Called by "Check Directory Permissions" button.
@@ -253,43 +343,6 @@ class SecretsManager extends IPSModuleStrict {
 
         trigger_error("SecretsManager: Secret '$ident' not found.", E_USER_NOTICE);
         return "";
-    }
-
-    public function EncryptAndSave(): void {
-        if ($this->ReadPropertyInteger("OperationMode") !== 1) {
-            echo "Only Master can encrypt data.";
-            return;
-        }
-
-        // Stop if directory is bad
-        $folder = $this->ReadPropertyString("KeyFolderPath");
-        if (!is_dir($folder) || !is_writable($folder)) {
-            echo "Error: Directory invalid or not writable. Encryption aborted.";
-            return;
-        }
-
-        $jsonInput = $this->ReadPropertyString("InputJson");
-        if (trim($jsonInput) === "") {
-            echo "Input is empty.";
-            return;
-        }
-
-        $decoded = json_decode($jsonInput, true);
-        if ($decoded === null) {
-            echo "Error: Invalid JSON Format.";
-            return;
-        }
-
-        $result = $this->_encryptAndSave($decoded);
-
-        if ($result) {
-            IPS_SetProperty($this->InstanceID, "InputJson", "");
-            IPS_ApplyChanges($this->InstanceID);
-            echo "Success: Data encrypted and saved.";
-            $this->SyncSlaves();
-        } else {
-            echo "Error: Encryption failed.";
-        }
     }
 
     public function SyncSlaves(): void {
