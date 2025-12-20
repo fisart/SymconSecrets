@@ -368,37 +368,48 @@ class SecretsManager extends IPSModuleStrict {
 
             $headers = "Content-type: application/json\r\n";
             
-            // Add Basic Auth Header if configured in the list
+            // Add Basic Auth Header
             if (isset($slave['User']) && isset($slave['Pass']) && $slave['User'] !== "") {
                 $auth = base64_encode($slave['User'] . ":" . $slave['Pass']);
                 $headers .= "Authorization: Basic " . $auth . "\r\n";
             }
 
-            // 'ignore_errors' allows us to read the 403/404 response body instead of just returning false
-            $ctx = stream_context_create(['http' => [
-                'method' => 'POST',
-                'header' => $headers,
-                'content'=> $payload,
-                'timeout'=> 5,
-                'ignore_errors' => true 
-            ]]);
+            // --- THE FIX IS HERE ---
+            // We explicitly tell PHP to trust ANY certificate (Self-Signed or IP-based)
+            $options = [
+                'http' => [
+                    'method' => 'POST',
+                    'header' => $headers,
+                    'content'=> $payload,
+                    'timeout'=> 5,
+                    'ignore_errors' => true 
+                ],
+                'ssl' => [
+                    'verify_peer' => false,
+                    'verify_peer_name' => false,
+                    'allow_self_signed' => true
+                ]
+            ];
+
+            $ctx = stream_context_create($options);
             
             // Execute Request
-            $result = file_get_contents($slave['Url'], false, $ctx);
+            $result = @file_get_contents($slave['Url'], false, $ctx);
             
             // Analyze Result
             if ($result === false) {
-                // Network Error (DNS, Timeout, Firewall - no HTTP response)
-                $this->LogMessage("❌ Sync Network Error: Could not reach " . $slave['Url'], KL_ERROR);
+                // If it fails here with HTTPS, it usually means the port is wrong 
+                // (e.g. trying HTTPS on port 3777 which is usually HTTP)
+                $error = error_get_last();
+                $errorMsg = $error['message'] ?? 'Unknown Error';
+                $this->LogMessage("❌ Sync Network Error: " . $slave['Url'] . " -> " . $errorMsg, KL_ERROR);
             } else {
                 $statusLine = $http_response_header[0] ?? "Unknown"; 
                 
-                // Success is 200 OK
                 if (strpos($statusLine, "200") !== false && trim($result) === "OK") {
                     $this->LogMessage("✅ Sync Success: " . $slave['Url'], KL_MESSAGE);
                     $successCount++;
                 } else {
-                    // Logic Error (403 Token Invalid, 401 Auth, 404 Wrong URL)
                     $this->LogMessage("❌ Sync Rejected: " . $slave['Url'] . " -> " . $statusLine . " (Msg: " . trim($result) . ")", KL_ERROR);
                 }
             }
