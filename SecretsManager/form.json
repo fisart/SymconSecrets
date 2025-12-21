@@ -111,14 +111,14 @@
         {
             "type": "Label",
             "name": "LabelSecurityWarning",
-            "caption": "⚠️ CAUTION: Unencrypted data is currently visible!",
+            "caption": "⚠️ CAUTION: Unencrypted data is visible! Click 'Save Changes' below to Encrypt & Store.",
             "visible": false,
             "bold": true
         },
         {
             "type": "ValidationTextBox", 
             "name": "InputJson", 
-            "caption": "JSON Editor", 
+            "caption": "JSON Editor (Edit, then click global 'Save Changes')", 
             "value": ""
         },
         { 
@@ -126,18 +126,6 @@
             "name": "BtnLoad", 
             "caption": "🔓 Unlock & Load Data", 
             "onClick": "SEC_LoadVault($id);" 
-        },
-        { 
-            "type": "Button", 
-            "name": "BtnEncrypt", 
-            "caption": "💾 Encrypt & Save", 
-            "onClick": "SEC_EncryptAndSave($id);" 
-        },
-        { 
-            "type": "Button", 
-            "name": "BtnClear", 
-            "caption": "❌ Cancel / Wipe", 
-            "onClick": "SEC_ClearVault($id);" 
         }
     ],
     "actions": [
