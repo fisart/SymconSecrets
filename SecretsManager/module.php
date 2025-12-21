@@ -28,7 +28,7 @@ class SecretsManager extends IPSModuleStrict {
         $this->RegisterPropertyString("SlaveURLs", "[]"); 
 
         // Internal Storage for the Encrypted Blob
-        $this->RegisterVariableString("Vault", "Encrypted Vault");
+        $this->RegisterVariableString("Vault", "");
     }
 
     /**
@@ -112,7 +112,7 @@ class SecretsManager extends IPSModuleStrict {
         @$this->RegisterHook("secrets_" . $this->InstanceID);
 
         // Clear RAM Cache on config change
-        $this->SetBuffer("DecryptedCache", ""); 
+        //$this->SetBuffer("DecryptedCache", ""); 
 
         // Validate Directory Logic
         $folder = $this->ReadPropertyString("KeyFolderPath");
@@ -426,32 +426,48 @@ class SecretsManager extends IPSModuleStrict {
         return rtrim($folder, '/\\') . DIRECTORY_SEPARATOR . self::KEY_FILENAME;
     }
 
-    private function _encryptAndSave(array $dataArray): bool {
-        $keyHex = $this->_loadOrGenerateKey();
-        if (!$keyHex) return false;
-
-        $newKeyBin = hex2bin($keyHex);
-        $plain = json_encode($dataArray);
+    public function EncryptAndSave(string $jsonInput): void {
+        // 1. Ensure we are in Master mode
+        if ($this->ReadPropertyInteger("OperationMode") !== 1) { 
+            echo "Master only."; 
+            return; 
+        }
         
-        $cipher = "aes-128-gcm";
-        $iv = random_bytes(openssl_cipher_iv_length($cipher));
-        $tag = ""; 
+        // 2. Validate the directory before attempting to save the key
+        $folder = $this->ReadPropertyString("KeyFolderPath");
+        if (!is_dir($folder) || !is_writable($folder)) { 
+            echo "❌ Error: Directory is not writable or does not exist."; 
+            return; 
+        }
+
+        // 3. Check if the input passed from the UI is empty
+        if (trim($jsonInput) === "") { 
+            echo "❌ Error: Input is empty."; 
+            return; 
+        }
         
-        $cipherText = openssl_encrypt($plain, $cipher, $newKeyBin, 0, $iv, $tag);
+        // 4. Validate JSON Syntax of the input
+        $decoded = json_decode($jsonInput, true);
+        if ($decoded === null) { 
+            echo "❌ JSON Syntax Error!\nPlease check commas and brackets."; 
+            return; 
+        }
 
-        if ($cipherText === false) return false;
-
-        $vaultData = json_encode([
-            'cipher' => $cipher,
-            'iv' => bin2hex($iv),
-            'tag'=> bin2hex($tag),
-            'data'=> $cipherText
-        ]);
-
-        $this->SetValue("Vault", $vaultData);
-        $this->_setCache($dataArray);
-        
-        return true;
+        // 5. Encrypt and Store (this calls your internal crypto helper)
+        if ($this->_encryptAndSave($decoded)) {
+            
+            // 6. Clear the temporary Property and Save settings
+            // This "locks" the form again by making InputJson empty
+            IPS_SetProperty($this->InstanceID, "InputJson", "");
+            IPS_ApplyChanges($this->InstanceID);
+            
+            echo "✅ Saved & Encrypted. Form Locked.";
+            
+            // 7. Trigger distribution to Slaves
+            $this->SyncSlaves();
+        } else {
+            echo "❌ Error: Encryption failed.";
+        }
     }
 
     private function _decryptVault() {
