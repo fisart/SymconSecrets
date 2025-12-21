@@ -28,7 +28,7 @@ class SecretsManager extends IPSModuleStrict {
         $this->RegisterPropertyString("SlaveURLs", "[]"); 
 
         // Internal Storage for the Encrypted Blob
-        $this->RegisterVariableString("Vault", "");
+        $this->RegisterVariableString("Vault", "Encrypted Vault");
     }
 
     /**
@@ -112,7 +112,7 @@ class SecretsManager extends IPSModuleStrict {
         @$this->RegisterHook("secrets_" . $this->InstanceID);
 
         // Clear RAM Cache on config change
-        //$this->SetBuffer("DecryptedCache", ""); 
+        $this->SetBuffer("DecryptedCache", ""); 
 
         // Validate Directory Logic
         $folder = $this->ReadPropertyString("KeyFolderPath");
@@ -226,7 +226,36 @@ class SecretsManager extends IPSModuleStrict {
         IPS_ApplyChanges($this->InstanceID);
     }
 
+    public function EncryptAndSave(): void {
+        if ($this->ReadPropertyInteger("OperationMode") !== 1) { echo "Master only."; return; }
+        
+        $folder = $this->ReadPropertyString("KeyFolderPath");
+        if (!is_dir($folder) || !is_writable($folder)) { echo "Dir Error."; return; }
 
+        $jsonInput = $this->ReadPropertyString("InputJson");
+        if (trim($jsonInput) === "") { echo "Input empty."; return; }
+        
+        // Validate JSON Syntax
+        $decoded = json_decode($jsonInput, true);
+        if ($decoded === null) { 
+            echo "❌ JSON Syntax Error!\nPlease check commas and brackets."; 
+            return; 
+        }
+
+        // Encrypt and Store
+        if ($this->_encryptAndSave($decoded)) {
+            // WIPE Input to Lock UI
+            IPS_SetProperty($this->InstanceID, "InputJson", "");
+            IPS_ApplyChanges($this->InstanceID);
+            
+            echo "✅ Saved & Encrypted. Form Locked.";
+            
+            // Trigger Sync
+            $this->SyncSlaves();
+        } else {
+            echo "❌ Error: Encryption failed.";
+        }
+    }
 
     public function ClearVault(): void {
         // Wipe input field to cancel editing
@@ -397,48 +426,32 @@ class SecretsManager extends IPSModuleStrict {
         return rtrim($folder, '/\\') . DIRECTORY_SEPARATOR . self::KEY_FILENAME;
     }
 
-    public function EncryptAndSave(string $jsonInput): void {
-        // 1. Ensure we are in Master mode
-        if ($this->ReadPropertyInteger("OperationMode") !== 1) { 
-            echo "Master only."; 
-            return; 
-        }
-        
-        // 2. Validate the directory before attempting to save the key
-        $folder = $this->ReadPropertyString("KeyFolderPath");
-        if (!is_dir($folder) || !is_writable($folder)) { 
-            echo "❌ Error: Directory is not writable or does not exist."; 
-            return; 
-        }
+    private function _encryptAndSave(array $dataArray): bool {
+        $keyHex = $this->_loadOrGenerateKey();
+        if (!$keyHex) return false;
 
-        // 3. Check if the input passed from the UI is empty
-        if (trim($jsonInput) === "") { 
-            echo "❌ Error: Input is empty."; 
-            return; 
-        }
+        $newKeyBin = hex2bin($keyHex);
+        $plain = json_encode($dataArray);
         
-        // 4. Validate JSON Syntax of the input
-        $decoded = json_decode($jsonInput, true);
-        if ($decoded === null) { 
-            echo "❌ JSON Syntax Error!\nPlease check commas and brackets."; 
-            return; 
-        }
+        $cipher = "aes-128-gcm";
+        $iv = random_bytes(openssl_cipher_iv_length($cipher));
+        $tag = ""; 
+        
+        $cipherText = openssl_encrypt($plain, $cipher, $newKeyBin, 0, $iv, $tag);
 
-        // 5. Encrypt and Store (this calls your internal crypto helper)
-        if ($this->_encryptAndSave($decoded)) {
-            
-            // 6. Clear the temporary Property and Save settings
-            // This "locks" the form again by making InputJson empty
-            IPS_SetProperty($this->InstanceID, "InputJson", "");
-            IPS_ApplyChanges($this->InstanceID);
-            
-            echo "✅ Saved & Encrypted. Form Locked.";
-            
-            // 7. Trigger distribution to Slaves
-            $this->SyncSlaves();
-        } else {
-            echo "❌ Error: Encryption failed.";
-        }
+        if ($cipherText === false) return false;
+
+        $vaultData = json_encode([
+            'cipher' => $cipher,
+            'iv' => bin2hex($iv),
+            'tag'=> bin2hex($tag),
+            'data'=> $cipherText
+        ]);
+
+        $this->SetValue("Vault", $vaultData);
+        $this->_setCache($dataArray);
+        
+        return true;
     }
 
     private function _decryptVault() {

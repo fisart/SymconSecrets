@@ -131,7 +131,7 @@
             "type": "Button", 
             "name": "BtnEncrypt", 
             "caption": "💾 Encrypt & Save", 
-            "onClick": "SEC_EncryptAndSave($id, $InputJson);" 
+            "onClick": "SEC_EncryptAndSave($id);" 
         },
         { 
             "type": "Button", 
