@@ -226,36 +226,7 @@ class SecretsManager extends IPSModuleStrict {
         IPS_ApplyChanges($this->InstanceID);
     }
 
-    public function EncryptAndSave(): void {
-        if ($this->ReadPropertyInteger("OperationMode") !== 1) { echo "Master only."; return; }
-        
-        $folder = $this->ReadPropertyString("KeyFolderPath");
-        if (!is_dir($folder) || !is_writable($folder)) { echo "Dir Error."; return; }
 
-        $jsonInput = $this->ReadPropertyString("InputJson");
-        if (trim($jsonInput) === "") { echo "Input empty."; return; }
-        
-        // Validate JSON Syntax
-        $decoded = json_decode($jsonInput, true);
-        if ($decoded === null) { 
-            echo "❌ JSON Syntax Error!\nPlease check commas and brackets."; 
-            return; 
-        }
-
-        // Encrypt and Store
-        if ($this->_encryptAndSave($decoded)) {
-            // WIPE Input to Lock UI
-            IPS_SetProperty($this->InstanceID, "InputJson", "");
-            IPS_ApplyChanges($this->InstanceID);
-            
-            echo "✅ Saved & Encrypted. Form Locked.";
-            
-            // Trigger Sync
-            $this->SyncSlaves();
-        } else {
-            echo "❌ Error: Encryption failed.";
-        }
-    }
 
     public function ClearVault(): void {
         // Wipe input field to cancel editing
