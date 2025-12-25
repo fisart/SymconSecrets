@@ -39,11 +39,13 @@ class SecretsManager extends IPSModuleStrict {
         
         // 2. Read current settings
         $mode = $this->ReadPropertyInteger("OperationMode");
-        $inputContent = $this->ReadPropertyString("InputJson");
         
         $isMaster = ($mode === 1);
         $isSlave = ($mode === 0);
-        $isUnlocked = ($inputContent !== ""); 
+        
+        // Änderung: UI startet immer im gesperrten Zustand (Stateless), 
+        // da InputJson keine gespeicherte Property mehr ist.
+        $isUnlocked = false; 
 
         // 3. Process Main Elements (Hide/Show fields)
         foreach ($json['elements'] as &$element) {
@@ -252,9 +254,13 @@ class SecretsManager extends IPSModuleStrict {
     }
 
     public function ClearVault(): void {
-        // Wipe input field to cancel editing
-        IPS_SetProperty($this->InstanceID, "InputJson", "");
-        IPS_ApplyChanges($this->InstanceID);
+        // Einfach alles wieder verstecken und leeren
+        $this->UpdateFormField("InputJson", "value", "");
+        $this->UpdateFormField("InputJson", "visible", false);
+        $this->UpdateFormField("BtnEncrypt", "visible", false);
+        $this->UpdateFormField("BtnClear", "visible", false);
+        $this->UpdateFormField("LabelSecurityWarning", "visible", false);
+        $this->UpdateFormField("BtnLoad", "visible", true);
     }
 
     // =========================================================================
