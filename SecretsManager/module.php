@@ -20,9 +20,6 @@ class SecretsManager extends IPSModuleStrict {
         // Basic Auth Properties (Optional Protection for WebHook)
         $this->RegisterPropertyString("HookUser", "");
         $this->RegisterPropertyString("HookPass", "");
-
-        // Editor Input Buffer (Temporary storage for JSON editing)
-        $this->RegisterPropertyString("InputJson", "");
         
         // List of Slaves (Master Only)
         $this->RegisterPropertyString("SlaveURLs", "[]"); 
@@ -210,50 +207,47 @@ class SecretsManager extends IPSModuleStrict {
         $cache = $this->_decryptVault();
         
         if ($cache === false) {
-            if ($this->GetValue("Vault") === "") {
-                $json = "{}"; // Start empty
-            } else {
-                echo "❌ Error: Could not decrypt vault. Check Key File.";
+            $json = ($this->GetValue("Vault") === "") ? "{}" : "";
+            if ($json === "") {
+                echo "❌ Fehler: Entschlüsselung fehlgeschlagen.";
                 return;
             }
         } else {
-            // Pretty print for editing
             $json = json_encode($cache, JSON_PRETTY_PRINT);
         }
 
-        // Save to input field to trigger "Unlocked" state in GetConfigurationForm
-        IPS_SetProperty($this->InstanceID, "InputJson", $json);
-        IPS_ApplyChanges($this->InstanceID);
+        // WICHTIG: Wir schreiben nicht in eine Property, sondern schicken 
+        // das Passwort direkt an das Textfeld in der UI.
+        $this->UpdateFormField("InputJson", "value", $json);
+        $this->UpdateFormField("InputJson", "visible", true);
+        $this->UpdateFormField("BtnEncrypt", "visible", true);
+        $this->UpdateFormField("BtnClear", "visible", true);
+        $this->UpdateFormField("LabelSecurityWarning", "visible", true);
+        $this->UpdateFormField("BtnLoad", "visible", false);
     }
-
-    public function EncryptAndSave(): void {
-        if ($this->ReadPropertyInteger("OperationMode") !== 1) { echo "Master only."; return; }
+// Beachte den Parameter $jsonInput!
+    public function EncryptAndSave(string $jsonInput): void {
+        if ($this->ReadPropertyInteger("OperationMode") !== 1) return;
         
-        $folder = $this->ReadPropertyString("KeyFolderPath");
-        if (!is_dir($folder) || !is_writable($folder)) { echo "Dir Error."; return; }
-
-        $jsonInput = $this->ReadPropertyString("InputJson");
-        if (trim($jsonInput) === "") { echo "Input empty."; return; }
+        if (trim($jsonInput) === "") { echo "Eingabe leer."; return; }
         
-        // Validate JSON Syntax
         $decoded = json_decode($jsonInput, true);
         if ($decoded === null) { 
-            echo "❌ JSON Syntax Error!\nPlease check commas and brackets."; 
+            echo "❌ JSON Syntax Fehler!"; 
             return; 
         }
 
-        // Encrypt and Store
         if ($this->_encryptAndSave($decoded)) {
-            // WIPE Input to Lock UI
-            IPS_SetProperty($this->InstanceID, "InputJson", "");
-            IPS_ApplyChanges($this->InstanceID);
+            // UI wieder in den "Sicheren Modus" versetzen
+            $this->UpdateFormField("InputJson", "value", "");
+            $this->UpdateFormField("InputJson", "visible", false);
+            $this->UpdateFormField("BtnEncrypt", "visible", false);
+            $this->UpdateFormField("BtnClear", "visible", false);
+            $this->UpdateFormField("LabelSecurityWarning", "visible", false);
+            $this->UpdateFormField("BtnLoad", "visible", true);
             
-            echo "✅ Saved & Encrypted. Form Locked.";
-            
-            // Trigger Sync
+            echo "✅ Verschlüsselt gespeichert. Klartext nur im RAM.";
             $this->SyncSlaves();
-        } else {
-            echo "❌ Error: Encryption failed.";
         }
     }
 
