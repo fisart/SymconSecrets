@@ -137,7 +137,19 @@ expand_less
 // Liefert JSON-Liste der Keys: ["Spotify", "MySQL_Config", ...]
 $keys = SEC_GetKeys($instanceID);
 
+Fuer jedes Symcon System das eingebunden werden soll muss mindestens die folgende Array Struktur vorhanden sein :
 
+$data = array (
+  'Beispiel Symcon Berlin' => 
+  array (
+    'User' => 'XYZ',
+    'PW' => '123',
+    'URL' => 'xyz'
+  ),
+  ... weitere Eintraege
+  )
+
+Nach umwandlung in JSON : {"Beispiel Symcon Berlin": {"User": "XYZ","PW": "123", "URL": "xyz"}]
 
 # SymconSecrets
 A secure credential manager for IP-Symcon that encrypts secrets using AES-128-GCM with external key storage and automated Master-Slave replication.
