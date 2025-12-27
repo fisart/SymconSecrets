@@ -567,15 +567,22 @@ class SecretsManager extends IPSModuleStrict {
         $path = $this->_getFullPath();
         if ($path === "") return false;
 
+        // Wenn die Datei schon existiert, laden wir sie einfach
         if (file_exists($path)) {
             return trim(file_get_contents($path));
         }
 
-        if ($this->ReadPropertyInteger("OperationMode") === 1) {
+        // --- KORREKTUR HIER ---
+        // Ein Schlüssel darf generiert werden, wenn wir Master (1) ODER Standalone (2) sind.
+        $mode = $this->ReadPropertyInteger("OperationMode");
+        if ($mode === 1 || $mode === 2) {
             $newKey = bin2hex(random_bytes(16)); 
-            if (file_put_contents($path, $newKey) === false) return false;
+            if (file_put_contents($path, $newKey) === false) {
+                return false; // Verzeichnis eventuell nicht schreibbar
+            }
             return $newKey;
         }
+        
         return false;
     }
 
