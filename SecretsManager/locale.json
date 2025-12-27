@@ -7,6 +7,7 @@
             "System Role": "Systemrolle",
             "Slave (Receiver)": "Slave (Empfänger)",
             "Master (Sender)": "Master (Sender)",
+            "Standalone (Local Vault)": "Standalone (Lokaler Tresor)",
             "Key Storage (Filename 'master.key' is added automatically)": "Schlüsselspeicher (Dateiname 'master.key' wird automatisch ergänzt)",
             "Directory Path (e.g. /var/lib/symcon_keys/)": "Verzeichnispfad (z.B. /var/lib/symcon_keys/)",
             "Check Directory Permissions": "Verzeichnisberechtigungen prüfen",
@@ -21,9 +22,12 @@
             "URL (e.g., http://ip:3777/hook/secrets_ID)": "URL (z.B. http://ip:3777/hook/secrets_ID)",
             "User (Optional)": "Benutzer (Optional)",
             "Pass (Optional)": "Passwort (Optional)",
-            "Master: Secret Management (Data entered here is encrypted and cleared upon saving)": "Master: Geheimnisverwaltung (Eingegebene Daten werden verschlüsselt und nach dem Speichern gelöscht)",
-            "Paste Secrets JSON Here (One line or minified)": "Geheimnisse-JSON hier einfügen (Einzeilig oder minified)",
-            "Encrypt & Save Local": "Verschlüsseln & Lokal speichern",
+            "Master: Secret Management / Vault Editor": "Tresor-Editor / Geheimnisverwaltung (Master & Standalone)",
+            "⚠️ CAUTION: Unencrypted data is currently visible!": "⚠️ ACHTUNG: Unverschlüsselte Daten sind derzeit sichtbar!",
+            "JSON Editor": "JSON Editor",
+            "🔓 Unlock & Load Data": "🔓 Tresor öffnen & Daten laden",
+            "💾 Encrypt & Save": "💾 Verschlüsseln & Speichern",
+            "❌ Cancel / Wipe": "❌ Abbrechen / RAM leeren",
             "Status:": "Status:",
             "Idle": "Leerlauf",
             "Instance OK": "Instanz OK",
@@ -35,7 +39,11 @@
             "Input empty.": "Eingabe leer.",
             "Invalid JSON.": "Ungültiges JSON.",
             "Saved & Encrypted.": "Gespeichert & Verschlüsselt.",
-            "Encryption failed.": "Verschlüsselung fehlgeschlagen."
+            "Saved & Encrypted locally.": "Lokal gespeichert & verschlüsselt.",
+            "Encryption failed.": "Verschlüsselung fehlgeschlagen.",
+            "Sync cancelled: Standalone systems are isolated.": "Sync abgebrochen: Standalone-Systeme sind isoliert.",
+            "Access Denied: This instance is not configured as a Slave.": "Zugriff verweigert: Diese Instanz ist nicht als Slave konfiguriert.",
+            "WebHook URL für diesen Slave: /hook/secrets_": "WebHook URL für diesen Slave: /hook/secrets_"
         }
     }
 }
