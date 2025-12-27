@@ -10,7 +10,7 @@ class SecretsManager extends IPSModuleStrict {
     public function Create(): void {
         parent::Create();
 
-        // 0 = Slave (Receiver), 1 = Master (Sender)
+        // 0 = Slave (Receiver), 1 = Master (Sender), 2 = Standalone (Local Vault Only)
         $this->RegisterPropertyInteger("OperationMode", 0);
         
         // Configuration Properties
@@ -34,63 +34,67 @@ class SecretsManager extends IPSModuleStrict {
      * It modifies the static form.json to hide irrelevant fields based on Master/Slave role.
      */
     public function GetConfigurationForm(): string {
-        // 1. Load the static JSON template
+        // 1. Statische Vorlage laden
         $json = json_decode(file_get_contents(__DIR__ . "/form.json"), true);
         
-        // 2. Read current settings
+        // 2. Aktuelle Rolle einlesen
         $mode = $this->ReadPropertyInteger("OperationMode");
         
-        $isMaster = ($mode === 1);
-        $isSlave = ($mode === 0);
+        // Helfer-Variablen für die Logik
+        $isSlave      = ($mode === 0);
+        $isMaster     = ($mode === 1);
+        $isStandalone = ($mode === 2);
         
-        // Änderung: UI startet immer im gesperrten Zustand (Stateless), 
-        // da InputJson keine gespeicherte Property mehr ist.
+        // Wer darf den Editor sehen? (Master und Standalone)
+        $isEditorRole = ($isMaster || $isStandalone);
+        
+        // Wer braucht Synchronisations-Einstellungen? (Master und Slave)
+        $isSyncRole   = ($isMaster || $isSlave);
+
+        // Stateless UI: Beim Öffnen immer "Locked"
         $isUnlocked = false; 
 
-        // 3. Process Main Elements (Hide/Show fields)
+        // 3. Elemente filtern
         foreach ($json['elements'] as &$element) {
             $name = $element['name'] ?? '';
 
-            // --- SLAVE SPECIFIC UI ---
+            // --- WEBHOOK INFO (Nur Slave) ---
             if ($name === 'HookInfo') {
-                $element['caption'] = "This Instance WebHook: /hook/secrets_" . $this->InstanceID;
+                $element['caption'] = "WebHook URL für diesen Slave: /hook/secrets_" . $this->InstanceID;
                 $element['visible'] = $isSlave; 
             }
-            // Hide Slave Auth fields if we are Master
+
+            // --- WEBHOOK PROTECTION / BASIC AUTH (Nur Slave) ---
             if (in_array($name, ['LabelHookAuth', 'HookUser', 'HookPass'])) {
-                if (!$isSlave) $element['visible'] = false;
+                $element['visible'] = $isSlave;
             }
 
-            // --- MASTER SPECIFIC UI ---
-            // Hide General Master Setup fields if we are Slave
-            if (in_array($name, ['BtnGenToken', 'SlaveURLs', 'LabelSeparator', 'LabelMasterHead'])) {
-                if (!$isMaster) $element['visible'] = false;
+            // --- SYNC TOKEN / SHARED SECRET (Master & Slave, aber NICHT Standalone) ---
+            if (in_array($name, ['BtnGenToken', 'AuthToken', 'BtnShowToken'])) {
+                $element['visible'] = $isSyncRole;
             }
 
-            // --- EDITOR WORKFLOW (Master Only) ---
-            if ($isMaster) {
-                // LOCKED STATE: Show Unlock button, Hide Editor
-                if ($name === 'BtnLoad') {
-                    $element['visible'] = !$isUnlocked;
-                }
+            // --- MASTER SPEZIFISCH (Nur Master) ---
+            if (in_array($name, ['SlaveURLs', 'LabelSeparator', 'LabelMasterHead'])) {
+                $element['visible'] = $isMaster;
+            }
+
+            // --- EDITOR WORKFLOW (Master & Standalone) ---
+            if (in_array($name, ['BtnLoad', 'InputJson', 'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning'])) {
+                $element['visible'] = $isEditorRole ? $isUnlocked : false;
                 
-                // UNLOCKED STATE: Show Editor, Save, Cancel, Warning
-                if (in_array($name, ['InputJson', 'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning'])) {
-                    $element['visible'] = $isUnlocked;
-                }
-            } else {
-                // If Slave, hide ALL editor controls
-                if (in_array($name, ['BtnLoad', 'InputJson', 'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning'])) {
-                    $element['visible'] = false;
+                // Sonderfall: Der "Unlock" Button muss sichtbar sein, wenn die Rolle passt und noch gesperrt ist
+                if ($name === 'BtnLoad') {
+                    $element['visible'] = ($isEditorRole && !$isUnlocked);
                 }
             }
         }
 
-        // 4. Process Actions (Bottom Bar Buttons)
+        // 4. Actions (Der Sync-Button ganz unten)
         if (isset($json['actions'])) {
             foreach ($json['actions'] as &$action) {
                 if (($action['name'] ?? '') === 'BtnSync') {
-                    $action['visible'] = $isMaster; // Only Master can sync
+                    $action['visible'] = $isMaster; // Nur Master darf manuell synctriggern
                 }
             }
         }
@@ -101,44 +105,47 @@ class SecretsManager extends IPSModuleStrict {
     public function ApplyChanges(): void {
         parent::ApplyChanges();
         
-        // FIX for Module Store: Hide variable here, where we know it exists
+        // 1. Variable im Baum verstecken
         $vaultID = @$this->GetIDForIdent("Vault");
         if ($vaultID) {
             IPS_SetHidden($vaultID, true);
         }
 
-        // Register WebHook (Suppress warning if already exists)
-        @$this->RegisterHook("secrets_" . $this->InstanceID);
+        // 2. Aktuelle Rolle prüfen
+        $mode = $this->ReadPropertyInteger("OperationMode");
 
-        // Clear RAM Cache on config change
+        // --- SCHRITT 3: Rollenabhängige WebHook Registrierung ---
+        // Nur der Slave (0) muss Daten empfangen können.
+        // Master (1) und Standalone (2) registrieren keinen Hook.
+        if ($mode === 0) {
+            @$this->RegisterHook("secrets_" . $this->InstanceID);
+        }
+        // Hinweis: Falls die Instanz von Slave auf Standalone umgestellt wird,
+        // bleibt der Hook technisch in IP-Symcon vorhanden, wird aber durch 
+        // die Logik in ProcessHookData (Schritt 6) blockiert.
+
+        // 3. RAM Cache leeren bei Konfigurationsänderung
         $this->SetBuffer("DecryptedCache", ""); 
 
-        // Validate Directory Logic
+        // 4. Validierung des Verzeichnisses
         $folder = $this->ReadPropertyString("KeyFolderPath");
-        $mode = $this->ReadPropertyInteger("OperationMode");
-        
         $errorMessage = "";
         
-        // Check 1: Is path empty?
         if ($folder === "") {
             $this->SetStatus(104); // IS_INACTIVE
-        } 
-        // Check 2: Does directory exist?
-        elseif (!is_dir($folder)) {
+        } elseif (!is_dir($folder)) {
             $errorMessage = "Directory does not exist: " . $folder;
             $this->SetStatus(202); // IS_EBASE (Error)
         } 
-        // Check 3: Is it writable (Master only)?
-        elseif ($mode === 1 && !is_writable($folder)) {
+        // Master (1) und Standalone (2) müssen zwingend schreiben können (Key-Generierung)
+        elseif ($mode !== 0 && !is_writable($folder)) {
             $errorMessage = "Directory is not writable: " . $folder;
-            $this->SetStatus(202); // IS_EBASE (Error)
+            $this->SetStatus(202);
         } 
-        // All Good
         else {
             $this->SetStatus(102); // IS_ACTIVE
         }
 
-        // Update UI Layout (Error Header)
         $this->UpdateFormLayout($errorMessage);
     }
 
@@ -229,18 +236,32 @@ class SecretsManager extends IPSModuleStrict {
     }
 // Beachte den Parameter $jsonInput!
     public function EncryptAndSave(string $jsonInput): void {
-        if ($this->ReadPropertyInteger("OperationMode") !== 1) return;
+        $mode = $this->ReadPropertyInteger("OperationMode");
+
+        // --- SCHRITT 4: Zugriffskontrolle ---
+        // Nur Master (1) und Standalone (2) dürfen lokal verschlüsseln und speichern.
+        // Slaves (0) empfangen Daten nur über den WebHook.
+        if ($mode === 0) { 
+            echo "Operation not allowed in Slave mode."; 
+            return; 
+        }
         
-        if (trim($jsonInput) === "") { echo "Eingabe leer."; return; }
+        if (trim($jsonInput) === "") { 
+            echo "Input empty."; 
+            return; 
+        }
         
+        // JSON validieren
         $decoded = json_decode($jsonInput, true);
         if ($decoded === null) { 
-            echo "❌ JSON Syntax Fehler!"; 
+            echo "❌ JSON Syntax Error!"; 
             return; 
         }
 
+        // Verschlüsseln und lokal in die Variable "Vault" schreiben
         if ($this->_encryptAndSave($decoded)) {
-            // UI wieder in den "Sicheren Modus" versetzen
+            
+            // UI wieder in den "Sicheren Modus" (Gesperrt) versetzen
             $this->UpdateFormField("InputJson", "value", "");
             $this->UpdateFormField("InputJson", "visible", false);
             $this->UpdateFormField("BtnEncrypt", "visible", false);
@@ -248,8 +269,16 @@ class SecretsManager extends IPSModuleStrict {
             $this->UpdateFormField("LabelSecurityWarning", "visible", false);
             $this->UpdateFormField("BtnLoad", "visible", true);
             
-            echo "✅ Verschlüsselt gespeichert. Klartext nur im RAM.";
-            $this->SyncSlaves();
+            echo "✅ Saved & Encrypted locally.";
+            
+            // --- SCHRITT 4: Bedingter Sync ---
+            // Nur wenn wir Master (1) sind, stossen wir den Sync an die Slaves an.
+            // Ein Standalone-System (2) bleibt hier stehen.
+            if ($mode === 1) {
+                $this->SyncSlaves();
+            }
+        } else {
+            echo "❌ Error: Encryption failed.";
         }
     }
 
@@ -308,16 +337,42 @@ class SecretsManager extends IPSModuleStrict {
     // SYNCHRONIZATION (Master -> Slave)
     // =========================================================================
 
+/**
+     * SYNCHRONIZATION (Master -> Slave)
+     * Pushes the encrypted vault and the master key to all configured remote systems.
+     */
     public function SyncSlaves(): void {
-        if ($this->ReadPropertyInteger("OperationMode") !== 1) return;
+        $mode = $this->ReadPropertyInteger("OperationMode");
 
+        // --- SCHRITT 5: Funktions-Schutz ---
+        // Nur ein Master (1) darf Daten an Slaves senden.
+        if ($mode !== 1) {
+            if ($mode === 2) {
+                echo "Sync cancelled: Standalone systems are isolated.";
+            } else {
+                echo "Sync cancelled: Only Master instances can initiate synchronization.";
+            }
+            return;
+        }
+
+        // Slaves aus der Konfiguration laden
         $slaves = json_decode($this->ReadPropertyString("SlaveURLs"), true);
-        if (!is_array($slaves)) return;
+        if (!is_array($slaves) || count($slaves) === 0) {
+            echo "No slaves configured in the list.";
+            return;
+        }
 
+        // Vorbereitung der Daten
         $keyHex = $this->_readKey();
         $vault = $this->GetValue("Vault");
         $token = $this->ReadPropertyString("AuthToken");
 
+        if ($token === "") {
+            echo "Error: Sync Token is missing. Please generate a token first.";
+            return;
+        }
+
+        // Das Paket für die Slaves schnüren
         $payload = json_encode([
             'auth' => $token,
             'key'  => $keyHex,
@@ -325,19 +380,23 @@ class SecretsManager extends IPSModuleStrict {
         ]);
 
         $successCount = 0;
-        
+        $totalSlaves = count($slaves);
+
+        // Alle konfigurierten Slaves nacheinander abarbeiten
         foreach ($slaves as $slave) {
-            if (!isset($slave['Url']) || $slave['Url'] == "") continue;
+            if (!isset($slave['Url']) || $slave['Url'] == "") {
+                continue;
+            }
 
             $headers = "Content-type: application/json\r\n";
             
-            // Basic Auth Header
+            // Basic Auth Header hinzufügen, falls Benutzername gesetzt ist
             if (isset($slave['User']) && isset($slave['Pass']) && $slave['User'] !== "") {
                 $auth = base64_encode($slave['User'] . ":" . $slave['Pass']);
                 $headers .= "Authorization: Basic " . $auth . "\r\n";
             }
 
-            // SSL FIX: Allow self-signed certs for local LAN sync
+            // Stream Context Konfiguration (inkl. SSL-Fix für lokale IPs)
             $options = [
                 'http' => [
                     'method' => 'POST',
@@ -355,29 +414,53 @@ class SecretsManager extends IPSModuleStrict {
 
             $ctx = stream_context_create($options);
             
-            // Send
+            // Paket senden
             $res = @file_get_contents($slave['Url'], false, $ctx);
             
-            // Analyze Response
-            $statusLine = $http_response_header[0] ?? "Unknown"; 
+            // HTTP Antwort analysieren
+            $statusLine = $http_response_header[0] ?? "Unknown Status"; 
 
             if ($res !== false && strpos($statusLine, "200") !== false && trim($res) === "OK") {
-                $this->LogMessage("✅ Synced: " . $slave['Url'], KL_MESSAGE);
+                $this->LogMessage("✅ Sync Success: " . $slave['Url'], KL_MESSAGE);
                 $successCount++;
             } else {
-                $this->LogMessage("❌ Failed: " . $slave['Url'] . " -> " . $statusLine . " (Msg: " . trim($res) . ")", KL_ERROR);
+                $this->LogMessage("❌ Sync Failed: " . $slave['Url'] . " -> " . $statusLine . " (Response: " . trim((string)$res) . ")", KL_ERROR);
             }
         }
         
-        if ($successCount > 0) {
-            echo "Sync completed. Success: $successCount / Total: " . count($slaves);
+        // Abschließende Meldung für die Konsole
+        if ($successCount === $totalSlaves) {
+            echo "✅ Synchronization completed successfully for all $successCount slaves.";
         } else {
-            echo "Sync FAILED. Check messages log for details.";
+            echo "Sync finished. Success: $successCount / Total: $totalSlaves. Check the IP-Symcon log for detailed errors.";
         }
     }
 
+/**
+     * WEBHOOK DATA PROCESSING
+     * This is called by IP-Symcon when data is posted to /hook/secrets_ID
+     */
     protected function ProcessHookData(): void {
-        // 1. Basic Auth Check
+        $mode = $this->ReadPropertyInteger("OperationMode");
+
+        // --- SCHRITT 6: Sicherheits-Guard ---
+        // Nur Instanzen im Slave-Modus (0) dürfen Daten empfangen.
+        // Master (1) und Standalone (2) lehnen jeglichen Empfang strikt ab.
+        if ($mode !== 0) {
+            header("HTTP/1.1 403 Forbidden");
+            echo "Access Denied: This instance is not configured as a Slave.";
+            $this->LogMessage("Unauthorized WebHook access attempt: Instance is not a Slave.", KL_WARNING);
+            return;
+        }
+
+        // Sicherstellen, dass es ein POST-Request ist
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            header("HTTP/1.1 405 Method Not Allowed");
+            echo "Only POST requests are allowed.";
+            return;
+        }
+
+        // 1. Optionaler Basic Auth Check (WebHook-Schutz)
         $hookUser = $this->ReadPropertyString("HookUser");
         $hookPass = $this->ReadPropertyString("HookPass");
 
@@ -393,29 +476,34 @@ class SecretsManager extends IPSModuleStrict {
             }
         }
 
+        // Daten einlesen
         $input = file_get_contents("php://input");
         $data = json_decode($input, true);
 
-        // 2. Token Check
-        if (($data['auth'] ?? '') !== $this->ReadPropertyString("AuthToken")) {
+        // 2. Token Check (Shared Secret)
+        // Vergleicht den empfangenen Token mit dem lokal gespeicherten Sync Token
+        if (!isset($data['auth']) || $data['auth'] !== $this->ReadPropertyString("AuthToken")) {
             header("HTTP/1.1 403 Forbidden");
-            echo "Invalid Token";
+            echo "Invalid Sync Token";
+            $this->LogMessage("WebHook Error: Received an invalid or missing Sync Token.", KL_ERROR);
             return;
         }
 
-        // 3. Save Data
+        // 3. Daten verarbeiten und speichern
+        // Der Slave speichert Key und Vault, ohne sie im Klartext lesen zu müssen.
         if (isset($data['key'])) {
             $this->_writeKey($data['key']);
         }
 
         if (isset($data['vault'])) {
             $this->SetValue("Vault", $data['vault']);
+            // RAM Cache leeren, damit beim nächsten Zugriff mit dem neuen Key entschlüsselt wird
             $this->SetBuffer("DecryptedCache", ""); 
         }
 
+        // Rückmeldung an den Master
         echo "OK";
     }
-
     // =========================================================================
     // INTERNAL CRYPTO HELPERS
     // =========================================================================

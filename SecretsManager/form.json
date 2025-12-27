@@ -23,7 +23,8 @@
             "caption": "System Role",
             "options": [
                 { "caption": "Slave (Receiver)", "value": 0 },
-                { "caption": "Master (Sender)", "value": 1 }
+                { "caption": "Master (Sender)", "value": 1 },
+                { "caption": "Standalone (Local Vault)", "value": 2 }
             ],
             "onChange": "SEC_UpdateUI($id);"
         },
