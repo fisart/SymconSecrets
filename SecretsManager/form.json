@@ -184,7 +184,7 @@
             "type": "Button", 
             "name": "BtnEncrypt", 
             "caption": "💾 Encrypt & Save Entire Vault", 
-            "onClick": "SEC_EncryptAndSave($id, $EditorList);",
+            "onClick": "SEC_EncryptAndSave($id);",
             "visible": false
         },
         { 

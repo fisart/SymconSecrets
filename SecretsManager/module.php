@@ -540,20 +540,18 @@ public function GetConfigurationForm(): string {
     $this->UpdateFormField("BtnLoad", "visible", false);
     $this->UpdateFormField("LabelSecurityWarning", "visible", true);
 }
-public function HandleListAction($EditorList): void {
-    // Konvertierung wie oben
-    $list = is_string($EditorList) ? json_decode($EditorList, true) : (array)$EditorList;
-    
-    $path = json_decode($this->GetBuffer("CurrentPath"), true);
-    
-    // Aktuelle Änderungen in den Buffer schreiben
+public function HandleListAction(string $EditorList): void {
+    $list = json_decode($EditorList, true);
+    if (!is_array($list)) return;
+
+    // Änderungen in den Buffer schreiben
     $this->SyncListToBuffer($list);
 
-    // Deep-Dive Logik: Wenn ein "Folder" angeklickt wurde
+    // Deep-Dive Logik
     foreach ($list as $row) {
         if ($row['Type'] === 'Folder' && $row['Key'] !== "") {
-             // In Symcon 8.1 triggert onEdit, wir prüfen ob "Open" gewählt wurde
-             if (strpos($row['Action'], "Open") !== false) {
+             if (isset($row['Action']) && strpos($row['Action'], "Open") !== false) {
+                 $path = json_decode($this->GetBuffer("CurrentPath"), true);
                  $path[] = $row['Key'];
                  $this->SetBuffer("CurrentPath", json_encode($path));
                  $this->RenderEditor();
@@ -632,20 +630,16 @@ public function LoadVault(): void {
     $this->RenderEditor();
 }
 
-public function EncryptAndSave($EditorList): void {
+// Entferne den Parameter komplett
+public function EncryptAndSave(): void {
     $mode = $this->ReadPropertyInteger("OperationMode");
     if ($mode === 0) return; 
 
-    // Konvertierung: Falls es ein Objekt/Array ist, behalte es, falls String (alt), decode es.
-    $listData = is_string($EditorList) ? json_decode($EditorList, true) : (array)$EditorList;
+    // Wir holen die Daten direkt aus dem RAM-Buffer, 
+    // da sie dort durch HandleListAction immer aktuell gehalten werden.
+    $decrypted = $this->GetBuffer("DecryptedCache");
+    $fullData = ($decrypted == "") ? [] : json_decode($decrypted, true);
 
-    // 1. Änderungen aus der Liste in den RAM-Buffer mergen
-    $this->SyncListToBuffer($listData);
-
-    // 2. Den gesamten Tresor-Inhalt aus dem RAM-Buffer holen
-    $fullData = json_decode($this->GetBuffer("DecryptedCache"), true);
-
-    // 3. Verschlüsseln
     if ($this->_encryptAndSave($fullData)) {
         $this->ClearVault(); 
         echo "✅ Tresor erfolgreich verschlüsselt und gespeichert.";
