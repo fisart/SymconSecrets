@@ -435,30 +435,7 @@ public function GetConfigurationForm(): string {
         return rtrim($folder, '/\\') . DIRECTORY_SEPARATOR . self::KEY_FILENAME;
     }
 
-    public function EncryptAndSave($EditorList): void {
-        $mode = $this->ReadPropertyInteger("OperationMode");
-        if ($mode === 0) return; 
 
-        // Konvertierung: Falls es ein Objekt/Array ist, behalte es, falls String (alt), decode es.
-        $listData = is_string($EditorList) ? json_decode($EditorList, true) : (array)$EditorList;
-
-        // 1. Änderungen aus der Liste in den RAM-Buffer mergen
-        $this->SyncListToBuffer($listData);
-
-        // 2. Den gesamten Tresor-Inhalt aus dem RAM-Buffer holen
-        $fullData = json_decode($this->GetBuffer("DecryptedCache"), true);
-
-        // 3. Verschlüsseln
-        if ($this->_encryptAndSave($fullData)) {
-            $this->ClearVault(); 
-            echo "✅ Tresor erfolgreich verschlüsselt und gespeichert.";
-            if ($mode === 1) {
-                $this->SyncSlaves();
-            }
-        } else {
-            echo "❌ Fehler: Verschlüsselung fehlgeschlagen.";
-        }
-    }
 
     private function _decryptVault() {
         $vaultJson = $this->GetValue("Vault");
@@ -655,25 +632,23 @@ public function LoadVault(): void {
     $this->RenderEditor();
 }
 
-public function EncryptAndSave(string $EditorList): void {
+public function EncryptAndSave($EditorList): void {
     $mode = $this->ReadPropertyInteger("OperationMode");
-    if ($mode === 0) return; // Slaves dürfen nicht speichern
+    if ($mode === 0) return; 
 
-    // 1. Zuerst die Änderungen aus der aktuell sichtbaren Liste in den RAM-Buffer mergen
-    $listData = json_decode($EditorList, true);
+    // Konvertierung: Falls es ein Objekt/Array ist, behalte es, falls String (alt), decode es.
+    $listData = is_string($EditorList) ? json_decode($EditorList, true) : (array)$EditorList;
+
+    // 1. Änderungen aus der Liste in den RAM-Buffer mergen
     $this->SyncListToBuffer($listData);
 
-    // 2. Den gesamten Tresor-Inhalt (alle Ebenen) aus dem RAM-Buffer holen
+    // 2. Den gesamten Tresor-Inhalt aus dem RAM-Buffer holen
     $fullData = json_decode($this->GetBuffer("DecryptedCache"), true);
 
-    // 3. Das gesamte Paket verschlüsseln und in die IPS-Variable schreiben
+    // 3. Verschlüsseln
     if ($this->_encryptAndSave($fullData)) {
-        
-        // 4. Erfolg melden und den Editor aus Sicherheitsgründen sperren/leeren
         $this->ClearVault(); 
         echo "✅ Tresor erfolgreich verschlüsselt und gespeichert.";
-        
-        // 5. Falls Master-Modus: Sync an Slaves anstoßen
         if ($mode === 1) {
             $this->SyncSlaves();
         }
