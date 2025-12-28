@@ -435,32 +435,29 @@ public function GetConfigurationForm(): string {
         return rtrim($folder, '/\\') . DIRECTORY_SEPARATOR . self::KEY_FILENAME;
     }
 
-    private function _encryptAndSave(array $dataArray): bool {
-        $keyHex = $this->_loadOrGenerateKey();
-        if (!$keyHex) return false;
+    public function EncryptAndSave($EditorList): void {
+        $mode = $this->ReadPropertyInteger("OperationMode");
+        if ($mode === 0) return; 
 
-        $newKeyBin = hex2bin($keyHex);
-        $plain = json_encode($dataArray);
-        
-        $cipher = "aes-128-gcm";
-        $iv = random_bytes(openssl_cipher_iv_length($cipher));
-        $tag = ""; 
-        
-        $cipherText = openssl_encrypt($plain, $cipher, $newKeyBin, 0, $iv, $tag);
+        // Konvertierung: Falls es ein Objekt/Array ist, behalte es, falls String (alt), decode es.
+        $listData = is_string($EditorList) ? json_decode($EditorList, true) : (array)$EditorList;
 
-        if ($cipherText === false) return false;
+        // 1. Änderungen aus der Liste in den RAM-Buffer mergen
+        $this->SyncListToBuffer($listData);
 
-        $vaultData = json_encode([
-            'cipher' => $cipher,
-            'iv' => bin2hex($iv),
-            'tag'=> bin2hex($tag),
-            'data'=> $cipherText
-        ]);
+        // 2. Den gesamten Tresor-Inhalt aus dem RAM-Buffer holen
+        $fullData = json_decode($this->GetBuffer("DecryptedCache"), true);
 
-        $this->SetValue("Vault", $vaultData);
-        $this->_setCache($dataArray);
-        
-        return true;
+        // 3. Verschlüsseln
+        if ($this->_encryptAndSave($fullData)) {
+            $this->ClearVault(); 
+            echo "✅ Tresor erfolgreich verschlüsselt und gespeichert.";
+            if ($mode === 1) {
+                $this->SyncSlaves();
+            }
+        } else {
+            echo "❌ Fehler: Verschlüsselung fehlgeschlagen.";
+        }
     }
 
     private function _decryptVault() {
@@ -566,26 +563,25 @@ public function GetConfigurationForm(): string {
     $this->UpdateFormField("BtnLoad", "visible", false);
     $this->UpdateFormField("LabelSecurityWarning", "visible", true);
 }
-public function HandleListAction(string $EditorList): void {
-    $list = json_decode($EditorList, true);
+public function HandleListAction($EditorList): void {
+    // Konvertierung wie oben
+    $list = is_string($EditorList) ? json_decode($EditorList, true) : (array)$EditorList;
+    
     $path = json_decode($this->GetBuffer("CurrentPath"), true);
     
-    // Wir müssen herausfinden, welche Zeile gerade "aktiv" ist.
-    // In IP-Symcon wird bei onEdit die ganze Liste gesendet.
-    // Wir speichern zuerst alle Änderungen aus der Liste in unseren Cache:
+    // Aktuelle Änderungen in den Buffer schreiben
     $this->SyncListToBuffer($list);
 
-    // Wir schauen, ob ein Ordner angeklickt wurde (Simuliert durch das Klicken in der Liste)
-    // Hinweis: Für ein echtes "Deep Dive" nutzen wir hier eine einfache Logik:
-    // Wenn der Typ "Folder" ist, navigieren wir eine Ebene tiefer.
+    // Deep-Dive Logik: Wenn ein "Folder" angeklickt wurde
     foreach ($list as $row) {
         if ($row['Type'] === 'Folder' && $row['Key'] !== "") {
-             // In einem echten Modul müsste man hier prüfen, welche Zeile angeklickt wurde.
-             // Da Symcon onEdit für die Zelle feuert, nehmen wir an, dass der User "Open" wollte:
-             $path[] = $row['Key'];
-             $this->SetBuffer("CurrentPath", json_encode($path));
-             $this->RenderEditor();
-             return;
+             // In Symcon 8.1 triggert onEdit, wir prüfen ob "Open" gewählt wurde
+             if (strpos($row['Action'], "Open") !== false) {
+                 $path[] = $row['Key'];
+                 $this->SetBuffer("CurrentPath", json_encode($path));
+                 $this->RenderEditor();
+                 return;
+             }
         }
     }
 }
