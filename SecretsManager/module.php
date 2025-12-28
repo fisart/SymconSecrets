@@ -605,6 +605,34 @@ private function SyncListToBuffer(array $listFromUI): void {
     $this->SetBuffer("DecryptedCache", json_encode($fullData));
 }
 
+private function _encryptAndSave(array $dataArray): bool {
+    $keyHex = $this->_loadOrGenerateKey();
+    if (!$keyHex) return false;
+
+    $newKeyBin = hex2bin($keyHex);
+    $plain = json_encode($dataArray);
+    
+    $cipher = "aes-128-gcm";
+    $iv = random_bytes(openssl_cipher_iv_length($cipher));
+    $tag = ""; 
+    
+    $cipherText = openssl_encrypt($plain, $cipher, $newKeyBin, 0, $iv, $tag);
+
+    if ($cipherText === false) return false;
+
+    $vaultData = json_encode([
+        'cipher' => $cipher,
+        'iv' => bin2hex($iv),
+        'tag'=> bin2hex($tag),
+        'data'=> $cipherText
+    ]);
+
+    $this->SetValue("Vault", $vaultData);
+    $this->_setCache($dataArray);
+    
+    return true;
+}
+
 public function LoadVault(): void {
     // 1. Daten entschlüsseln
     $cache = $this->_decryptVault();
