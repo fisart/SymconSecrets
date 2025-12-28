@@ -116,12 +116,64 @@
             "visible": false,
             "bold": true
         },
-        {
-            "type": "ValidationTextBox", 
-            "name": "InputJson", 
-            "caption": "JSON Editor", 
-            "value": ""
+        
+        { "type": "Label", "name": "LabelPath", "caption": "Current Path: Root", "italic": true, "visible": false },
+        { 
+            "type": "Button", 
+            "name": "BtnBack", 
+            "caption": "⬅️ Go Up (Back)", 
+            "onClick": "SEC_NavigateUp($id);",
+            "visible": false
         },
+        {
+            "type": "List", 
+            "name": "EditorList", 
+            "caption": "Vault Content",
+            "rowCount": 10, 
+            "add": false, 
+            "delete": true,
+            "visible": false,
+            "columns": [
+                { "caption": "Name / Key", "name": "Key", "width": "200px" },
+                { 
+                    "caption": "Value (for Strings)", 
+                    "name": "Value", 
+                    "width": "auto", 
+                    "edit": { "type": "PasswordTextBox" } 
+                },
+                { "caption": "Type", "name": "Type", "width": "100px" },
+                { 
+                    "caption": "Action", 
+                    "name": "Action", 
+                    "width": "120px",
+                    "onEdit": "SEC_HandleListAction($id, $EditorList);"
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "name": "PanelAddEntry",
+            "caption": "Add New Entry to Current Level",
+            "visible": false,
+            "items": [
+                { "type": "ValidationTextBox", "name": "NewKeyName", "caption": "Entry Name (e.g. Spotify or Kameras)" },
+                { 
+                    "type": "Select", 
+                    "name": "NewKeyType", 
+                    "caption": "Entry Type",
+                    "options": [
+                        { "caption": "Password / String", "value": "string" },
+                        { "caption": "Folder / Object", "value": "object" }
+                    ]
+                },
+                { 
+                    "type": "Button", 
+                    "caption": "➕ Add Entry", 
+                    "onClick": "SEC_AddEntry($id, $NewKeyName, $NewKeyType);" 
+                }
+            ]
+        },
+
         { 
             "type": "Button", 
             "name": "BtnLoad", 
@@ -131,14 +183,16 @@
         { 
             "type": "Button", 
             "name": "BtnEncrypt", 
-            "caption": "💾 Encrypt & Save", 
-            "onClick": "SEC_EncryptAndSave($id, $InputJson);" 
+            "caption": "💾 Encrypt & Save Entire Vault", 
+            "onClick": "SEC_EncryptAndSave($id, $EditorList);",
+            "visible": false
         },
         { 
             "type": "Button", 
             "name": "BtnClear", 
-            "caption": "❌ Cancel / Wipe", 
-            "onClick": "SEC_ClearVault($id);" 
+            "caption": "❌ Cancel / Wipe RAM", 
+            "onClick": "SEC_ClearVault($id);",
+            "visible": false
         }
     ],
     "actions": [

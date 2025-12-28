@@ -33,7 +33,7 @@ class SecretsManager extends IPSModuleStrict {
      * This is called by IP-Symcon BEFORE the settings window opens.
      * It modifies the static form.json to hide irrelevant fields based on Master/Slave role.
      */
-    public function GetConfigurationForm(): string {
+public function GetConfigurationForm(): string {
         // 1. Statische Vorlage laden
         $json = json_decode(file_get_contents(__DIR__ . "/form.json"), true);
         
@@ -51,8 +51,11 @@ class SecretsManager extends IPSModuleStrict {
         // Wer braucht Synchronisations-Einstellungen? (Master und Slave)
         $isSyncRole   = ($isMaster || $isSlave);
 
-        // Stateless UI: Beim Öffnen immer "Locked"
-        $isUnlocked = false; 
+        // Liste aller Editor-Elemente für das Deep-Dive Grid
+        $editorElements = [
+            'LabelPath', 'BtnBack', 'EditorList', 'PanelAddEntry', 
+            'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning'
+        ];
 
         // 3. Elemente filtern
         foreach ($json['elements'] as &$element) {
@@ -80,13 +83,15 @@ class SecretsManager extends IPSModuleStrict {
             }
 
             // --- EDITOR WORKFLOW (Master & Standalone) ---
-            if (in_array($name, ['BtnLoad', 'InputJson', 'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning'])) {
-                $element['visible'] = $isEditorRole ? $isUnlocked : false;
-                
-                // Sonderfall: Der "Unlock" Button muss sichtbar sein, wenn die Rolle passt und noch gesperrt ist
-                if ($name === 'BtnLoad') {
-                    $element['visible'] = ($isEditorRole && !$isUnlocked);
-                }
+            // Wir blenden im Standard-Zustand des Formulars alle Editor-Elemente aus.
+            // Diese werden erst dynamisch durch "LoadVault" (Unlock) sichtbar gemacht.
+            if (in_array($name, $editorElements)) {
+                $element['visible'] = false;
+            }
+
+            // Der Unlock-Button ist die Pforte zum Editor
+            if ($name === 'BtnLoad') {
+                $element['visible'] = $isEditorRole; 
             }
         }
 
@@ -209,90 +214,6 @@ class SecretsManager extends IPSModuleStrict {
     }
 
     // =========================================================================
-    // EDITOR ACTIONS (Load / Save / Wipe)
-    // =========================================================================
-
-    public function LoadVault(): void {
-        $cache = $this->_decryptVault();
-        
-        if ($cache === false) {
-            $json = ($this->GetValue("Vault") === "") ? "{}" : "";
-            if ($json === "") {
-                echo "❌ Fehler: Entschlüsselung fehlgeschlagen.";
-                return;
-            }
-        } else {
-            $json = json_encode($cache, JSON_PRETTY_PRINT);
-        }
-
-        // WICHTIG: Wir schreiben nicht in eine Property, sondern schicken 
-        // das Passwort direkt an das Textfeld in der UI.
-        $this->UpdateFormField("InputJson", "value", $json);
-        $this->UpdateFormField("InputJson", "visible", true);
-        $this->UpdateFormField("BtnEncrypt", "visible", true);
-        $this->UpdateFormField("BtnClear", "visible", true);
-        $this->UpdateFormField("LabelSecurityWarning", "visible", true);
-        $this->UpdateFormField("BtnLoad", "visible", false);
-    }
-// Beachte den Parameter $jsonInput!
-    public function EncryptAndSave(string $jsonInput): void {
-        $mode = $this->ReadPropertyInteger("OperationMode");
-
-        // --- SCHRITT 4: Zugriffskontrolle ---
-        // Nur Master (1) und Standalone (2) dürfen lokal verschlüsseln und speichern.
-        // Slaves (0) empfangen Daten nur über den WebHook.
-        if ($mode === 0) { 
-            echo "Operation not allowed in Slave mode."; 
-            return; 
-        }
-        
-        if (trim($jsonInput) === "") { 
-            echo "Input empty."; 
-            return; 
-        }
-        
-        // JSON validieren
-        $decoded = json_decode($jsonInput, true);
-        if ($decoded === null) { 
-            echo "❌ JSON Syntax Error!"; 
-            return; 
-        }
-
-        // Verschlüsseln und lokal in die Variable "Vault" schreiben
-        if ($this->_encryptAndSave($decoded)) {
-            
-            // UI wieder in den "Sicheren Modus" (Gesperrt) versetzen
-            $this->UpdateFormField("InputJson", "value", "");
-            $this->UpdateFormField("InputJson", "visible", false);
-            $this->UpdateFormField("BtnEncrypt", "visible", false);
-            $this->UpdateFormField("BtnClear", "visible", false);
-            $this->UpdateFormField("LabelSecurityWarning", "visible", false);
-            $this->UpdateFormField("BtnLoad", "visible", true);
-            
-            echo "✅ Saved & Encrypted locally.";
-            
-            // --- SCHRITT 4: Bedingter Sync ---
-            // Nur wenn wir Master (1) sind, stossen wir den Sync an die Slaves an.
-            // Ein Standalone-System (2) bleibt hier stehen.
-            if ($mode === 1) {
-                $this->SyncSlaves();
-            }
-        } else {
-            echo "❌ Error: Encryption failed.";
-        }
-    }
-
-    public function ClearVault(): void {
-        // Einfach alles wieder verstecken und leeren
-        $this->UpdateFormField("InputJson", "value", "");
-        $this->UpdateFormField("InputJson", "visible", false);
-        $this->UpdateFormField("BtnEncrypt", "visible", false);
-        $this->UpdateFormField("BtnClear", "visible", false);
-        $this->UpdateFormField("LabelSecurityWarning", "visible", false);
-        $this->UpdateFormField("BtnLoad", "visible", true);
-    }
-
-    // =========================================================================
     // PUBLIC API (For Scripts)
     // =========================================================================
 
@@ -337,7 +258,7 @@ class SecretsManager extends IPSModuleStrict {
     // SYNCHRONIZATION (Master -> Slave)
     // =========================================================================
 
-/**
+    /**
      * SYNCHRONIZATION (Master -> Slave)
      * Pushes the encrypted vault and the master key to all configured remote systems.
      */
@@ -436,7 +357,7 @@ class SecretsManager extends IPSModuleStrict {
         }
     }
 
-/**
+    /**
      * WEBHOOK DATA PROCESSING
      * This is called by IP-Symcon when data is posted to /hook/secrets_ID
      */
@@ -606,5 +527,194 @@ class SecretsManager extends IPSModuleStrict {
     private function _setCache(array $array): void {
         $this->SetBuffer("DecryptedCache", json_encode($array));
     }
+
+
+    private function RenderEditor(): void {
+    $fullData = json_decode($this->GetBuffer("DecryptedCache"), true);
+    $path = json_decode($this->GetBuffer("CurrentPath"), true);
+
+    // Wir "wühlen" uns durch das Array bis zum aktuellen Pfad
+    $currentLevel = $fullData;
+    foreach ($path as $step) {
+        if (isset($currentLevel[$step])) {
+            $currentLevel = $currentLevel[$step];
+        }
+    }
+
+    // Liste für das UI aufbereiten
+    $listValues = [];
+    foreach ($currentLevel as $key => $value) {
+        $isObject = is_array($value);
+        $listValues[] = [
+            'Key'    => $key,
+            'Value'  => $isObject ? "" : $value,
+            'Type'   => $isObject ? "Folder" : "Password",
+            'Action' => $isObject ? "📂 Open" : "✏️ Edit"
+        ];
+    }
+
+    // UI aktualisieren
+    $pathString = "Root" . (count($path) > 0 ? " > " . implode(" > ", $path) : "");
+    $this->UpdateFormField("LabelPath", "caption", "Current Path: " . $pathString);
+    $this->UpdateFormField("LabelPath", "visible", true);
+    $this->UpdateFormField("BtnBack", "visible", count($path) > 0);
+    $this->UpdateFormField("EditorList", "values", json_encode($listValues));
+    $this->UpdateFormField("EditorList", "visible", true);
+    $this->UpdateFormField("PanelAddEntry", "visible", true);
+    $this->UpdateFormField("BtnEncrypt", "visible", true);
+    $this->UpdateFormField("BtnClear", "visible", true);
+    $this->UpdateFormField("BtnLoad", "visible", false);
+    $this->UpdateFormField("LabelSecurityWarning", "visible", true);
 }
+public function HandleListAction(string $EditorList): void {
+    $list = json_decode($EditorList, true);
+    $path = json_decode($this->GetBuffer("CurrentPath"), true);
+    
+    // Wir müssen herausfinden, welche Zeile gerade "aktiv" ist.
+    // In IP-Symcon wird bei onEdit die ganze Liste gesendet.
+    // Wir speichern zuerst alle Änderungen aus der Liste in unseren Cache:
+    $this->SyncListToBuffer($list);
+
+    // Wir schauen, ob ein Ordner angeklickt wurde (Simuliert durch das Klicken in der Liste)
+    // Hinweis: Für ein echtes "Deep Dive" nutzen wir hier eine einfache Logik:
+    // Wenn der Typ "Folder" ist, navigieren wir eine Ebene tiefer.
+    foreach ($list as $row) {
+        if ($row['Type'] === 'Folder' && $row['Key'] !== "") {
+             // In einem echten Modul müsste man hier prüfen, welche Zeile angeklickt wurde.
+             // Da Symcon onEdit für die Zelle feuert, nehmen wir an, dass der User "Open" wollte:
+             $path[] = $row['Key'];
+             $this->SetBuffer("CurrentPath", json_encode($path));
+             $this->RenderEditor();
+             return;
+        }
+    }
+}
+
+public function NavigateUp(): void {
+    $path = json_decode($this->GetBuffer("CurrentPath"), true);
+    if (count($path) > 0) {
+        array_pop($path); // Letztes Element entfernen
+        $this->SetBuffer("CurrentPath", json_encode($path));
+        $this->RenderEditor();
+    }
+}
+
+public function AddEntry(string $name, string $type): void {
+    if ($name === "") return;
+
+    $fullData = json_decode($this->GetBuffer("DecryptedCache"), true);
+    
+    // Nutze den Helper mit dem & Zeichen!
+    $temp = &$this->getCurrentLevelReference($fullData);
+
+    // Neuen Eintrag erzeugen
+    if ($type === "object") {
+        $temp[$name] = []; 
+    } else {
+        $temp[$name] = "new_password"; 
+    }
+
+    $this->SetBuffer("DecryptedCache", json_encode($fullData));
+    $this->RenderEditor();
+}
+
+private function SyncListToBuffer(array $listFromUI): void {
+    $fullData = json_decode($this->GetBuffer("DecryptedCache"), true);
+
+    // Nutze den Helper!
+    $temp = &$this->getCurrentLevelReference($fullData);
+
+    // Wir überschreiben die Werte im Master-Array
+    foreach ($listFromUI as $row) {
+        if ($row['Type'] === 'Password') {
+            $temp[$row['Key']] = $row['Value'];
+        }
+    }
+
+    $this->SetBuffer("DecryptedCache", json_encode($fullData));
+}
+
+public function LoadVault(): void {
+    // 1. Daten entschlüsseln
+    $cache = $this->_decryptVault();
+    
+    if ($cache === false) {
+        // Falls der Tresor leer ist (Neuanlage), starten wir mit einem leeren Array
+        $vaultValue = $this->GetValue("Vault");
+        if ($vaultValue === "" || $vaultValue === "Encrypted Vault") {
+            $cache = [];
+        } else {
+            echo "❌ Fehler: Tresor konnte nicht entschlüsselt werden. Key-Datei prüfen!";
+            return;
+        }
+    }
+
+    // 2. Den kompletten Tresor-Inhalt unverschlüsselt im RAM-Buffer ablegen
+    $this->SetBuffer("DecryptedCache", json_encode($cache));
+    
+    // 3. Den aktuellen Pfad auf die Wurzel (Root) setzen
+    $this->SetBuffer("CurrentPath", json_encode([]));
+
+    // 4. Das UI-Grid mit der ersten Ebene befüllen
+    $this->RenderEditor();
+}
+
+public function EncryptAndSave(string $EditorList): void {
+    $mode = $this->ReadPropertyInteger("OperationMode");
+    if ($mode === 0) return; // Slaves dürfen nicht speichern
+
+    // 1. Zuerst die Änderungen aus der aktuell sichtbaren Liste in den RAM-Buffer mergen
+    $listData = json_decode($EditorList, true);
+    $this->SyncListToBuffer($listData);
+
+    // 2. Den gesamten Tresor-Inhalt (alle Ebenen) aus dem RAM-Buffer holen
+    $fullData = json_decode($this->GetBuffer("DecryptedCache"), true);
+
+    // 3. Das gesamte Paket verschlüsseln und in die IPS-Variable schreiben
+    if ($this->_encryptAndSave($fullData)) {
+        
+        // 4. Erfolg melden und den Editor aus Sicherheitsgründen sperren/leeren
+        $this->ClearVault(); 
+        echo "✅ Tresor erfolgreich verschlüsselt und gespeichert.";
+        
+        // 5. Falls Master-Modus: Sync an Slaves anstoßen
+        if ($mode === 1) {
+            $this->SyncSlaves();
+        }
+    } else {
+        echo "❌ Fehler: Verschlüsselung fehlgeschlagen.";
+    }
+}
+
+public function ClearVault(): void {
+    // RAM-Buffer restlos leeren
+    $this->SetBuffer("DecryptedCache", "");
+    $this->SetBuffer("CurrentPath", "");
+
+    // Alle Editor-Elemente in der UI verstecken
+    $this->UpdateFormField("LabelPath", "visible", false);
+    $this->UpdateFormField("BtnBack", "visible", false);
+    $this->UpdateFormField("EditorList", "visible", false);
+    $this->UpdateFormField("PanelAddEntry", "visible", false);
+    $this->UpdateFormField("BtnEncrypt", "visible", false);
+    $this->UpdateFormField("BtnClear", "visible", false);
+    $this->UpdateFormField("LabelSecurityWarning", "visible", false);
+    
+    // Den "Unlock" Button wieder anzeigen
+    $this->UpdateFormField("BtnLoad", "visible", true);
+}
+
+// Interner Helper: Findet die aktuelle Ebene im Gesamt-Array
+private function &getCurrentLevelReference(&$fullData) {
+    $path = json_decode($this->GetBuffer("CurrentPath"), true);
+    $level = &$fullData; // Start bei Root
+    foreach ($path as $step) {
+        if (isset($level[$step]) && is_array($level[$step])) {
+            $level = &$level[$step]; // Wir gehen eine Ebene tiefer
+        }
+    }
+    return $level;
+}
+}
+
 ?>
