@@ -514,46 +514,42 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * Handle actions (like clicking the "Open" button) inside the Editor List.
      */
-    public function HandleListAction($EditorList): void {
-        // 1. Datentyp-Check für Symcon 8.1 (IPSList Objekt zu Array konvertieren)
-        if (is_object($EditorList)) {
-            // Falls es ein IPSList Objekt ist, wandeln wir es in ein PHP-Array um
-            $list = [];
-            foreach ($EditorList as $row) {
-                $list[] = (array)$row;
-            }
-        } else {
-            // Falls es (wie bei älteren Versionen) ein JSON-String ist
-            $list = json_decode((string)$EditorList, true);
+    /**
+     * Wird aufgerufen, wenn der "Open" Button in einer Zeile geklickt wird.
+     */
+    public function HandleListAction(string $Key): void {
+        $pathBuffer = $this->GetBuffer("CurrentPath");
+        $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
+        if (!is_array($path)) $path = [];
+        
+        // Wir fügen den Namen des Ordners zum Pfad hinzu
+        $path[] = $Key;
+        
+        $this->SetBuffer("CurrentPath", json_encode($path));
+        
+        // UI neu zeichnen
+        $this->RenderEditor();
+    }
+
+    /**
+     * Wird aufgerufen, wenn ein Passwort in der Liste geändert wird.
+     */
+    public function UpdateValue(string $Key, string $Value): void {
+        $decrypted = $this->GetBuffer("DecryptedCache");
+        $fullData = ($decrypted == "") ? [] : json_decode($decrypted, true);
+        if (!is_array($fullData)) $fullData = [];
+
+        // Referenz auf die aktuelle Ebene holen
+        $temp = &$this->getCurrentLevelReference($fullData);
+
+        // Den Wert direkt im RAM-Buffer aktualisieren
+        if (isset($temp[$Key])) {
+            $temp[$Key] = $Value;
         }
 
-        if (!is_array($list) || count($list) === 0) return;
-
-        // 2. Änderungen (Passwörter) im RAM-Buffer sichern
-        $this->SyncListToBuffer($list);
-
-        // 3. Navigation (Deep-Dive)
-        // Wir suchen, in welcher Zeile eine Aktion ausgelöst wurde
-        foreach ($list as $row) {
-            // Wenn es ein Ordner ist, navigieren wir hinein
-            if (isset($row['Type']) && $row['Type'] === 'Folder' && !empty($row['Key'])) {
-                
-                // Wir prüfen, ob auf den Button geklickt wurde
-                // Da onEdit bei Buttons triggert, nehmen wir die erste Folder-Zeile, 
-                // in der die Aktion erkannt wird.
-                $pathBuffer = $this->GetBuffer("CurrentPath");
-                $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
-                if (!is_array($path)) $path = [];
-                
-                $path[] = $row['Key'];
-                
-                $this->SetBuffer("CurrentPath", json_encode($path));
-                
-                // UI neu zeichnen für die tiefere Ebene
-                $this->RenderEditor();
-                return;
-            }
-        }
+        $this->SetBuffer("DecryptedCache", json_encode($fullData));
+        
+        // Wir müssen nicht neu rendern, da die UI den Wert bereits hat
     }
 
     public function NavigateUp(): void {
@@ -633,6 +629,7 @@ class SecretsManager extends IPSModuleStrict {
         $mode = $this->ReadPropertyInteger("OperationMode");
         if ($mode === 0) return; 
 
+        // Wir nehmen die Daten direkt aus dem RAM-Buffer
         $decrypted = $this->GetBuffer("DecryptedCache");
         $fullData = ($decrypted == "") ? [] : json_decode($decrypted, true);
 
@@ -644,7 +641,6 @@ class SecretsManager extends IPSModuleStrict {
             echo "❌ Fehler: Verschlüsselung fehlgeschlagen.";
         }
     }
-
     public function ClearVault(): void {
         $this->SetBuffer("DecryptedCache", "");
         $this->SetBuffer("CurrentPath", "");

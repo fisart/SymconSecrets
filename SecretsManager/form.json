@@ -130,21 +130,22 @@
             "add": false, 
             "delete": true,
             "visible": false,
-            "onEdit": "SEC_HandleListAction($id, $EditorList);",
             "columns": [
                 { "caption": "Name / Key", "name": "Key", "width": "200px" },
                 { 
                     "caption": "Value (Cleartext)", 
                     "name": "Value", 
                     "width": "auto", 
-                    "edit": { "type": "ValidationTextBox" } 
+                    "edit": { "type": "ValidationTextBox" },
+                    "onEdit": "SEC_UpdateValue($id, $Key, $Value);" 
                 },
                 { "caption": "Type", "name": "Type", "width": "100px" },
                 { 
                     "caption": "Action", 
                     "name": "Action", 
                     "width": "120px",
-                    "edit": { "type": "Button", "caption": "Open" }
+                    "edit": { "type": "Button", "caption": "Open" },
+                    "onEdit": "SEC_HandleListAction($id, $Key);" 
                 }
             ]
         },
