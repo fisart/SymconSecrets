@@ -469,15 +469,16 @@ class SecretsManager extends IPSModuleStrict {
     // EDITOR NAVIGATION & RENDER
     // =========================================================================
 
+    /**
+     * UI NEU ZEICHNEN
+     */
     private function RenderEditor(): void {
-        $decrypted = $this->GetBuffer("DecryptedCache");
-        $fullData = ($decrypted == "") ? [] : json_decode($decrypted, true);
-        if (!is_array($fullData)) $fullData = [];
+        $buffer = $this->GetBuffer("DecryptedCache");
+        $fullData = ($buffer === "") ? [] : json_decode($buffer, true);
 
         $pathBuffer = $this->GetBuffer("CurrentPath");
         $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
-        if (!is_array($path)) $path = [];
-
+        
         $currentLevel = $fullData;
         foreach ($path as $step) {
             if (isset($currentLevel[$step]) && is_array($currentLevel[$step])) {
@@ -493,44 +494,61 @@ class SecretsManager extends IPSModuleStrict {
                     'Key'    => $key,
                     'Value'  => $isObject ? "" : (string)$value,
                     'Type'   => $isObject ? "Folder" : "Password",
-                    'Action' => $isObject ? "📂 Open" : "✏️ Edit"
+                    'Action' => $isObject ? "Open" : "Edit" // Nur der Text für den Button
                 ];
             }
         }
 
+        // UI-Elemente aktualisieren
         $pathString = "Root" . (count($path) > 0 ? " > " . implode(" > ", $path) : "");
         $this->UpdateFormField("LabelPath", "caption", "Current Path: " . $pathString);
         $this->UpdateFormField("LabelPath", "visible", true);
         $this->UpdateFormField("BtnBack", "visible", count($path) > 0);
+        
+        // WICHTIG: Wir leeren die Liste kurz und befüllen sie dann neu
         $this->UpdateFormField("EditorList", "values", json_encode($listValues));
+        
+        // ZUSATZ FÜR SYMCON 8.1: Formular-Reload erzwingen, falls UpdateFormField ignoriert wird
+        // $this->ReloadForm(); 
+        
         $this->UpdateFormField("EditorList", "visible", true);
         $this->UpdateFormField("PanelAddEntry", "visible", true);
         $this->UpdateFormField("BtnEncrypt", "visible", true);
         $this->UpdateFormField("BtnClear", "visible", true);
         $this->UpdateFormField("BtnLoad", "visible", false);
-        $this->UpdateFormField("LabelSecurityWarning", "visible", true);
     }
 
     /**
-     * Handle actions (like clicking the "Open" button) inside the Editor List.
-     */
-    /**
-     * Wird aufgerufen, wenn der "Open" Button in einer Zeile geklickt wird.
+     * NAVIGATION: In einen Ordner eintauchen
      */
     public function HandleListAction(string $Key): void {
+        // Diagnose-Log
+        $this->LogMessage("HandleListAction aufgerufen für Key: " . $Key, KL_MESSAGE);
+
         $pathBuffer = $this->GetBuffer("CurrentPath");
         $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
-        if (!is_array($path)) $path = [];
         
-        // Wir fügen den Namen des Ordners zum Pfad hinzu
-        $path[] = $Key;
+        // Prüfen, ob der Key überhaupt ein Ordner ist (Sicherheits-Check)
+        $decrypted = $this->GetBuffer("DecryptedCache");
+        $fullData = ($decrypted == "") ? [] : json_decode($decrypted, true);
         
-        $this->SetBuffer("CurrentPath", json_encode($path));
-        
-        // UI neu zeichnen
-        $this->RenderEditor();
-    }
+        // Wir suchen die aktuelle Ebene
+        $temp = $fullData;
+        foreach ($path as $step) {
+            if (isset($temp[$step])) $temp = $temp[$step];
+        }
 
+        // Wenn der Key ein Array ist, ist es ein Ordner -> Pfad erweitern
+        if (isset($temp[$Key]) && is_array($temp[$Key])) {
+            $path[] = $Key;
+            $this->SetBuffer("CurrentPath", json_encode($path));
+            $this->LogMessage("Pfad erweitert: " . json_encode($path), KL_MESSAGE);
+            
+            $this->RenderEditor();
+        } else {
+            $this->LogMessage("Klick ignoriert: Key '$Key' ist kein Ordner.", KL_WARNING);
+        }
+    }
     /**
      * Wird aufgerufen, wenn ein Passwort in der Liste geändert wird.
      */
