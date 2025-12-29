@@ -514,26 +514,33 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * Handle actions (like clicking the "Open" button) inside the Editor List.
      */
-    public function HandleListAction(string $EditorList): void {
-        // 1. Daten sicher dekodieren (erfüllt die PHPLibrary Anforderung)
-        $list = json_decode($EditorList, true);
-
-        // Sicherheits-Check, falls IP-Symcon die Daten doch anders übergibt
-        if (!is_array($list)) {
-            $list = (array)$EditorList;
+    public function HandleListAction($EditorList): void {
+        // 1. Datentyp-Check für Symcon 8.1 (IPSList Objekt zu Array konvertieren)
+        if (is_object($EditorList)) {
+            // Falls es ein IPSList Objekt ist, wandeln wir es in ein PHP-Array um
+            $list = [];
+            foreach ($EditorList as $row) {
+                $list[] = (array)$row;
+            }
+        } else {
+            // Falls es (wie bei älteren Versionen) ein JSON-String ist
+            $list = json_decode((string)$EditorList, true);
         }
 
-        if (count($list) === 0) return;
+        if (!is_array($list) || count($list) === 0) return;
 
         // 2. Änderungen (Passwörter) im RAM-Buffer sichern
         $this->SyncListToBuffer($list);
 
         // 3. Navigation (Deep-Dive)
-        // Wir suchen nach der Zeile, die den Typ "Folder" hat
+        // Wir suchen, in welcher Zeile eine Aktion ausgelöst wurde
         foreach ($list as $row) {
+            // Wenn es ein Ordner ist, navigieren wir hinein
             if (isset($row['Type']) && $row['Type'] === 'Folder' && !empty($row['Key'])) {
                 
-                // Wir prüfen, ob der Pfad existiert und erweitern ihn
+                // Wir prüfen, ob auf den Button geklickt wurde
+                // Da onEdit bei Buttons triggert, nehmen wir die erste Folder-Zeile, 
+                // in der die Aktion erkannt wird.
                 $pathBuffer = $this->GetBuffer("CurrentPath");
                 $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
                 if (!is_array($path)) $path = [];

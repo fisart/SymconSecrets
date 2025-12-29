@@ -92,7 +92,8 @@
                     "caption": "Pass (Optional)", 
                     "name": "Pass", 
                     "width": "150px", 
-                    "add": { "type": "PasswordTextBox" } 
+                    "add": "",
+                    "edit": { "type": "PasswordTextBox" } 
                 }
             ]
         },
