@@ -494,23 +494,19 @@ class SecretsManager extends IPSModuleStrict {
                     'Key'    => $key,
                     'Value'  => $isObject ? "" : (string)$value,
                     'Type'   => $isObject ? "Folder" : "Password",
-                    'Action' => $isObject ? "Open" : "Edit" // Nur der Text für den Button
+                    // HIER fügen wir die Symbole für die Liste wieder ein:
+                    'Action' => $isObject ? "📂 Open" : "✏️ Edit" 
                 ];
             }
         }
 
-        // UI-Elemente aktualisieren
         $pathString = "Root" . (count($path) > 0 ? " > " . implode(" > ", $path) : "");
         $this->UpdateFormField("LabelPath", "caption", "Current Path: " . $pathString);
-        $this->UpdateFormField("LabelPath", "visible", true);
         $this->UpdateFormField("BtnBack", "visible", count($path) > 0);
-        
-        // WICHTIG: Wir leeren die Liste kurz und befüllen sie dann neu
         $this->UpdateFormField("EditorList", "values", json_encode($listValues));
         
-        // ZUSATZ FÜR SYMCON 8.1: Formular-Reload erzwingen, falls UpdateFormField ignoriert wird
-        // $this->ReloadForm(); 
-        
+        // Alles sichtbar machen
+        $this->UpdateFormField("LabelPath", "visible", true);
         $this->UpdateFormField("EditorList", "visible", true);
         $this->UpdateFormField("PanelAddEntry", "visible", true);
         $this->UpdateFormField("BtnEncrypt", "visible", true);
@@ -522,32 +518,27 @@ class SecretsManager extends IPSModuleStrict {
      * NAVIGATION: In einen Ordner eintauchen
      */
     public function HandleListAction(string $Key): void {
-        // Diagnose-Log
-        $this->LogMessage("HandleListAction aufgerufen für Key: " . $Key, KL_MESSAGE);
+        // Diese Nachricht MUSS jetzt im Log erscheinen
+        $this->LogMessage("Klick-Event empfangen für Ordner: " . $Key, KL_MESSAGE);
+
+        if ($Key === "") {
+            $this->LogMessage("Fehler: Key ist leer.", KL_ERROR);
+            return;
+        }
 
         $pathBuffer = $this->GetBuffer("CurrentPath");
         $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
         
-        // Prüfen, ob der Key überhaupt ein Ordner ist (Sicherheits-Check)
-        $decrypted = $this->GetBuffer("DecryptedCache");
-        $fullData = ($decrypted == "") ? [] : json_decode($decrypted, true);
+        // Pfad um den geklickten Ordner erweitern
+        $path[] = $Key;
         
-        // Wir suchen die aktuelle Ebene
-        $temp = $fullData;
-        foreach ($path as $step) {
-            if (isset($temp[$step])) $temp = $temp[$step];
-        }
-
-        // Wenn der Key ein Array ist, ist es ein Ordner -> Pfad erweitern
-        if (isset($temp[$Key]) && is_array($temp[$Key])) {
-            $path[] = $Key;
-            $this->SetBuffer("CurrentPath", json_encode($path));
-            $this->LogMessage("Pfad erweitert: " . json_encode($path), KL_MESSAGE);
-            
-            $this->RenderEditor();
-        } else {
-            $this->LogMessage("Klick ignoriert: Key '$Key' ist kein Ordner.", KL_WARNING);
-        }
+        $this->SetBuffer("CurrentPath", json_encode($path));
+        
+        // UI neu zeichnen
+        $this->RenderEditor();
+        
+        // Sicherheitshalber für Symcon 8.1 einen Form-Reload hinterherschicken
+        $this->ReloadForm(); 
     }
     /**
      * Wird aufgerufen, wenn ein Passwort in der Liste geändert wird.

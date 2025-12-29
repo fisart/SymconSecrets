@@ -136,16 +136,21 @@
                     "caption": "Value (Cleartext)", 
                     "name": "Value", 
                     "width": "auto", 
-                    "edit": { "type": "ValidationTextBox" },
-                    "onEdit": "SEC_UpdateValue($id, $Key, $Value);" 
+                    "edit": { 
+                        "type": "ValidationTextBox",
+                        "onChange": "SEC_UpdateValue($id, $Key, $Value);" 
+                    } 
                 },
                 { "caption": "Type", "name": "Type", "width": "100px" },
                 { 
                     "caption": "Action", 
                     "name": "Action", 
                     "width": "120px",
-                    "edit": { "type": "Button", "caption": "Open" },
-                    "onEdit": "SEC_HandleListAction($id, $Key);" 
+                    "edit": { 
+                        "type": "Button", 
+                        "caption": "Open",
+                        "onClick": "SEC_HandleListAction($id, $Key);" 
+                    }
                 }
             ]
         },
