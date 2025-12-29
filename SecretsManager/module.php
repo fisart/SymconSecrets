@@ -409,26 +409,63 @@ class SecretsManager extends IPSModuleStrict {
      * Updates a specific field of an entry at the current level.
      */
     public function UpdateValue(int $index, string $Field, string $Value): void {
+        // DIAGNOSE 1: Was kommt von der UI an?
+        $this->LogMessage("DEBUG 1: UI sendet - Index: $index, Feld: $Field, Wert: $Value", KL_MESSAGE);
+
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
+        
+        // Den Pfad für das Log lesbar machen
+        $path = $this->GetBuffer("CurrentPath");
+        $this->LogMessage("DEBUG 2: Aktueller Pfad im RAM: " . ($path ?: "Root"), KL_MESSAGE);
+
         $temp = &$this->getCurrentLevelReference($fullData);
         
-        // WICHTIG: Alphabetisch sortieren, damit der Index zur UI passt
+        // DIAGNOSE 3: Reihenfolge vor der Sortierung
+        $keysBefore = array_keys($temp);
+        $this->LogMessage("DEBUG 3: Keys im RAM (vor Sortierung): " . implode(", ", $keysBefore), KL_MESSAGE);
+
+        // Alphabetisch sortieren, damit der Index zur UI passt
         ksort($temp); 
         $keys = array_keys($temp);
 
+        // DIAGNOSE 4: Zuordnung prüfen
         if (isset($keys[$index])) {
             $keyName = $keys[$index];
+            $this->LogMessage("DEBUG 4: Index $index wird in PHP dem Key '$keyName' zugeordnet.", KL_MESSAGE);
             
+            // DIAGNOSE 5: Struktur-Check
+            $isAlreadyArray = is_array($temp[$keyName]);
+            $this->LogMessage("DEBUG 5: Ist Eintrag '$keyName' bereits ein Array? " . ($isAlreadyArray ? "JA" : "NEIN (Konvertierung nötig)"), KL_MESSAGE);
+
             // Sicherstellen, dass es ein Array für die neuen Spalten ist
-            if (!is_array($temp[$keyName])) {
-                $temp[$keyName] = ['PW' => (string)$temp[$keyName], 'User' => '', 'URL' => '', 'Location' => '', 'IP' => ''];
+            if (!$isAlreadyArray) {
+                $oldValue = (string)$temp[$keyName];
+                $temp[$keyName] = [
+                    'PW'       => $oldValue, 
+                    'User'     => '', 
+                    'URL'      => '', 
+                    'Location' => '', 
+                    'IP'       => ''
+                ];
+                $this->LogMessage("DEBUG: Konvertierung abgeschlossen. Alter Wert '$oldValue' wurde in Feld 'PW' verschoben.", KL_MESSAGE);
             }
             
+            // Den Wert setzen
+            $oldFieldValue = $temp[$keyName][$Field] ?? 'LEER';
             $temp[$keyName][$Field] = $Value;
             
+            $this->LogMessage("DEBUG 6: Wert-Änderung in '$keyName': Feld '$Field' von '$oldFieldValue' auf '$Value'", KL_MESSAGE);
+            
             // Zurück in den RAM-Buffer schreiben
-            $this->SetBuffer("DecryptedCache", json_encode($fullData));
-            $this->LogMessage("Update: $keyName -> $Field = $Value", KL_MESSAGE);
+            $updatedJson = json_encode($fullData);
+            $this->SetBuffer("DecryptedCache", $updatedJson);
+
+            // DIAGNOSE 7: Kontroll-Check des resultierenden Datensatzes
+            $this->LogMessage("DEBUG 7: Datensatz '$keyName' im RAM nun: " . json_encode($temp[$keyName]), KL_MESSAGE);
+
+        } else {
+            // FEHLER-DIAGNOSE
+            $this->LogMessage("DEBUG ERROR: Index $index existiert nicht! Vorhandene Indizes: 0 bis " . (count($keys)-1), KL_ERROR);
         }
     }
     /**
@@ -475,15 +512,38 @@ class SecretsManager extends IPSModuleStrict {
      */
     public function EncryptAndSave(): void {
         $mode = $this->ReadPropertyInteger("OperationMode");
+        
+        // DIAGNOSE 1: Start der Funktion
+        $this->LogMessage("SAVE-DEBUG 1: EncryptAndSave aufgerufen. Modus: $mode", KL_MESSAGE);
+
         if ($mode === 0) {
             echo "Error: Slaves cannot modify the vault.";
             return;
         }
 
-        $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
+        // DIAGNOSE 2: Rohdaten direkt aus dem Buffer lesen
+        $rawBuffer = $this->GetBuffer("DecryptedCache");
+        $this->LogMessage("SAVE-DEBUG 2: Rohdaten im Buffer (JSON): " . ($rawBuffer ?: "LEER"), KL_MESSAGE);
+
+        $fullData = json_decode($rawBuffer, true) ?: [];
+
+        // DIAGNOSE 3: Struktur-Analyse
+        $count = count($fullData);
+        $this->LogMessage("SAVE-DEBUG 3: Anzahl der Keys im Haupt-Array: $count", KL_MESSAGE);
+
+        foreach ($fullData as $key => $content) {
+            $type = gettype($content);
+            $details = ($type === 'array') ? json_encode($content) : "Einfacher String: " . $content;
+            $this->LogMessage("SAVE-DEBUG 4: Inhalt von Key '$key' -> Typ: $type, Inhalt: $details", KL_MESSAGE);
+        }
 
         // Save to persistent storage
+        $this->LogMessage("SAVE-DEBUG 5: Starte Verschlüsselung...", KL_MESSAGE);
+        
         if ($this->_encryptAndSave($fullData)) {
+            // DIAGNOSE 6: Erfolg
+            $this->LogMessage("SAVE-DEBUG 6: Verschlüsselung erfolgreich abgeschlossen.", KL_MESSAGE);
+            
             // Close editor on success
             $this->ClearVault();
             
@@ -491,9 +551,12 @@ class SecretsManager extends IPSModuleStrict {
             
             // Trigger synchronization if master
             if ($mode === 1) {
+                $this->LogMessage("SAVE-DEBUG 7: Starte Synchronisation an Slaves...", KL_MESSAGE);
                 $this->SyncSlaves();
             }
         } else {
+            // DIAGNOSE 7: Fehler
+            $this->LogMessage("SAVE-DEBUG ERROR: Die Funktion _encryptAndSave hat FALSE zurückgegeben!", KL_ERROR);
             echo "❌ Error: The encryption process failed. Check permissions.";
         }
     }
