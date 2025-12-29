@@ -517,48 +517,53 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * NAVIGATION: In einen Ordner eintauchen
      */
-    public function HandleListAction(string $Key): void {
-        // Diese Nachricht MUSS jetzt im Log erscheinen
-        $this->LogMessage("Klick-Event empfangen für Ordner: " . $Key, KL_MESSAGE);
-
-        if ($Key === "") {
-            $this->LogMessage("Fehler: Key ist leer.", KL_ERROR);
-            return;
-        }
-
-        $pathBuffer = $this->GetBuffer("CurrentPath");
-        $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
-        
-        // Pfad um den geklickten Ordner erweitern
-        $path[] = $Key;
-        
-        $this->SetBuffer("CurrentPath", json_encode($path));
-        
-        // UI neu zeichnen
-        $this->RenderEditor();
-        
-        // Sicherheitshalber für Symcon 8.1 einen Form-Reload hinterherschicken
-        $this->ReloadForm(); 
-    }
     /**
-     * Wird aufgerufen, wenn ein Passwort in der Liste geändert wird.
+     * NAVIGATION: Wird sofort beim Klick auf die Action-Zelle gerufen
      */
-    public function UpdateValue(string $Key, string $Value): void {
+    public function HandleListAction(string $Key): void {
+        // DIAGNOSE: Das MUSS jetzt im Meldungsfenster erscheinen!
+        $this->LogMessage("NAVIGATION: Klick auf Key '" . $Key . "'", KL_MESSAGE);
+
+        if ($Key === "") return;
+
         $decrypted = $this->GetBuffer("DecryptedCache");
         $fullData = ($decrypted == "") ? [] : json_decode($decrypted, true);
-        if (!is_array($fullData)) $fullData = [];
+        
+        $pathBuffer = $this->GetBuffer("CurrentPath");
+        $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
 
-        // Referenz auf die aktuelle Ebene holen
-        $temp = &$this->getCurrentLevelReference($fullData);
-
-        // Den Wert direkt im RAM-Buffer aktualisieren
-        if (isset($temp[$Key])) {
-            $temp[$Key] = $Value;
+        // Wir suchen die Ebene, auf der wir gerade sind
+        $temp = $fullData;
+        foreach ($path as $step) {
+            if (isset($temp[$step])) $temp = $temp[$step];
         }
 
-        $this->SetBuffer("DecryptedCache", json_encode($fullData));
-        
-        // Wir müssen nicht neu rendern, da die UI den Wert bereits hat
+        // Wenn das Ziel ein Array ist, ist es ein Ordner -> Pfad erweitern
+        if (isset($temp[$Key]) && is_array($temp[$Key])) {
+            $path[] = $Key;
+            $this->SetBuffer("CurrentPath", json_encode($path));
+            $this->RenderEditor();
+            // Erzwingt das Neu-Laden der Benutzeroberfläche
+            $this->ReloadForm(); 
+        }
+    }
+
+    /**
+     * WERT-ÄNDERUNG: Wenn ein Passwort getippt wird
+     */
+    public function UpdateValue(string $Key, string $Value): void {
+        $this->LogMessage("UPDATE: Key '$Key' wird zu '$Value'", KL_MESSAGE);
+
+        $decrypted = $this->GetBuffer("DecryptedCache");
+        $fullData = ($decrypted == "") ? [] : json_decode($decrypted, true);
+
+        // Nutze den Reference-Helper für tiefe Strukturen
+        $temp = &$this->getCurrentLevelReference($fullData);
+
+        if (isset($temp[$Key])) {
+            $temp[$Key] = $Value;
+            $this->SetBuffer("DecryptedCache", json_encode($fullData));
+        }
     }
 
     public function NavigateUp(): void {
