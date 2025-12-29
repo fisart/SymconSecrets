@@ -514,20 +514,23 @@ class SecretsManager extends IPSModuleStrict {
     public function HandleListAction(string $EditorList): void {
         $list = json_decode($EditorList, true);
         if (!is_array($list)) return;
+
+        // 1. Änderungen (Passwörter) aus der Liste in den RAM-Buffer übernehmen
         $this->SyncListToBuffer($list);
 
-        foreach ($list as $row) {
-            if ($row['Type'] === 'Folder' && $row['Key'] !== "") {
-                 if (isset($row['Action']) && strpos($row['Action'], "Open") !== false) {
-                     $pathBuffer = $this->GetBuffer("CurrentPath");
-                     $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
-                     if (!is_array($path)) $path = [];
-                     
-                     $path[] = $row['Key'];
-                     $this->SetBuffer("CurrentPath", json_encode($path));
-                     $this->RenderEditor();
-                     return;
-                 }
+        // 2. Prüfen, ob eine Zeile zum "Öffnen" angeklickt wurde
+        // Wir schauen nicht mehr auf den Text ("Open"), sondern nur noch auf den Typ "Folder"
+        foreach ($list as $index => $row) {
+            if ($row['Type'] === 'Folder' && !empty($row['Key'])) {
+                
+                // In IP-Symcon wird bei onEdit signalisiert, welche Zelle geklickt wurde.
+                // Wenn der User auf die Action-Zelle eines Folders klickt:
+                $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
+                $path[] = $row['Key'];
+                
+                $this->SetBuffer("CurrentPath", json_encode($path));
+                $this->RenderEditor();
+                return;
             }
         }
     }
@@ -543,21 +546,34 @@ class SecretsManager extends IPSModuleStrict {
     }
 
     public function AddEntry(string $name, string $type): void {
-        if ($name === "") return;
-        $decrypted = $this->GetBuffer("DecryptedCache");
-        $fullData = ($decrypted == "") ? [] : json_decode($decrypted, true);
-        if (!is_array($fullData)) $fullData = [];
+        if (trim($name) === "") {
+            echo "Error: Name cannot be empty.";
+            return;
+        }
 
+        $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
+        
+        // Holen uns die Referenz auf die aktuelle Ebene (egal wie tief wir sind)
         $temp = &$this->getCurrentLevelReference($fullData);
 
+        // Prüfen ob der Key bereits existiert
+        if (isset($temp[$name])) {
+            echo "Error: An entry with this name already exists here.";
+            return;
+        }
+
+        // Neuen Eintrag erzeugen
         if ($type === "object") {
-            $temp[$name] = []; 
+            $temp[$name] = []; // Erzeugt einen neuen Unterordner (Array)
         } else {
-            $temp[$name] = "new_password"; 
+            $temp[$name] = "new_password"; // Erzeugt einen String
         }
 
         $this->SetBuffer("DecryptedCache", json_encode($fullData));
+        
+        // Wichtig: Nach dem Hinzufügen muss der Editor neu gezeichnet werden
         $this->RenderEditor();
+        echo "Entry '$name' added.";
     }
 
     private function SyncListToBuffer(array $listFromUI): void {

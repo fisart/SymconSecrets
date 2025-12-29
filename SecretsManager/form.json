@@ -136,16 +136,17 @@
             "columns": [
                 { "caption": "Name / Key", "name": "Key", "width": "200px" },
                 { 
-                    "caption": "Value (for Strings)", 
+                    "caption": "Value (Cleartext)", 
                     "name": "Value", 
                     "width": "auto", 
-                    "edit": { "type": "PasswordTextBox" } 
+                    "edit": { "type": "ValidationTextBox" } 
                 },
                 { "caption": "Type", "name": "Type", "width": "100px" },
                 { 
                     "caption": "Action", 
                     "name": "Action", 
                     "width": "120px",
+                    "edit": { "type": "ValidationTextBox" },
                     "onEdit": "SEC_HandleListAction($id, $EditorList);"
                 }
             ]
