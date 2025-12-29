@@ -63,11 +63,9 @@
             "caption": "Show/Copy Token", 
             "onClick": "SEC_ShowToken($id);" 
         },
-
         { "type": "Label", "name": "LabelHookAuth", "caption": "WebHook Protection (Optional Basic Auth)" },
         { "type": "ValidationTextBox", "name": "HookUser", "caption": "WebHook User (Optional)" },
         { "type": "PasswordTextBox", "name": "HookPass", "caption": "WebHook Password (Optional)" },
-
         {
             "type": "List", 
             "name": "SlaveURLs", 
@@ -94,8 +92,7 @@
                     "caption": "Pass (Optional)", 
                     "name": "Pass", 
                     "width": "150px", 
-                    "add": "",
-                    "edit": { "type": "PasswordTextBox" } 
+                    "add": { "type": "PasswordTextBox" } 
                 }
             ]
         },
@@ -116,7 +113,6 @@
             "visible": false,
             "bold": true
         },
-        
         { "type": "Label", "name": "LabelPath", "caption": "Current Path: Root", "italic": true, "visible": false },
         { 
             "type": "Button", 
@@ -147,7 +143,7 @@
                     "caption": "Action", 
                     "name": "Action", 
                     "width": "120px",
-                    "edit": { "type": "Button", "caption": "Open" } // Erzeugt einen echten Button
+                    "edit": { "type": "Button", "caption": "Open" }
                 }
             ]
         },
@@ -174,7 +170,6 @@
                 }
             ]
         },
-
         { 
             "type": "Button", 
             "name": "BtnLoad", 
