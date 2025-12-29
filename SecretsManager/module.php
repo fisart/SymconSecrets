@@ -31,6 +31,9 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * DYNAMIC FORM GENERATION
      */
+/**
+     * DYNAMIC FORM GENERATION
+     */
     public function GetConfigurationForm(): string {
         // 1. Statische Vorlage laden
         $json = json_decode(file_get_contents(__DIR__ . "/form.json"), true);
@@ -43,15 +46,15 @@ class SecretsManager extends IPSModuleStrict {
         $isMaster     = ($mode === 1);
         $isStandalone = ($mode === 2);
         
-        // Wer darf den Editor sehen? (Master und Standalone)
         $isEditorRole = ($isMaster || $isStandalone);
-        
-        // Wer braucht Synchronisations-Einstellungen? (Master und Slave)
         $isSyncRole   = ($isMaster || $isSlave);
 
-        // Liste aller Editor-Elemente für das Deep-Dive Grid
+        // NEU: Wir prüfen den RAM-Buffer, ob der Tresor aktuell entsperrt ist
+        $isUnlocked = ($this->GetBuffer("IsUnlocked") === "true"); 
+
+        // Liste aller Editor-Elemente für das Deep-Dive Grid (inkl. Diagnose-Button)
         $editorElements = [
-            'LabelPath', 'BtnBack', 'EditorList', 'PanelAddEntry', 
+            'BtnDiagnose', 'LabelPath', 'BtnBack', 'EditorList', 'PanelAddEntry', 
             'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning'
         ];
 
@@ -80,13 +83,15 @@ class SecretsManager extends IPSModuleStrict {
                 $element['visible'] = $isMaster;
             }
 
-            // --- EDITOR WORKFLOW (Master & Standalone) ---
+            // --- EDITOR WORKFLOW (Sichtbarkeit basierend auf Entsperr-Zustand) ---
+            // Elemente werden nur angezeigt, wenn IsUnlocked im Buffer auf "true" steht
             if (in_array($name, $editorElements)) {
-                $element['visible'] = false;
+                $element['visible'] = $isUnlocked;
             }
 
+            // Der Unlock-Button erscheint nur, wenn die Rolle stimmt UND noch nicht entsperrt wurde
             if ($name === 'BtnLoad') {
-                $element['visible'] = $isEditorRole; 
+                $element['visible'] = ($isEditorRole && !$isUnlocked); 
             }
         }
 
@@ -517,46 +522,37 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * NAVIGATION & AKTIONEN: Wird bei JEDEM Klick in die Liste gerufen
      */
-    public function HandleListAction(int $index, string $Value): void {
-        // Wenn nichts ausgewählt wurde ("---"), abbrechen
-        if ($Value === "") return;
+    public function HandleListAction(int $index): void {
+        // DIAGNOSE: Erzeugt ein Popup im Browser
+        echo "Klick auf Zeile " . $index;
 
-        $this->LogMessage("ACTION: Auswahl '$Value' an Index $index erkannt.", KL_MESSAGE);
+        $buffer = $this->GetBuffer("DecryptedCache");
+        $fullData = ($buffer === "") ? [] : json_decode($buffer, true);
+        $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
 
-        if ($Value === "open") {
-            $buffer = $this->GetBuffer("DecryptedCache");
-            $fullData = ($buffer === "") ? [] : json_decode($buffer, true);
-            $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
+        // Aktuelle Ebene finden
+        $currentLevel = $fullData;
+        foreach ($path as $step) {
+            if (isset($currentLevel[$step])) $currentLevel = $currentLevel[$step];
+        }
 
-            $currentLevel = $fullData;
-            foreach ($path as $step) {
-                if (isset($currentLevel[$step])) $currentLevel = $currentLevel[$step];
-            }
-
-            $keys = array_keys($currentLevel);
-            if (isset($keys[$index])) {
-                $chosenKey = $keys[$index];
-                if (is_array($currentLevel[$chosenKey])) {
-                    $path[] = $chosenKey;
-                    $this->SetBuffer("CurrentPath", json_encode($path));
-                    
-                    $this->LogMessage("NAVIGATION: Öffne '" . $chosenKey . "'", KL_MESSAGE);
-                    
-                    $this->RenderEditor();
-                    $this->ReloadForm();
-                    return;
-                }
+        $keys = array_keys($currentLevel);
+        if (isset($keys[$index])) {
+            $chosenKey = $keys[$index];
+            
+            // Wenn es ein Ordner ist, gehen wir hinein
+            if (is_array($currentLevel[$chosenKey])) {
+                $path[] = $chosenKey;
+                $this->SetBuffer("CurrentPath", json_encode($path));
+                $this->RenderEditor();
+                $this->ReloadForm();
             }
         }
-        
-        // Reset der Action-Spalte, damit man erneut wählen kann
-        $this->RenderEditor();
     }
 
-
+    // Und für den Test-Button:
     public function Test(): void {
-        echo "JA! Das Modul reagiert auf Befehle.";
-        $this->LogMessage("Diagnose-Button wurde gedrückt.", KL_MESSAGE);
+        echo "Das Modul empfängt Befehle korrekt!";
     }
     public function NavigateUp(): void {
         $pathBuffer = $this->GetBuffer("CurrentPath");
@@ -619,17 +615,21 @@ class SecretsManager extends IPSModuleStrict {
         $cache = $this->_decryptVault();
         if ($cache === false) {
             $vaultValue = $this->GetValue("Vault");
-            if ($vaultValue === "" || $vaultValue === "Encrypted Vault") {
-                $cache = [];
-            } else {
-                echo "❌ Fehler: Tresor konnte nicht entschlüsselt werden. Key-Datei prüfen!";
-                return;
-            }
+            if ($vaultValue === "" || $vaultValue === "Encrypted Vault") { $cache = []; } 
+            else { echo "❌ Fehler: Key falsch?"; return; }
         }
+        
         $this->SetBuffer("DecryptedCache", json_encode($cache));
         $this->SetBuffer("CurrentPath", json_encode([]));
+        
+        // NEU: Wir markieren die Instanz als ENTSPERRT
+        $this->SetBuffer("IsUnlocked", "true");
+        
+        // UI aktualisieren und Formular NEU LADEN
         $this->RenderEditor();
+        $this->ReloadForm(); 
     }
+
 
     public function EncryptAndSave(): void {
         $mode = $this->ReadPropertyInteger("OperationMode");
@@ -647,18 +647,34 @@ class SecretsManager extends IPSModuleStrict {
             echo "❌ Fehler: Verschlüsselung fehlgeschlagen.";
         }
     }
+/**
+     * Schließt den Tresor und löscht alle unverschlüsselten Daten aus dem Arbeitsspeicher.
+     */
     public function ClearVault(): void {
+        // 1. RAM-Buffer restlos leeren (Sicherheit)
         $this->SetBuffer("DecryptedCache", "");
         $this->SetBuffer("CurrentPath", "");
 
+        // 2. NEU: Status auf "Gesperrt" setzen
+        $this->SetBuffer("IsUnlocked", "false");
+
+        // 3. UI-Elemente manuell zurücksetzen (für sofortiges Feedback)
         $editorElements = [
-            'LabelPath', 'BtnBack', 'EditorList', 'PanelAddEntry', 
+            'BtnDiagnose', 'LabelPath', 'BtnBack', 'EditorList', 'PanelAddEntry', 
             'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning'
         ];
+        
         foreach ($editorElements as $elem) {
             $this->UpdateFormField($elem, "visible", false);
         }
+        
+        // Den "Unlock" Button wieder einblenden
         $this->UpdateFormField("BtnLoad", "visible", true);
+
+        // 4. NEU: Formular neu laden, um den sauberen Ausgangszustand (Locked) zu erzwingen
+        $this->ReloadForm();
+        
+        $this->LogMessage("Vault closed and RAM cleared.", KL_MESSAGE);
     }
 
     private function &getCurrentLevelReference(&$fullData) {

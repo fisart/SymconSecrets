@@ -121,7 +121,7 @@
             "visible": false,
             "bold": true
         },
-        { "type": "Label", "name": "LabelPath", "caption": "Current Path: Root", "italic": true, "visible": false },
+        { "type": "Label", "name": "LabelPath", "caption": "Current Path: Root", "visible": false },
         { 
             "type": "Button", 
             "name": "BtnBack", 
@@ -135,7 +135,7 @@
             "caption": "Vault Content",
             "rowCount": 10, 
             "add": false, 
-            "delete": true,
+            "delete": true, 
             "visible": false,
             "columns": [
                 { "caption": "Name / Key", "name": "Key", "width": "200px" },
@@ -149,15 +149,11 @@
                 { 
                     "caption": "Action", 
                     "name": "Action", 
-                    "width": "150px",
-                    "edit": { 
-                        "type": "Select",
-                        "options": [
-                            { "caption": "---", "value": "" },
-                            { "caption": "📂 Open Folder", "value": "open" },
-                            { "caption": "🗑️ Delete Entry", "value": "delete" }
-                        ],
-                        "onChange": "SEC_HandleListAction($id, $index, $Value);" 
+                    "width": "120px",
+                    "edit": {
+                        "type": "Button",
+                        "caption": "Open",
+                        "onClick": "SEC_HandleListAction($id, $index);"
                     }
                 }
             ]
