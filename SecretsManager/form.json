@@ -133,7 +133,7 @@
             "add": false, 
             "delete": true,
             "visible": false,
-            "onEdit": "SEC_HandleListAction($id, $EditorList);", // Wichtig: onEdit hier!
+            "onEdit": "SEC_HandleListAction($id, $EditorList);",
             "columns": [
                 { "caption": "Name / Key", "name": "Key", "width": "200px" },
                 { 
@@ -147,7 +147,7 @@
                     "caption": "Action", 
                     "name": "Action", 
                     "width": "120px",
-                    "edit": { "type": "Button", "caption": "Execute" } // Geändert: Erzeugt einen Button in der Liste
+                    "edit": { "type": "Button", "caption": "Open" } // Erzeugt einen echten Button
                 }
             ]
         },

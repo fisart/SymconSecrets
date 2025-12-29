@@ -511,22 +511,33 @@ class SecretsManager extends IPSModuleStrict {
         $this->UpdateFormField("LabelSecurityWarning", "visible", true);
     }
 
-    public function HandleListAction($EditorList): void {
-        // Symcon 8.1 schickt oft ein Array, wir wandeln es sicher um
-        $list = is_string($EditorList) ? json_decode($EditorList, true) : (array)$EditorList;
-        if (!is_array($list)) return;
+    /**
+     * Handle actions (like clicking the "Open" button) inside the Editor List.
+     */
+    public function HandleListAction(string $EditorList): void {
+        // 1. Daten sicher dekodieren (erfüllt die PHPLibrary Anforderung)
+        $list = json_decode($EditorList, true);
 
-        // 1. Zuerst alle Änderungen (Passwörter) im RAM-Buffer sichern
+        // Sicherheits-Check, falls IP-Symcon die Daten doch anders übergibt
+        if (!is_array($list)) {
+            $list = (array)$EditorList;
+        }
+
+        if (count($list) === 0) return;
+
+        // 2. Änderungen (Passwörter) im RAM-Buffer sichern
         $this->SyncListToBuffer($list);
 
-        // 2. Navigation prüfen
-        // IP-Symcon triggert onEdit, wenn ein Button in der Liste geklickt wurde.
+        // 3. Navigation (Deep-Dive)
+        // Wir suchen nach der Zeile, die den Typ "Folder" hat
         foreach ($list as $row) {
-            // Wir prüfen nur noch: Ist es ein Ordner? 
-            // Wenn ja, navigieren wir hinein.
-            if ($row['Type'] === 'Folder' && !empty($row['Key'])) {
+            if (isset($row['Type']) && $row['Type'] === 'Folder' && !empty($row['Key'])) {
                 
-                $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
+                // Wir prüfen, ob der Pfad existiert und erweitern ihn
+                $pathBuffer = $this->GetBuffer("CurrentPath");
+                $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
+                if (!is_array($path)) $path = [];
+                
                 $path[] = $row['Key'];
                 
                 $this->SetBuffer("CurrentPath", json_encode($path));
