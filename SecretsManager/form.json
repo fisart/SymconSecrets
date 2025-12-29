@@ -128,22 +128,26 @@
             "caption": "Vault Content",
             "rowCount": 10, 
             "add": false, 
-            "delete": true, 
+            "delete": true,
             "visible": false,
-            "onClick": "SEC_HandleListAction($id, $index, $column);",
             "columns": [
                 { "caption": "Name / Key", "name": "Key", "width": "200px" },
                 { 
                     "caption": "Value (Cleartext)", 
                     "name": "Value", 
                     "width": "auto", 
-                    "edit": { "type": "ValidationTextBox" } 
+                    "edit": { "type": "ValidationTextBox" }
                 },
                 { "caption": "Type", "name": "Type", "width": "100px" },
                 { 
                     "caption": "Action", 
                     "name": "Action", 
-                    "width": "120px"
+                    "width": "120px",
+                    "edit": {
+                        "type": "Button",
+                        "caption": "Open",
+                        "onClick": "SEC_HandleListAction($id, $index);"
+                    }
                 }
             ]
         },

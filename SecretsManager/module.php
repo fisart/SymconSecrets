@@ -517,48 +517,46 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * NAVIGATION & AKTIONEN: Wird bei JEDEM Klick in die Liste gerufen
      */
-    public function HandleListAction(int $index, string $column): void {
-        // 1. Diagnose-Log (MUSS jetzt erscheinen!)
-        $this->LogMessage("LISTEN-KLICK: Zeile $index, Spalte $column", KL_MESSAGE);
+    public function HandleListAction(int $index): void {
+        // TEST: Dieses Echo erzeugt ein Popup im Browser!
+        echo "Klick erkannt auf Zeile: " . $index;
 
-        // Wir reagieren nur, wenn der User in die Spalte "Action" klickt
-        if ($column !== 'Action') {
-            return;
-        }
+        // Zusätzlich ins Log schreiben
+        $this->LogMessage("NAVIGATION: Index " . $index . " angeklickt.", KL_MESSAGE);
 
-        // 2. Daten aus dem RAM-Buffer holen
-        $decrypted = $this->GetBuffer("DecryptedCache");
-        $fullData = ($decrypted == "") ? [] : json_decode($decrypted, true);
+        // Daten laden
+        $buffer = $this->GetBuffer("DecryptedCache");
+        $fullData = ($buffer === "") ? [] : json_decode($buffer, true);
         
         $pathBuffer = $this->GetBuffer("CurrentPath");
         $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
 
-        // Aktuelle Ebene im Array finden
+        // Aktuelle Ebene finden
         $currentLevel = $fullData;
         foreach ($path as $step) {
-            if (isset($currentLevel[$step]) && is_array($currentLevel[$step])) {
-                $currentLevel = $currentLevel[$step];
-            }
+            if (isset($currentLevel[$step])) $currentLevel = $currentLevel[$step];
         }
 
-        // 3. Den Namen des Eintrags über den Index finden
+        // Namen zum Index finden
         $keys = array_keys($currentLevel);
         if (isset($keys[$index])) {
             $chosenKey = $keys[$index];
 
-            // 4. Wenn es ein Ordner ist, navigieren wir hinein
+            // Ist es ein Ordner?
             if (is_array($currentLevel[$chosenKey])) {
                 $path[] = $chosenKey;
                 $this->SetBuffer("CurrentPath", json_encode($path));
                 
-                $this->LogMessage("NAVIGATION: Öffne Ordner '" . $chosenKey . "'", KL_MESSAGE);
-                
+                // UI aktualisieren
                 $this->RenderEditor();
+                
+                // WICHTIG: Reload erzwingen
                 $this->ReloadForm(); 
+            } else {
+                echo "Hinweis: '" . $chosenKey . "' ist ein Passwort, kein Ordner.";
             }
         }
     }
-
     public function NavigateUp(): void {
         $pathBuffer = $this->GetBuffer("CurrentPath");
         $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
