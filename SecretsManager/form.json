@@ -63,9 +63,11 @@
             "caption": "Show/Copy Token", 
             "onClick": "SEC_ShowToken($id);" 
         },
+
         { "type": "Label", "name": "LabelHookAuth", "caption": "WebHook Protection (Optional Basic Auth)" },
         { "type": "ValidationTextBox", "name": "HookUser", "caption": "WebHook User (Optional)" },
         { "type": "PasswordTextBox", "name": "HookPass", "caption": "WebHook Password (Optional)" },
+
         {
             "type": "List", 
             "name": "SlaveURLs", 
@@ -107,13 +109,6 @@
             "name": "LabelMasterHead",
             "caption": "Master: Secret Management / Vault Editor"
         },
-        { 
-            "type": "Button", 
-            "name": "BtnDiagnose",
-            "caption": "DIAGNOSE: Modul-Reaktion prüfen", 
-            "visible": false,
-            "onClick": "SEC_Test($id);" 
-        },
         {
             "type": "Label",
             "name": "LabelSecurityWarning",
@@ -121,58 +116,11 @@
             "visible": false,
             "bold": true
         },
-        { "type": "Label", "name": "LabelPath", "caption": "Current Path: Root", "visible": false },
-        { 
-            "type": "Button", 
-            "name": "BtnBack", 
-            "caption": "⬅️ Go Up (Back)", 
-            "onClick": "SEC_NavigateUp($id);",
-            "visible": false
-        },
         {
-            "type": "List", 
-            "name": "EditorList", 
-            "caption": "Vault Content",
-            "rowCount": 10, "add": false, "delete": true, "visible": false,
-            "columns": [
-                { "caption": "Name / Key", "name": "Key", "width": "200px" },
-                { 
-                    "caption": "Value", "name": "Value", "width": "auto", 
-                    "edit": { "type": "ValidationTextBox" },
-                    "onEdit": "SEC_UpdateValue($id, $index, $Value);" 
-                },
-                { "caption": "Type", "name": "Type", "width": "100px" },
-                { 
-                    "caption": "Action", "name": "Action", "width": "120px",
-                    "edit": { 
-                        "type": "Button", "caption": "Open", 
-                        "onClick": "SEC_HandleListAction($id, $index);" 
-                    }
-                }
-            ]
-        },
-        {
-            "type": "ExpansionPanel",
-            "name": "PanelAddEntry",
-            "caption": "Add New Entry to Current Level",
-            "visible": false,
-            "items": [
-                { "type": "ValidationTextBox", "name": "NewKeyName", "caption": "Entry Name (e.g. Spotify or Kameras)" },
-                { 
-                    "type": "Select", 
-                    "name": "NewKeyType", 
-                    "caption": "Entry Type",
-                    "options": [
-                        { "caption": "Password / String", "value": "string" },
-                        { "caption": "Folder / Object", "value": "object" }
-                    ]
-                },
-                { 
-                    "type": "Button", 
-                    "caption": "➕ Add Entry", 
-                    "onClick": "SEC_AddEntry($id, $NewKeyName, $NewKeyType);" 
-                }
-            ]
+            "type": "ValidationTextBox", 
+            "name": "InputJson", 
+            "caption": "JSON Editor", 
+            "value": ""
         },
         { 
             "type": "Button", 
@@ -183,16 +131,14 @@
         { 
             "type": "Button", 
             "name": "BtnEncrypt", 
-            "caption": "💾 Encrypt & Save Entire Vault", 
-            "onClick": "SEC_EncryptAndSave($id);",
-            "visible": false
+            "caption": "💾 Encrypt & Save", 
+            "onClick": "SEC_EncryptAndSave($id, $InputJson);" 
         },
         { 
             "type": "Button", 
             "name": "BtnClear", 
-            "caption": "❌ Cancel / Wipe RAM", 
-            "onClick": "SEC_ClearVault($id);",
-            "visible": false
+            "caption": "❌ Cancel / Wipe", 
+            "onClick": "SEC_ClearVault($id);" 
         }
     ],
     "actions": [

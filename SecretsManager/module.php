@@ -30,153 +30,76 @@ class SecretsManager extends IPSModuleStrict {
 
     /**
      * DYNAMIC FORM GENERATION
-     */
-/**
-     * DYNAMIC FORM GENERATION
-     */
-/**
-     * DYNAMIC FORM GENERATION
-     * In Symcon 8.1 injizieren wir die Listen-Werte direkt hier, 
-     * damit ReloadForm() die Daten nicht löscht.
+     * This is called by IP-Symcon BEFORE the settings window opens.
+     * It modifies the static form.json to hide irrelevant fields based on Master/Slave role.
      */
     public function GetConfigurationForm(): string {
         // 1. Statische Vorlage laden
         $json = json_decode(file_get_contents(__DIR__ . "/form.json"), true);
         
-        // 2. Aktuelle Rolle und Status einlesen
+        // 2. Aktuelle Rolle einlesen
         $mode = $this->ReadPropertyInteger("OperationMode");
-        $isUnlocked = ($this->GetBuffer("IsUnlocked") === "true"); 
-
+        
+        // Helfer-Variablen für die Logik
         $isSlave      = ($mode === 0);
         $isMaster     = ($mode === 1);
         $isStandalone = ($mode === 2);
+        
+        // Wer darf den Editor sehen? (Master und Standalone)
         $isEditorRole = ($isMaster || $isStandalone);
+        
+        // Wer braucht Synchronisations-Einstellungen? (Master und Slave)
         $isSyncRole   = ($isMaster || $isSlave);
 
-        // Liste aller Editor-Elemente
-        $editorElements = [
-            'BtnDiagnose', 'LabelPath', 'BtnBack', 'EditorList', 'PanelAddEntry', 
-            'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning'
-        ];
+        // Stateless UI: Beim Öffnen immer "Locked"
+        $isUnlocked = false; 
 
-        // 3. Elemente filtern und Daten injizieren
+        // 3. Elemente filtern
         foreach ($json['elements'] as &$element) {
             $name = $element['name'] ?? '';
 
-            // --- ALLGEMEINE SICHTBARKEIT ---
+            // --- WEBHOOK INFO (Nur Slave) ---
             if ($name === 'HookInfo') {
-                $element['caption'] = "WebHook URL: /hook/secrets_" . $this->InstanceID;
+                $element['caption'] = "WebHook URL für diesen Slave: /hook/secrets_" . $this->InstanceID;
                 $element['visible'] = $isSlave; 
             }
+
+            // --- WEBHOOK PROTECTION / BASIC AUTH (Nur Slave) ---
             if (in_array($name, ['LabelHookAuth', 'HookUser', 'HookPass'])) {
                 $element['visible'] = $isSlave;
             }
+
+            // --- SYNC TOKEN / SHARED SECRET (Master & Slave, aber NICHT Standalone) ---
             if (in_array($name, ['BtnGenToken', 'AuthToken', 'BtnShowToken'])) {
                 $element['visible'] = $isSyncRole;
             }
+
+            // --- MASTER SPEZIFISCH (Nur Master) ---
             if (in_array($name, ['SlaveURLs', 'LabelSeparator', 'LabelMasterHead'])) {
                 $element['visible'] = $isMaster;
             }
 
-            // --- EDITOR LOGIK (Basierend auf IsUnlocked) ---
-            if (in_array($name, $editorElements)) {
-                $element['visible'] = $isUnlocked;
-            }
-
-            if ($name === 'BtnLoad') {
-                $element['visible'] = ($isEditorRole && !$isUnlocked); 
-            }
-
-            // --- DYNAMISCHE DATEN-INJEKTION (Wichtig für Symcon 8.1) ---
-            if ($isUnlocked) {
-                // Pfad-Label aktualisieren
-                if ($name === 'LabelPath') {
-                    $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
-                    $element['caption'] = "Current Path: Root" . (count($path) > 0 ? " > " . implode(" > ", $path) : "");
-                }
-
-                // Zurück-Button nur zeigen, wenn wir nicht im Root sind
-                if ($name === 'BtnBack') {
-                    $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
-                    $element['visible'] = (count($path) > 0);
-                }
-
-                // DATEN IN DIE LISTE SCHREIBEN
-                // Da die Liste stateless ist, befüllen wir sie hier bei jedem Aufruf neu.
-                if ($name === 'EditorList') {
-                    $element['values'] = $this->GetListValues(); // Ruft die Hilfsfunktion auf
+            // --- EDITOR WORKFLOW (Master & Standalone) ---
+            if (in_array($name, ['BtnLoad', 'InputJson', 'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning'])) {
+                $element['visible'] = $isEditorRole ? $isUnlocked : false;
+                
+                // Sonderfall: Der "Unlock" Button muss sichtbar sein, wenn die Rolle passt und noch gesperrt ist
+                if ($name === 'BtnLoad') {
+                    $element['visible'] = ($isEditorRole && !$isUnlocked);
                 }
             }
         }
 
-        // 4. Actions (Sync Button)
+        // 4. Actions (Der Sync-Button ganz unten)
         if (isset($json['actions'])) {
             foreach ($json['actions'] as &$action) {
                 if (($action['name'] ?? '') === 'BtnSync') {
-                    $action['visible'] = $isMaster; 
+                    $action['visible'] = $isMaster; // Nur Master darf manuell synctriggern
                 }
             }
         }
 
         return json_encode($json);
-    }
-
-    /**
-     * Hilfsfunktion zum Aufbereiten der aktuellen Listen-Ebene
-     */
-    private function GetListValues(): array {
-        $decrypted = $this->GetBuffer("DecryptedCache");
-        $fullData = ($decrypted == "") ? [] : json_decode($decrypted, true);
-        
-        $pathBuffer = $this->GetBuffer("CurrentPath");
-        $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
-        if (!is_array($path)) $path = [];
-
-        // Zur aktuellen Ebene navigieren
-        $currentLevel = $fullData;
-        foreach ($path as $step) {
-            if (isset($currentLevel[$step]) && is_array($currentLevel[$step])) {
-                $currentLevel = $currentLevel[$step];
-            }
-        }
-
-        $listValues = [];
-        if (is_array($currentLevel)) {
-            foreach ($currentLevel as $key => $value) {
-                $isObject = is_array($value);
-                $listValues[] = [
-                    'Key'    => $key,
-                    'Value'  => $isObject ? "" : (string)$value,
-                    'Type'   => $isObject ? "Folder" : "Password",
-                    'Action' => $isObject ? "📂 Open" : "✏️ Edit"
-                ];
-            }
-        }
-        return $listValues;
-    }
-
-    private function PrepareListValues(): array {
-        $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
-        $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
-
-        $currentLevel = $fullData;
-        foreach ($path as $step) {
-            if (isset($currentLevel[$step])) $currentLevel = $currentLevel[$step];
-        }
-
-        $values = [];
-        if (is_array($currentLevel)) {
-            foreach ($currentLevel as $key => $val) {
-                $isObj = is_array($val);
-                $values[] = [
-                    'Key'    => $key,
-                    'Value'  => $isObj ? "" : (string)$val,
-                    'Type'   => $isObj ? "Folder" : "Password",
-                    'Action' => $isObj ? "📂 Open" : "✏️ Edit"
-                ];
-            }
-        }
-        return $values;
     }
 
     public function ApplyChanges(): void {
@@ -191,10 +114,15 @@ class SecretsManager extends IPSModuleStrict {
         // 2. Aktuelle Rolle prüfen
         $mode = $this->ReadPropertyInteger("OperationMode");
 
+        // --- SCHRITT 3: Rollenabhängige WebHook Registrierung ---
         // Nur der Slave (0) muss Daten empfangen können.
+        // Master (1) und Standalone (2) registrieren keinen Hook.
         if ($mode === 0) {
             @$this->RegisterHook("secrets_" . $this->InstanceID);
         }
+        // Hinweis: Falls die Instanz von Slave auf Standalone umgestellt wird,
+        // bleibt der Hook technisch in IP-Symcon vorhanden, wird aber durch 
+        // die Logik in ProcessHookData (Schritt 6) blockiert.
 
         // 3. RAM Cache leeren bei Konfigurationsänderung
         $this->SetBuffer("DecryptedCache", ""); 
@@ -209,6 +137,7 @@ class SecretsManager extends IPSModuleStrict {
             $errorMessage = "Directory does not exist: " . $folder;
             $this->SetStatus(202); // IS_EBASE (Error)
         } 
+        // Master (1) und Standalone (2) müssen zwingend schreiben können (Key-Generierung)
         elseif ($mode !== 0 && !is_writable($folder)) {
             $errorMessage = "Directory is not writable: " . $folder;
             $this->SetStatus(202);
@@ -220,10 +149,16 @@ class SecretsManager extends IPSModuleStrict {
         $this->UpdateFormLayout($errorMessage);
     }
 
+    /**
+     * Public wrapper for UI updates (called by form.json)
+     */
     public function UpdateUI(): void {
         $this->UpdateFormLayout("");
     }
 
+    /**
+     * Internal helper to update static UI elements like Error Headers
+     */
     private function UpdateFormLayout(string $errorMessage): void {
         if ($errorMessage !== "") {
             $this->UpdateFormField("HeaderError", "visible", true);
@@ -236,7 +171,7 @@ class SecretsManager extends IPSModuleStrict {
     }
 
     // =========================================================================
-    // CONFIGURATION ACTIONS
+    // CONFIGURATION ACTIONS (Called by Buttons)
     // =========================================================================
 
     public function CheckDirectory(): void {
@@ -253,7 +188,7 @@ class SecretsManager extends IPSModuleStrict {
             return;
         }
 
-        if ($mode !== 0 && !is_writable($folder)) {
+        if ($mode === 1 && !is_writable($folder)) {
             echo "❌ ERROR: Directory is NOT writable!\n\nPath: $folder";
             return;
         }
@@ -271,6 +206,90 @@ class SecretsManager extends IPSModuleStrict {
     public function ShowToken(): void {
         $token = $this->ReadPropertyString("AuthToken");
         echo ($token === "") ? "No token set." : "YOUR SYNC TOKEN:\n\n" . $token . "\n\n(Select text and Ctrl+C to copy)";
+    }
+
+    // =========================================================================
+    // EDITOR ACTIONS (Load / Save / Wipe)
+    // =========================================================================
+
+    public function LoadVault(): void {
+        $cache = $this->_decryptVault();
+        
+        if ($cache === false) {
+            $json = ($this->GetValue("Vault") === "") ? "{}" : "";
+            if ($json === "") {
+                echo "❌ Fehler: Entschlüsselung fehlgeschlagen.";
+                return;
+            }
+        } else {
+            $json = json_encode($cache, JSON_PRETTY_PRINT);
+        }
+
+        // WICHTIG: Wir schreiben nicht in eine Property, sondern schicken 
+        // das Passwort direkt an das Textfeld in der UI.
+        $this->UpdateFormField("InputJson", "value", $json);
+        $this->UpdateFormField("InputJson", "visible", true);
+        $this->UpdateFormField("BtnEncrypt", "visible", true);
+        $this->UpdateFormField("BtnClear", "visible", true);
+        $this->UpdateFormField("LabelSecurityWarning", "visible", true);
+        $this->UpdateFormField("BtnLoad", "visible", false);
+    }
+// Beachte den Parameter $jsonInput!
+    public function EncryptAndSave(string $jsonInput): void {
+        $mode = $this->ReadPropertyInteger("OperationMode");
+
+        // --- SCHRITT 4: Zugriffskontrolle ---
+        // Nur Master (1) und Standalone (2) dürfen lokal verschlüsseln und speichern.
+        // Slaves (0) empfangen Daten nur über den WebHook.
+        if ($mode === 0) { 
+            echo "Operation not allowed in Slave mode."; 
+            return; 
+        }
+        
+        if (trim($jsonInput) === "") { 
+            echo "Input empty."; 
+            return; 
+        }
+        
+        // JSON validieren
+        $decoded = json_decode($jsonInput, true);
+        if ($decoded === null) { 
+            echo "❌ JSON Syntax Error!"; 
+            return; 
+        }
+
+        // Verschlüsseln und lokal in die Variable "Vault" schreiben
+        if ($this->_encryptAndSave($decoded)) {
+            
+            // UI wieder in den "Sicheren Modus" (Gesperrt) versetzen
+            $this->UpdateFormField("InputJson", "value", "");
+            $this->UpdateFormField("InputJson", "visible", false);
+            $this->UpdateFormField("BtnEncrypt", "visible", false);
+            $this->UpdateFormField("BtnClear", "visible", false);
+            $this->UpdateFormField("LabelSecurityWarning", "visible", false);
+            $this->UpdateFormField("BtnLoad", "visible", true);
+            
+            echo "✅ Saved & Encrypted locally.";
+            
+            // --- SCHRITT 4: Bedingter Sync ---
+            // Nur wenn wir Master (1) sind, stossen wir den Sync an die Slaves an.
+            // Ein Standalone-System (2) bleibt hier stehen.
+            if ($mode === 1) {
+                $this->SyncSlaves();
+            }
+        } else {
+            echo "❌ Error: Encryption failed.";
+        }
+    }
+
+    public function ClearVault(): void {
+        // Einfach alles wieder verstecken und leeren
+        $this->UpdateFormField("InputJson", "value", "");
+        $this->UpdateFormField("InputJson", "visible", false);
+        $this->UpdateFormField("BtnEncrypt", "visible", false);
+        $this->UpdateFormField("BtnClear", "visible", false);
+        $this->UpdateFormField("LabelSecurityWarning", "visible", false);
+        $this->UpdateFormField("BtnLoad", "visible", true);
     }
 
     // =========================================================================
@@ -306,6 +325,7 @@ class SecretsManager extends IPSModuleStrict {
 
         if (isset($cache[$ident])) {
             $val = $cache[$ident];
+            // If it's an array, return JSON string. If string, return string.
             return (is_array($val) || is_object($val)) ? (json_encode($val) ?: "") : (string)$val;
         }
 
@@ -314,12 +334,18 @@ class SecretsManager extends IPSModuleStrict {
     }
 
     // =========================================================================
-    // SYNCHRONIZATION
+    // SYNCHRONIZATION (Master -> Slave)
     // =========================================================================
 
+/**
+     * SYNCHRONIZATION (Master -> Slave)
+     * Pushes the encrypted vault and the master key to all configured remote systems.
+     */
     public function SyncSlaves(): void {
         $mode = $this->ReadPropertyInteger("OperationMode");
 
+        // --- SCHRITT 5: Funktions-Schutz ---
+        // Nur ein Master (1) darf Daten an Slaves senden.
         if ($mode !== 1) {
             if ($mode === 2) {
                 echo "Sync cancelled: Standalone systems are isolated.";
@@ -329,12 +355,14 @@ class SecretsManager extends IPSModuleStrict {
             return;
         }
 
+        // Slaves aus der Konfiguration laden
         $slaves = json_decode($this->ReadPropertyString("SlaveURLs"), true);
         if (!is_array($slaves) || count($slaves) === 0) {
             echo "No slaves configured in the list.";
             return;
         }
 
+        // Vorbereitung der Daten
         $keyHex = $this->_readKey();
         $vault = $this->GetValue("Vault");
         $token = $this->ReadPropertyString("AuthToken");
@@ -344,6 +372,7 @@ class SecretsManager extends IPSModuleStrict {
             return;
         }
 
+        // Das Paket für die Slaves schnüren
         $payload = json_encode([
             'auth' => $token,
             'key'  => $keyHex,
@@ -353,15 +382,21 @@ class SecretsManager extends IPSModuleStrict {
         $successCount = 0;
         $totalSlaves = count($slaves);
 
+        // Alle konfigurierten Slaves nacheinander abarbeiten
         foreach ($slaves as $slave) {
-            if (!isset($slave['Url']) || $slave['Url'] == "") continue;
+            if (!isset($slave['Url']) || $slave['Url'] == "") {
+                continue;
+            }
 
             $headers = "Content-type: application/json\r\n";
+            
+            // Basic Auth Header hinzufügen, falls Benutzername gesetzt ist
             if (isset($slave['User']) && isset($slave['Pass']) && $slave['User'] !== "") {
                 $auth = base64_encode($slave['User'] . ":" . $slave['Pass']);
                 $headers .= "Authorization: Basic " . $auth . "\r\n";
             }
 
+            // Stream Context Konfiguration (inkl. SSL-Fix für lokale IPs)
             $options = [
                 'http' => [
                     'method' => 'POST',
@@ -378,7 +413,11 @@ class SecretsManager extends IPSModuleStrict {
             ];
 
             $ctx = stream_context_create($options);
+            
+            // Paket senden
             $res = @file_get_contents($slave['Url'], false, $ctx);
+            
+            // HTTP Antwort analysieren
             $statusLine = $http_response_header[0] ?? "Unknown Status"; 
 
             if ($res !== false && strpos($statusLine, "200") !== false && trim($res) === "OK") {
@@ -389,28 +428,39 @@ class SecretsManager extends IPSModuleStrict {
             }
         }
         
+        // Abschließende Meldung für die Konsole
         if ($successCount === $totalSlaves) {
             echo "✅ Synchronization completed successfully for all $successCount slaves.";
         } else {
-            echo "Sync finished. Success: $successCount / Total: $totalSlaves.";
+            echo "Sync finished. Success: $successCount / Total: $totalSlaves. Check the IP-Symcon log for detailed errors.";
         }
     }
 
+/**
+     * WEBHOOK DATA PROCESSING
+     * This is called by IP-Symcon when data is posted to /hook/secrets_ID
+     */
     protected function ProcessHookData(): void {
         $mode = $this->ReadPropertyInteger("OperationMode");
 
+        // --- SCHRITT 6: Sicherheits-Guard ---
+        // Nur Instanzen im Slave-Modus (0) dürfen Daten empfangen.
+        // Master (1) und Standalone (2) lehnen jeglichen Empfang strikt ab.
         if ($mode !== 0) {
             header("HTTP/1.1 403 Forbidden");
             echo "Access Denied: This instance is not configured as a Slave.";
-            $this->LogMessage("Unauthorized WebHook access attempt.", KL_WARNING);
+            $this->LogMessage("Unauthorized WebHook access attempt: Instance is not a Slave.", KL_WARNING);
             return;
         }
 
+        // Sicherstellen, dass es ein POST-Request ist
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
             header("HTTP/1.1 405 Method Not Allowed");
+            echo "Only POST requests are allowed.";
             return;
         }
 
+        // 1. Optionaler Basic Auth Check (WebHook-Schutz)
         $hookUser = $this->ReadPropertyString("HookUser");
         $hookPass = $this->ReadPropertyString("HookPass");
 
@@ -421,27 +471,39 @@ class SecretsManager extends IPSModuleStrict {
             {
                 header('WWW-Authenticate: Basic realm="SecretsManager"');
                 header('HTTP/1.0 401 Unauthorized');
+                echo 'Authentication Required';
                 return;
             }
         }
 
+        // Daten einlesen
         $input = file_get_contents("php://input");
         $data = json_decode($input, true);
 
+        // 2. Token Check (Shared Secret)
+        // Vergleicht den empfangenen Token mit dem lokal gespeicherten Sync Token
         if (!isset($data['auth']) || $data['auth'] !== $this->ReadPropertyString("AuthToken")) {
             header("HTTP/1.1 403 Forbidden");
+            echo "Invalid Sync Token";
+            $this->LogMessage("WebHook Error: Received an invalid or missing Sync Token.", KL_ERROR);
             return;
         }
 
-        if (isset($data['key'])) $this->_writeKey($data['key']);
+        // 3. Daten verarbeiten und speichern
+        // Der Slave speichert Key und Vault, ohne sie im Klartext lesen zu müssen.
+        if (isset($data['key'])) {
+            $this->_writeKey($data['key']);
+        }
+
         if (isset($data['vault'])) {
             $this->SetValue("Vault", $data['vault']);
+            // RAM Cache leeren, damit beim nächsten Zugriff mit dem neuen Key entschlüsselt wird
             $this->SetBuffer("DecryptedCache", ""); 
         }
 
+        // Rückmeldung an den Master
         echo "OK";
     }
-
     // =========================================================================
     // INTERNAL CRYPTO HELPERS
     // =========================================================================
@@ -482,12 +544,12 @@ class SecretsManager extends IPSModuleStrict {
 
     private function _decryptVault() {
         $vaultJson = $this->GetValue("Vault");
-        if (!$vaultJson || $vaultJson === "Encrypted Vault") return false;
+        if (!$vaultJson) return false;
 
         $meta = json_decode($vaultJson, true);
         $keyHex = $this->_readKey();
         
-        if (!$keyHex || !$meta || !isset($meta['data'])) return false;
+        if (!$keyHex || !$meta) return false;
 
         $decrypted = openssl_decrypt(
             $meta['data'], 
@@ -498,8 +560,6 @@ class SecretsManager extends IPSModuleStrict {
             hex2bin($meta['tag'])
         );
 
-        if ($decrypted === false) return false;
-
         return json_decode($decrypted, true);
     }
 
@@ -507,14 +567,19 @@ class SecretsManager extends IPSModuleStrict {
         $path = $this->_getFullPath();
         if ($path === "") return false;
 
+        // Wenn die Datei schon existiert, laden wir sie einfach
         if (file_exists($path)) {
             return trim(file_get_contents($path));
         }
 
+        // --- KORREKTUR HIER ---
+        // Ein Schlüssel darf generiert werden, wenn wir Master (1) ODER Standalone (2) sind.
         $mode = $this->ReadPropertyInteger("OperationMode");
         if ($mode === 1 || $mode === 2) {
             $newKey = bin2hex(random_bytes(16)); 
-            if (file_put_contents($path, $newKey) === false) return false;
+            if (file_put_contents($path, $newKey) === false) {
+                return false; // Verzeichnis eventuell nicht schreibbar
+            }
             return $newKey;
         }
         
@@ -541,226 +606,5 @@ class SecretsManager extends IPSModuleStrict {
     private function _setCache(array $array): void {
         $this->SetBuffer("DecryptedCache", json_encode($array));
     }
-
-    // =========================================================================
-    // EDITOR NAVIGATION & RENDER
-    // =========================================================================
-
-    /**
-     * UI NEU ZEICHNEN
-     */
-    private function RenderEditor(): void {
-        $buffer = $this->GetBuffer("DecryptedCache");
-        $fullData = ($buffer === "") ? [] : json_decode($buffer, true);
-
-        $pathBuffer = $this->GetBuffer("CurrentPath");
-        $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
-        
-        $currentLevel = $fullData;
-        foreach ($path as $step) {
-            if (isset($currentLevel[$step]) && is_array($currentLevel[$step])) {
-                $currentLevel = $currentLevel[$step];
-            }
-        }
-
-        $listValues = [];
-        if (is_array($currentLevel)) {
-            foreach ($currentLevel as $key => $value) {
-                $isObject = is_array($value);
-                $listValues[] = [
-                    'Key'    => $key,
-                    'Value'  => $isObject ? "" : (string)$value,
-                    'Type'   => $isObject ? "Folder" : "Password",
-                    // HIER fügen wir die Symbole für die Liste wieder ein:
-                    'Action' => $isObject ? "📂 Open" : "✏️ Edit" 
-                ];
-            }
-        }
-
-        $pathString = "Root" . (count($path) > 0 ? " > " . implode(" > ", $path) : "");
-        $this->UpdateFormField("LabelPath", "caption", "Current Path: " . $pathString);
-        $this->UpdateFormField("BtnBack", "visible", count($path) > 0);
-        $this->UpdateFormField("EditorList", "values", json_encode($listValues));
-        
-        // Alles sichtbar machen
-        $this->UpdateFormField("LabelPath", "visible", true);
-        $this->UpdateFormField("EditorList", "visible", true);
-        $this->UpdateFormField("PanelAddEntry", "visible", true);
-        $this->UpdateFormField("BtnEncrypt", "visible", true);
-        $this->UpdateFormField("BtnClear", "visible", true);
-        $this->UpdateFormField("BtnLoad", "visible", false);
-    }
-
-    /**
-     * NAVIGATION & AKTIONEN: Wird bei JEDEM Klick in die Liste gerufen
-     */
-    public function HandleListAction(int $index): void {
-        $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
-        $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
-
-        // Aktuelle Ebene finden
-        $currentLevel = $fullData;
-        foreach ($path as $step) {
-            if (isset($currentLevel[$step])) $currentLevel = $currentLevel[$step];
-        }
-
-        $keys = array_keys($currentLevel);
-        if (isset($keys[$index])) {
-            $chosenKey = $keys[$index];
-            if (is_array($currentLevel[$chosenKey])) {
-                $path[] = $chosenKey;
-                $this->SetBuffer("CurrentPath", json_encode($path));
-                $this->ReloadForm(); // Doku sagt: Verwirft Einträge -> GetConfigurationForm baut sie neu
-            }
-        }
-    }
-    public function UpdateValue(int $index, string $Value): void {
-        $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
-        
-        // Referenz nutzen, um tief im Array zu schreiben
-        $temp = &$this->getCurrentLevelReference($fullData);
-        $keys = array_keys($temp);
-
-        if (isset($keys[$index])) {
-            $temp[$keys[$index]] = $Value;
-            $this->SetBuffer("DecryptedCache", json_encode($fullData));
-        }
-    }
-
-    // Und für den Test-Button:
-    public function Test(): void {
-        echo "Verbindung zum Modul hergestellt!";
-    }
-
-    
-    public function NavigateUp(): void {
-        $pathBuffer = $this->GetBuffer("CurrentPath");
-        $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
-        if (is_array($path) && count($path) > 0) {
-            array_pop($path); 
-            $this->SetBuffer("CurrentPath", json_encode($path));
-            $this->RenderEditor();
-        }
-    }
-
-    public function AddEntry(string $name, string $type): void {
-        if (trim($name) === "") {
-            echo "Error: Name cannot be empty.";
-            return;
-        }
-
-        $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
-        
-        // Holen uns die Referenz auf die aktuelle Ebene (egal wie tief wir sind)
-        $temp = &$this->getCurrentLevelReference($fullData);
-
-        // Prüfen ob der Key bereits existiert
-        if (isset($temp[$name])) {
-            echo "Error: An entry with this name already exists here.";
-            return;
-        }
-
-        // Neuen Eintrag erzeugen
-        if ($type === "object") {
-            $temp[$name] = []; // Erzeugt einen neuen Unterordner (Array)
-        } else {
-            $temp[$name] = "new_password"; // Erzeugt einen String
-        }
-
-        $this->SetBuffer("DecryptedCache", json_encode($fullData));
-        
-        // Wichtig: Nach dem Hinzufügen muss der Editor neu gezeichnet werden
-        $this->RenderEditor();
-        echo "Entry '$name' added.";
-    }
-
-    private function SyncListToBuffer(array $listFromUI): void {
-        $decrypted = $this->GetBuffer("DecryptedCache");
-        $fullData = ($decrypted == "") ? [] : json_decode($decrypted, true);
-        if (!is_array($fullData)) $fullData = [];
-
-        $temp = &$this->getCurrentLevelReference($fullData);
-
-        foreach ($listFromUI as $row) {
-            if ($row['Type'] === 'Password') {
-                $temp[$row['Key']] = $row['Value'];
-            }
-        }
-
-        $this->SetBuffer("DecryptedCache", json_encode($fullData));
-    }
-
-    public function LoadVault(): void {
-        $cache = $this->_decryptVault();
-        if ($cache === false) {
-            $v = $this->GetValue("Vault");
-            if ($v === "" || $v === "Encrypted Vault") { $cache = []; } 
-            else { echo "Error: Decryption failed"; return; }
-        }
-        $this->SetBuffer("DecryptedCache", json_encode($cache));
-        $this->SetBuffer("CurrentPath", json_encode([]));
-        $this->SetBuffer("IsUnlocked", "true"); // Zustand merken!
-        $this->ReloadForm();
-    }
-
-
-    public function EncryptAndSave(): void {
-        $mode = $this->ReadPropertyInteger("OperationMode");
-        if ($mode === 0) return; 
-
-        // Wir nehmen die Daten direkt aus dem RAM-Buffer
-        $decrypted = $this->GetBuffer("DecryptedCache");
-        $fullData = ($decrypted == "") ? [] : json_decode($decrypted, true);
-
-        if ($this->_encryptAndSave($fullData)) {
-            $this->ClearVault(); 
-            echo "✅ Tresor erfolgreich verschlüsselt und gespeichert.";
-            if ($mode === 1) $this->SyncSlaves();
-        } else {
-            echo "❌ Fehler: Verschlüsselung fehlgeschlagen.";
-        }
-    }
-/**
-     * Schließt den Tresor und löscht alle unverschlüsselten Daten aus dem Arbeitsspeicher.
-     */
-    public function ClearVault(): void {
-        // 1. RAM-Buffer restlos leeren (Sicherheit)
-        $this->SetBuffer("DecryptedCache", "");
-        $this->SetBuffer("CurrentPath", "");
-
-        // 2. NEU: Status auf "Gesperrt" setzen
-        $this->SetBuffer("IsUnlocked", "false");
-
-        // 3. UI-Elemente manuell zurücksetzen (für sofortiges Feedback)
-        $editorElements = [
-            'BtnDiagnose', 'LabelPath', 'BtnBack', 'EditorList', 'PanelAddEntry', 
-            'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning'
-        ];
-        
-        foreach ($editorElements as $elem) {
-            $this->UpdateFormField($elem, "visible", false);
-        }
-        
-        // Den "Unlock" Button wieder einblenden
-        $this->UpdateFormField("BtnLoad", "visible", true);
-
-        // 4. NEU: Formular neu laden, um den sauberen Ausgangszustand (Locked) zu erzwingen
-        $this->ReloadForm();
-        
-        $this->LogMessage("Vault closed and RAM cleared.", KL_MESSAGE);
-    }
-
-    private function &getCurrentLevelReference(&$fullData) {
-        $pathBuffer = $this->GetBuffer("CurrentPath");
-        $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
-        if (!is_array($path)) $path = [];
-
-        $level = &$fullData; 
-        foreach ($path as $step) {
-            if (isset($level[$step]) && is_array($level[$step])) {
-                $level = &$level[$step]; 
-            }
-        }
-        return $level;
-    }
 }
+?>
