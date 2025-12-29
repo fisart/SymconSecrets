@@ -371,11 +371,8 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * Navigates into a sub-folder.
      */
-    public function HandleListAction(int $index, array $EditorList): void {
-        // 1. Snapshot der aktuellen UI-Inhalte sichern (damit nichts beim Wandern verloren geht)
-        $this->SyncListToBuffer($EditorList);
-
-        // 2. Navigation durchführen
+    public function HandleListAction(int $index): void {
+        // No need to sync here, already synced via onChange
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
         $temp = &$this->getCurrentLevelReference($fullData);
         $keys = array_keys($temp);
@@ -394,9 +391,8 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * Navigates one level back up.
      */
-    public function NavigateUp(array $EditorList): void {
-        $this->SyncListToBuffer($EditorList); // <--- Zuerst synchronisieren
-        
+    public function NavigateUp(): void {
+        // No need to sync here, already synced via onChange
         $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
         if (count($path) > 0) {
             array_pop($path);
@@ -408,6 +404,10 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * Updates a specific field of an entry at the current level.
      */
+/**
+     * Updates a specific field of an entry at the current level.
+     * Includes extensive debug logging to verify the data flow and sorting.
+     */
     public function UpdateValue(int $index, string $Field, string $Value): void {
         // DIAGNOSE 1: Was kommt von der UI an?
         $this->LogMessage("DEBUG 1: UI sendet - Index: $index, Feld: $Field, Wert: $Value", KL_MESSAGE);
@@ -418,6 +418,7 @@ class SecretsManager extends IPSModuleStrict {
         $path = $this->GetBuffer("CurrentPath");
         $this->LogMessage("DEBUG 2: Aktueller Pfad im RAM: " . ($path ?: "Root"), KL_MESSAGE);
 
+        // Referenz auf die aktuelle Ebene holen
         $temp = &$this->getCurrentLevelReference($fullData);
         
         // DIAGNOSE 3: Reihenfolge vor der Sortierung
@@ -457,8 +458,7 @@ class SecretsManager extends IPSModuleStrict {
             $this->LogMessage("DEBUG 6: Wert-Änderung in '$keyName': Feld '$Field' von '$oldFieldValue' auf '$Value'", KL_MESSAGE);
             
             // Zurück in den RAM-Buffer schreiben
-            $updatedJson = json_encode($fullData);
-            $this->SetBuffer("DecryptedCache", $updatedJson);
+            $this->SetBuffer("DecryptedCache", json_encode($fullData));
 
             // DIAGNOSE 7: Kontroll-Check des resultierenden Datensatzes
             $this->LogMessage("DEBUG 7: Datensatz '$keyName' im RAM nun: " . json_encode($temp[$keyName]), KL_MESSAGE);
@@ -471,13 +471,9 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * Adds a new folder or a new secret to the current path.
      */
-    public function AddEntry(string $NewKeyName, string $NewKeyType, array $EditorList): void {
-        if ($NewKeyName === "") return;
-
-        // 1. Snapshot der aktuellen UI-Inhalte im RAM-Buffer sichern
-        $this->SyncListToBuffer($EditorList);
-
-        // 2. Jetzt den neuen Eintrag hinzufügen
+    public function AddEntry(string $NewKeyName, string $NewKeyType): void {
+        if (trim($NewKeyName) === "") return;
+        
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
         $temp = &$this->getCurrentLevelReference($fullData);
 
@@ -494,21 +490,19 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * Encrypts the current RAM state and saves it permanently.
      */
-    public function EncryptAndSave(array $EditorList): void {
-        if ($this->ReadPropertyInteger("OperationMode") === 0) return; 
-
-        // 1. Snapshot der aktuellen UI-Inhalte im RAM-Buffer sichern
-        $this->SyncListToBuffer($EditorList);
-
-        // 2. Den nun vollständigen Buffer verschlüsseln
+    public function EncryptAndSave(): void {
+        if ($this->ReadPropertyInteger("OperationMode") === 0) return;
+        
+        // Data is already updated via UpdateValue!
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
 
         if ($this->_encryptAndSave($fullData)) {
-            $this->ClearVault(); 
-            echo "✅ Tresor erfolgreich verschlüsselt und gespeichert.";
+            $this->ClearVault();
+            echo "✅ SUCCESS: Vault encrypted and saved.";
             if ($this->ReadPropertyInteger("OperationMode") === 1) $this->SyncSlaves();
         }
     }
+
 
     // =========================================================================
     // PRIVATE HELPERS FOR DATA PREPARATION
