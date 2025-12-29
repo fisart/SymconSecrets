@@ -13,11 +13,6 @@
             "caption": "Security Configuration"
         },
         {
-            "type": "Label",
-            "name": "HookInfo",
-            "caption": "WebHook URL: (Save settings to generate)"
-        },
-        {
             "type": "Select",
             "name": "OperationMode",
             "caption": "System Role",
@@ -29,10 +24,6 @@
             "onChange": "SEC_UpdateUI($id);"
         },
         {
-            "type": "Label",
-            "caption": "Key Storage (Filename 'master.key' is added automatically)"
-        },
-        { 
             "type": "ValidationTextBox", 
             "name": "KeyFolderPath", 
             "caption": "Directory Path (e.g. /var/lib/symcon_keys/)" 
@@ -43,112 +34,88 @@
             "onClick": "SEC_CheckDirectory($id);" 
         },
         {
-            "type": "Label",
-            "caption": "Synchronization Token (Shared Secret)"
-        },
-        { 
             "type": "PasswordTextBox", 
             "name": "AuthToken", 
             "caption": "Sync Token" 
         },
+        { "type": "Label", "name": "LabelSeparator", "caption": "________________________________________________________________________________" },
+        
+        { "type": "Label", "name": "LabelPath", "caption": "Current Path: Root", "bold": true, "visible": false },
         { 
             "type": "Button", 
-            "name": "BtnGenToken", 
-            "caption": "Generate Random Token", 
-            "onClick": "SEC_GenerateToken($id);" 
+            "name": "BtnBack", 
+            "caption": "⬅️ Go Up (Back)", 
+            "onClick": "SEC_NavigateUp($id);",
+            "visible": false
         },
-        { 
-            "type": "Button", 
-            "name": "BtnShowToken", 
-            "caption": "Show/Copy Token", 
-            "onClick": "SEC_ShowToken($id);" 
-        },
-
-        { "type": "Label", "name": "LabelHookAuth", "caption": "WebHook Protection (Optional Basic Auth)" },
-        { "type": "ValidationTextBox", "name": "HookUser", "caption": "WebHook User (Optional)" },
-        { "type": "PasswordTextBox", "name": "HookPass", "caption": "WebHook Password (Optional)" },
-
         {
             "type": "List", 
-            "name": "SlaveURLs", 
-            "caption": "Slave WebHooks (Master Only)",
-            "rowCount": 5, 
-            "add": true, 
-            "delete": true,
+            "name": "EditorList", 
+            "caption": "Vault Content",
+            "rowCount": 10, 
+            "add": false, 
+            "delete": true, 
+            "visible": false,
             "columns": [
+                { "caption": "Identifier/Key", "name": "Key", "width": "150px" },
                 { 
-                    "caption": "URL (e.g., http://ip:3777/hook/secrets_ID)", 
-                    "name": "Url", 
-                    "width": "400px", 
-                    "add": "",
-                    "edit": { "type": "ValidationTextBox" } 
+                    "caption": "Username", "name": "User", "width": "120px", 
+                    "edit": { "type": "ValidationTextBox" },
+                    "onChange": "SEC_UpdateValue($id, $index, 'User', $Value);" 
                 },
                 { 
-                    "caption": "User (Optional)", 
-                    "name": "User", 
-                    "width": "150px", 
-                    "add": "",
-                    "edit": { "type": "ValidationTextBox" } 
+                    "caption": "Password", "name": "PW", "width": "120px", 
+                    "edit": { "type": "ValidationTextBox" },
+                    "onChange": "SEC_UpdateValue($id, $index, 'PW', $Value);" 
                 },
                 { 
-                    "caption": "Pass (Optional)", 
-                    "name": "Pass", 
-                    "width": "150px", 
-                    "add": "",
-                    "edit": { "type": "PasswordTextBox" } 
+                    "caption": "URL", "name": "URL", "width": "180px", 
+                    "edit": { "type": "ValidationTextBox" },
+                    "onChange": "SEC_UpdateValue($id, $index, 'URL', $Value);" 
+                },
+                { 
+                    "caption": "Location", "name": "Location", "width": "100px", 
+                    "edit": { "type": "ValidationTextBox" },
+                    "onChange": "SEC_UpdateValue($id, $index, 'Location', $Value);" 
+                },
+                { 
+                    "caption": "IP Address", "name": "IP", "width": "110px", 
+                    "edit": { "type": "ValidationTextBox" },
+                    "onChange": "SEC_UpdateValue($id, $index, 'IP', $Value);" 
+                },
+                { "caption": "Type", "name": "Type", "width": "80px" },
+                { 
+                    "caption": "Action", "name": "Action", "width": "100px",
+                    "edit": { 
+                        "type": "Button", "caption": "Open", 
+                        "onClick": "SEC_HandleListAction($id, $index);" 
+                    }
                 }
             ]
         },
         {
-            "type": "Label",
-            "name": "LabelSeparator",
-            "caption": "________________________________________________________________________________"
-        },
-        {
-            "type": "Label",
-            "name": "LabelMasterHead",
-            "caption": "Master: Secret Management / Vault Editor"
-        },
-        {
-            "type": "Label",
-            "name": "LabelSecurityWarning",
-            "caption": "⚠️ CAUTION: Unencrypted data is currently visible!",
+            "type": "ExpansionPanel",
+            "name": "PanelAddEntry",
+            "caption": "Add New Entry to Current Level",
             "visible": false,
-            "bold": true
+            "items": [
+                { "type": "ValidationTextBox", "name": "NewKeyName", "caption": "Name" },
+                { 
+                    "type": "Select", "name": "NewKeyType", "caption": "Type",
+                    "options": [
+                        { "caption": "Secret (Data Set)", "value": "string" },
+                        { "caption": "Folder (Sub-Level)", "value": "object" }
+                    ]
+                },
+                { "type": "Button", "caption": "➕ Add", "onClick": "SEC_AddEntry($id, $NewKeyName, $NewKeyType);" }
+            ]
         },
-        {
-            "type": "ValidationTextBox", 
-            "name": "InputJson", 
-            "caption": "JSON Editor", 
-            "value": ""
-        },
-        { 
-            "type": "Button", 
-            "name": "BtnLoad", 
-            "caption": "🔓 Unlock & Load Data", 
-            "onClick": "SEC_LoadVault($id);" 
-        },
-        { 
-            "type": "Button", 
-            "name": "BtnEncrypt", 
-            "caption": "💾 Encrypt & Save", 
-            "onClick": "SEC_EncryptAndSave($id, $InputJson);" 
-        },
-        { 
-            "type": "Button", 
-            "name": "BtnClear", 
-            "caption": "❌ Cancel / Wipe", 
-            "onClick": "SEC_ClearVault($id);" 
-        }
+        { "type": "Button", "name": "BtnLoad", "caption": "🔓 Unlock & Load Data", "onClick": "SEC_LoadVault($id);" },
+        { "type": "Button", "name": "BtnEncrypt", "caption": "💾 Encrypt & Save Entire Vault", "onClick": "SEC_EncryptAndSave($id);", "visible": false },
+        { "type": "Button", "name": "BtnClear", "caption": "❌ Cancel / Wipe RAM", "onClick": "SEC_ClearVault($id);", "visible": false }
     ],
     "actions": [
-        { "type": "Label", "caption": "Status:" },
         { "type": "Label", "name": "StatusLabel", "caption": "Idle" },
-        { 
-            "type": "Button", 
-            "name": "BtnSync", 
-            "caption": "Manually Sync to Slaves", 
-            "onClick": "SEC_SyncSlaves($id);" 
-        }
+        { "type": "Button", "name": "BtnSync", "caption": "Manually Sync to Slaves", "onClick": "SEC_SyncSlaves($id);" }
     ]
 }
