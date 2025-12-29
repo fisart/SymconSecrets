@@ -373,26 +373,19 @@ class SecretsManager extends IPSModuleStrict {
      */
     public function HandleListAction(int $index): void {
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
-        
-        // Use reference helper to find current level
         $temp = &$this->getCurrentLevelReference($fullData);
+        
+        // ZWINGEND: Sortieren vor Index-Zugriff
+        ksort($temp);
         $keys = array_keys($temp);
 
         if (isset($keys[$index])) {
             $chosenKey = $keys[$index];
-            
-            // Check if the target is indeed a folder (array)
             if (is_array($temp[$chosenKey])) {
                 $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
                 $path[] = $chosenKey;
-                
-                // Update navigation path
                 $this->SetBuffer("CurrentPath", json_encode($path));
-                
-                // Refresh list
                 $this->ReloadForm();
-            } else {
-                echo "Note: This is a secret entry, not a folder.";
             }
         }
     }
@@ -417,33 +410,27 @@ class SecretsManager extends IPSModuleStrict {
      */
     public function UpdateValue(int $index, string $Field, string $Value): void {
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
-        
-        // Access current level by reference
         $temp = &$this->getCurrentLevelReference($fullData);
+        
+        // WICHTIG: Alphabetisch sortieren, damit der Index zur UI passt
+        ksort($temp); 
         $keys = array_keys($temp);
 
         if (isset($keys[$index])) {
             $keyName = $keys[$index];
             
-            // Check for legacy string-only entries and convert to array
+            // Sicherstellen, dass es ein Array für die neuen Spalten ist
             if (!is_array($temp[$keyName])) {
-                $temp[$keyName] = [
-                    'PW'       => (string)$temp[$keyName],
-                    'User'     => '',
-                    'URL'      => '',
-                    'Location' => '',
-                    'IP'       => ''
-                ];
+                $temp[$keyName] = ['PW' => (string)$temp[$keyName], 'User' => '', 'URL' => '', 'Location' => '', 'IP' => ''];
             }
             
-            // Apply the change
             $temp[$keyName][$Field] = $Value;
             
-            // Save modified main array back to RAM buffer
+            // Zurück in den RAM-Buffer schreiben
             $this->SetBuffer("DecryptedCache", json_encode($fullData));
+            $this->LogMessage("Update: $keyName -> $Field = $Value", KL_MESSAGE);
         }
     }
-
     /**
      * Adds a new folder or a new secret to the current path.
      */
@@ -524,25 +511,27 @@ class SecretsManager extends IPSModuleStrict {
         
         $values = [];
         if (is_array($temp)) {
+            // ZWINGEND: Identische Sortierung wie in der UI
+            ksort($temp); 
+
             foreach ($temp as $key => $val) {
                 $isObj = is_array($val);
                 
-                // Identify if it's a folder or a complex secret
+                // Ordner-Erkennung: Enthält der Eintrag selbst wieder Arrays?
                 $isFolder = false;
                 if ($isObj) {
-                    foreach ($val as $v) {
-                        if (is_array($v)) {
+                    foreach ($val as $subVal) {
+                        if (is_array($subVal)) {
                             $isFolder = true;
                             break;
                         }
                     }
-                    // If it has no sub-arrays but specific secret keys, it's not a folder
+                    // Falls es die bekannten Secret-Keys hat, ist es kein Ordner
                     if (isset($val['PW']) || isset($val['User'])) {
                         $isFolder = false;
                     }
                 }
 
-                // Construct row for UI
                 $values[] = [
                     'Key'      => (string)$key,
                     'User'     => ($isObj && !$isFolder) ? ($val['User'] ?? '') : '',
