@@ -520,49 +520,58 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * NAVIGATION: Wird sofort beim Klick auf die Action-Zelle gerufen
      */
-    public function HandleListAction(string $Key): void {
-        // DIAGNOSE: Das MUSS jetzt im Meldungsfenster erscheinen!
-        $this->LogMessage("NAVIGATION: Klick auf Key '" . $Key . "'", KL_MESSAGE);
-
-        if ($Key === "") return;
-
-        $decrypted = $this->GetBuffer("DecryptedCache");
-        $fullData = ($decrypted == "") ? [] : json_decode($decrypted, true);
+    /**
+     * NAVIGATION: Öffnen per Zeilen-Index
+     */
+    public function HandleListAction(int $index): void {
+        $buffer = $this->GetBuffer("DecryptedCache");
+        $fullData = ($buffer === "") ? [] : json_decode($buffer, true);
         
-        $pathBuffer = $this->GetBuffer("CurrentPath");
-        $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
+        $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
 
-        // Wir suchen die Ebene, auf der wir gerade sind
-        $temp = $fullData;
+        // Wir wühlen uns zur aktuellen Ebene durch
+        $currentLevel = $fullData;
         foreach ($path as $step) {
-            if (isset($temp[$step])) $temp = $temp[$step];
+            if (isset($currentLevel[$step])) $currentLevel = $currentLevel[$step];
         }
 
-        // Wenn das Ziel ein Array ist, ist es ein Ordner -> Pfad erweitern
-        if (isset($temp[$Key]) && is_array($temp[$Key])) {
-            $path[] = $Key;
-            $this->SetBuffer("CurrentPath", json_encode($path));
-            $this->RenderEditor();
-            // Erzwingt das Neu-Laden der Benutzeroberfläche
-            $this->ReloadForm(); 
+        // Wir holen alle Schlüssel der aktuellen Ebene als Liste
+        $keys = array_keys($currentLevel);
+
+        // Jetzt schauen wir, welcher Name an der Stelle $index steht
+        if (isset($keys[$index])) {
+            $chosenKey = $keys[$index];
+
+            // Wenn es ein Ordner (Array) ist, gehen wir hinein
+            if (is_array($currentLevel[$chosenKey])) {
+                $path[] = $chosenKey;
+                $this->SetBuffer("CurrentPath", json_encode($path));
+                
+                $this->LogMessage("NAVIGATION: Öffne Ordner '" . $chosenKey . "' an Index " . $index, KL_MESSAGE);
+                
+                $this->RenderEditor();
+                $this->ReloadForm();
+            }
         }
     }
 
     /**
-     * WERT-ÄNDERUNG: Wenn ein Passwort getippt wird
+     * UPDATE: Wert speichern per Zeilen-Index
      */
-    public function UpdateValue(string $Key, string $Value): void {
-        $this->LogMessage("UPDATE: Key '$Key' wird zu '$Value'", KL_MESSAGE);
+    public function UpdateValue(int $index, string $Value): void {
+        $buffer = $this->GetBuffer("DecryptedCache");
+        $fullData = ($buffer === "") ? [] : json_decode($buffer, true);
 
-        $decrypted = $this->GetBuffer("DecryptedCache");
-        $fullData = ($decrypted == "") ? [] : json_decode($decrypted, true);
-
-        // Nutze den Reference-Helper für tiefe Strukturen
+        // Referenz auf die aktuelle Ebene
         $temp = &$this->getCurrentLevelReference($fullData);
+        $keys = array_keys($temp);
 
-        if (isset($temp[$Key])) {
-            $temp[$Key] = $Value;
+        if (isset($keys[$index])) {
+            $keyName = $keys[$index];
+            $temp[$keyName] = $Value;
+            
             $this->SetBuffer("DecryptedCache", json_encode($fullData));
+            $this->LogMessage("UPDATE: Wert für '" . $keyName . "' geändert.", KL_MESSAGE);
         }
     }
 
