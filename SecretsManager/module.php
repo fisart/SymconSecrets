@@ -517,45 +517,46 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * NAVIGATION & AKTIONEN: Wird bei JEDEM Klick in die Liste gerufen
      */
-    public function HandleListAction(int $index): void {
-        // TEST: Dieses Echo erzeugt ein Popup im Browser!
-        echo "Klick erkannt auf Zeile: " . $index;
+    public function HandleListAction(int $index, string $Value): void {
+        // Wenn nichts ausgewählt wurde ("---"), abbrechen
+        if ($Value === "") return;
 
-        // Zusätzlich ins Log schreiben
-        $this->LogMessage("NAVIGATION: Index " . $index . " angeklickt.", KL_MESSAGE);
+        $this->LogMessage("ACTION: Auswahl '$Value' an Index $index erkannt.", KL_MESSAGE);
 
-        // Daten laden
-        $buffer = $this->GetBuffer("DecryptedCache");
-        $fullData = ($buffer === "") ? [] : json_decode($buffer, true);
-        
-        $pathBuffer = $this->GetBuffer("CurrentPath");
-        $path = ($pathBuffer === "") ? [] : json_decode($pathBuffer, true);
+        if ($Value === "open") {
+            $buffer = $this->GetBuffer("DecryptedCache");
+            $fullData = ($buffer === "") ? [] : json_decode($buffer, true);
+            $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
 
-        // Aktuelle Ebene finden
-        $currentLevel = $fullData;
-        foreach ($path as $step) {
-            if (isset($currentLevel[$step])) $currentLevel = $currentLevel[$step];
-        }
+            $currentLevel = $fullData;
+            foreach ($path as $step) {
+                if (isset($currentLevel[$step])) $currentLevel = $currentLevel[$step];
+            }
 
-        // Namen zum Index finden
-        $keys = array_keys($currentLevel);
-        if (isset($keys[$index])) {
-            $chosenKey = $keys[$index];
-
-            // Ist es ein Ordner?
-            if (is_array($currentLevel[$chosenKey])) {
-                $path[] = $chosenKey;
-                $this->SetBuffer("CurrentPath", json_encode($path));
-                
-                // UI aktualisieren
-                $this->RenderEditor();
-                
-                // WICHTIG: Reload erzwingen
-                $this->ReloadForm(); 
-            } else {
-                echo "Hinweis: '" . $chosenKey . "' ist ein Passwort, kein Ordner.";
+            $keys = array_keys($currentLevel);
+            if (isset($keys[$index])) {
+                $chosenKey = $keys[$index];
+                if (is_array($currentLevel[$chosenKey])) {
+                    $path[] = $chosenKey;
+                    $this->SetBuffer("CurrentPath", json_encode($path));
+                    
+                    $this->LogMessage("NAVIGATION: Öffne '" . $chosenKey . "'", KL_MESSAGE);
+                    
+                    $this->RenderEditor();
+                    $this->ReloadForm();
+                    return;
+                }
             }
         }
+        
+        // Reset der Action-Spalte, damit man erneut wählen kann
+        $this->RenderEditor();
+    }
+
+
+    public function Test(): void {
+        echo "JA! Das Modul reagiert auf Befehle.";
+        $this->LogMessage("Diagnose-Button wurde gedrückt.", KL_MESSAGE);
     }
     public function NavigateUp(): void {
         $pathBuffer = $this->GetBuffer("CurrentPath");
