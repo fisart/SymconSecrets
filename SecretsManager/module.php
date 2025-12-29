@@ -511,24 +511,27 @@ class SecretsManager extends IPSModuleStrict {
         $this->UpdateFormField("LabelSecurityWarning", "visible", true);
     }
 
-    public function HandleListAction(string $EditorList): void {
-        $list = json_decode($EditorList, true);
+    public function HandleListAction($EditorList): void {
+        // Symcon 8.1 schickt oft ein Array, wir wandeln es sicher um
+        $list = is_string($EditorList) ? json_decode($EditorList, true) : (array)$EditorList;
         if (!is_array($list)) return;
 
-        // 1. Änderungen (Passwörter) aus der Liste in den RAM-Buffer übernehmen
+        // 1. Zuerst alle Änderungen (Passwörter) im RAM-Buffer sichern
         $this->SyncListToBuffer($list);
 
-        // 2. Prüfen, ob eine Zeile zum "Öffnen" angeklickt wurde
-        // Wir schauen nicht mehr auf den Text ("Open"), sondern nur noch auf den Typ "Folder"
-        foreach ($list as $index => $row) {
+        // 2. Navigation prüfen
+        // IP-Symcon triggert onEdit, wenn ein Button in der Liste geklickt wurde.
+        foreach ($list as $row) {
+            // Wir prüfen nur noch: Ist es ein Ordner? 
+            // Wenn ja, navigieren wir hinein.
             if ($row['Type'] === 'Folder' && !empty($row['Key'])) {
                 
-                // In IP-Symcon wird bei onEdit signalisiert, welche Zelle geklickt wurde.
-                // Wenn der User auf die Action-Zelle eines Folders klickt:
                 $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
                 $path[] = $row['Key'];
                 
                 $this->SetBuffer("CurrentPath", json_encode($path));
+                
+                // UI neu zeichnen für die tiefere Ebene
                 $this->RenderEditor();
                 return;
             }
