@@ -133,27 +133,20 @@
             "type": "List", 
             "name": "EditorList", 
             "caption": "Vault Content",
-            "rowCount": 10, 
-            "add": false, 
-            "delete": true, 
-            "visible": false,
+            "rowCount": 10, "add": false, "delete": true, "visible": false,
             "columns": [
                 { "caption": "Name / Key", "name": "Key", "width": "200px" },
                 { 
-                    "caption": "Value (Cleartext)", 
-                    "name": "Value", 
-                    "width": "auto", 
-                    "edit": { "type": "ValidationTextBox" }
+                    "caption": "Value", "name": "Value", "width": "auto", 
+                    "edit": { "type": "ValidationTextBox" },
+                    "onEdit": "SEC_UpdateValue($id, $index, $Value);" 
                 },
                 { "caption": "Type", "name": "Type", "width": "100px" },
                 { 
-                    "caption": "Action", 
-                    "name": "Action", 
-                    "width": "120px",
-                    "edit": {
-                        "type": "Button",
-                        "caption": "Open",
-                        "onClick": "SEC_HandleListAction($id, $index);"
+                    "caption": "Action", "name": "Action", "width": "120px",
+                    "edit": { 
+                        "type": "Button", "caption": "Open", 
+                        "onClick": "SEC_HandleListAction($id, $index);" 
                     }
                 }
             ]
