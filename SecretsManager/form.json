@@ -122,7 +122,7 @@
             "type": "Button", 
             "name": "BtnBack", 
             "caption": "⬅️ Go Up (Back)", 
-            "onClick": "SEC_NavigateUp($id);",
+            "onClick": "SEC_NavigateUp($id, $EditorList);",
             "visible": false
         },
         {
@@ -165,7 +165,7 @@
                     "caption": "Action", "name": "Action", "width": "100px",
                     "edit": { 
                         "type": "Button", "caption": "Open", 
-                        "onClick": "SEC_HandleListAction($id, $index);" 
+                        "onClick": "SEC_HandleListAction($id, $index, $EditorList);" 
                     }
                 }
             ]
@@ -184,7 +184,7 @@
                         { "caption": "Folder (Sub-Level)", "value": "object" }
                     ]
                 },
-                { "type": "Button", "caption": "➕ Add", "onClick": "SEC_AddEntry($id, $NewKeyName, $NewKeyType);" }
+                { "type": "Button", "caption": "➕ Add", "onClick": "SEC_AddEntry($id, $NewKeyName, $NewKeyType, $EditorList);" }
             ]
         },
 
@@ -198,7 +198,7 @@
             "type": "Button", 
             "name": "BtnEncrypt", 
             "caption": "💾 Encrypt & Save Entire Vault", 
-            "onClick": "SEC_EncryptAndSave($id);",
+            "onClick": "SEC_EncryptAndSave($id, $EditorList);",
             "visible": false
         },
         { 

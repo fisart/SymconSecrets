@@ -371,12 +371,13 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * Navigates into a sub-folder.
      */
-    public function HandleListAction(int $index): void {
+    public function HandleListAction(int $index, array $EditorList): void {
+        // 1. Snapshot der aktuellen UI-Inhalte sichern (damit nichts beim Wandern verloren geht)
+        $this->SyncListToBuffer($EditorList);
+
+        // 2. Navigation durchführen
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
         $temp = &$this->getCurrentLevelReference($fullData);
-        
-        // ZWINGEND: Sortieren vor Index-Zugriff
-        ksort($temp);
         $keys = array_keys($temp);
 
         if (isset($keys[$index])) {
@@ -393,13 +394,12 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * Navigates one level back up.
      */
-    public function NavigateUp(): void {
-        $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
+    public function NavigateUp(array $EditorList): void {
+        $this->SyncListToBuffer($EditorList); // <--- Zuerst synchronisieren
         
+        $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
         if (count($path) > 0) {
-            // Remove last element from path
             array_pop($path);
-            
             $this->SetBuffer("CurrentPath", json_encode($path));
             $this->ReloadForm();
         }
@@ -471,93 +471,42 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * Adds a new folder or a new secret to the current path.
      */
-    public function AddEntry(string $NewKeyName, string $NewKeyType): void {
-        if (trim($NewKeyName) === "") {
-            echo "Error: The entry name cannot be empty.";
-            return;
-        }
+    public function AddEntry(string $NewKeyName, string $NewKeyType, array $EditorList): void {
+        if ($NewKeyName === "") return;
 
+        // 1. Snapshot der aktuellen UI-Inhalte im RAM-Buffer sichern
+        $this->SyncListToBuffer($EditorList);
+
+        // 2. Jetzt den neuen Eintrag hinzufügen
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
         $temp = &$this->getCurrentLevelReference($fullData);
 
-        // Check for duplicates
-        if (isset($temp[$NewKeyName])) {
-            echo "Error: An entry with the name '$NewKeyName' already exists.";
-            return;
-        }
-
         if ($NewKeyType === "object") {
-            // Create a new empty folder
             $temp[$NewKeyName] = []; 
         } else {
-            // Create a new complex data set
-            $temp[$NewKeyName] = [
-                'User'     => '',
-                'PW'       => '',
-                'URL'      => '',
-                'Location' => '',
-                'IP'       => ''
-            ];
+            $temp[$NewKeyName] = ['User' => '', 'PW' => '', 'URL' => '', 'Location' => '', 'IP' => ''];
         }
 
-        // Save back and refresh
         $this->SetBuffer("DecryptedCache", json_encode($fullData));
         $this->ReloadForm();
-        
-        echo "Entry '$NewKeyName' successfully added.";
     }
 
     /**
      * Encrypts the current RAM state and saves it permanently.
      */
-    public function EncryptAndSave(): void {
-        $mode = $this->ReadPropertyInteger("OperationMode");
-        
-        // DIAGNOSE 1: Start der Funktion
-        $this->LogMessage("SAVE-DEBUG 1: EncryptAndSave aufgerufen. Modus: $mode", KL_MESSAGE);
+    public function EncryptAndSave(array $EditorList): void {
+        if ($this->ReadPropertyInteger("OperationMode") === 0) return; 
 
-        if ($mode === 0) {
-            echo "Error: Slaves cannot modify the vault.";
-            return;
-        }
+        // 1. Snapshot der aktuellen UI-Inhalte im RAM-Buffer sichern
+        $this->SyncListToBuffer($EditorList);
 
-        // DIAGNOSE 2: Rohdaten direkt aus dem Buffer lesen
-        $rawBuffer = $this->GetBuffer("DecryptedCache");
-        $this->LogMessage("SAVE-DEBUG 2: Rohdaten im Buffer (JSON): " . ($rawBuffer ?: "LEER"), KL_MESSAGE);
+        // 2. Den nun vollständigen Buffer verschlüsseln
+        $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
 
-        $fullData = json_decode($rawBuffer, true) ?: [];
-
-        // DIAGNOSE 3: Struktur-Analyse
-        $count = count($fullData);
-        $this->LogMessage("SAVE-DEBUG 3: Anzahl der Keys im Haupt-Array: $count", KL_MESSAGE);
-
-        foreach ($fullData as $key => $content) {
-            $type = gettype($content);
-            $details = ($type === 'array') ? json_encode($content) : "Einfacher String: " . $content;
-            $this->LogMessage("SAVE-DEBUG 4: Inhalt von Key '$key' -> Typ: $type, Inhalt: $details", KL_MESSAGE);
-        }
-
-        // Save to persistent storage
-        $this->LogMessage("SAVE-DEBUG 5: Starte Verschlüsselung...", KL_MESSAGE);
-        
         if ($this->_encryptAndSave($fullData)) {
-            // DIAGNOSE 6: Erfolg
-            $this->LogMessage("SAVE-DEBUG 6: Verschlüsselung erfolgreich abgeschlossen.", KL_MESSAGE);
-            
-            // Close editor on success
-            $this->ClearVault();
-            
-            echo "✅ SUCCESS: Vault encrypted and saved to database.";
-            
-            // Trigger synchronization if master
-            if ($mode === 1) {
-                $this->LogMessage("SAVE-DEBUG 7: Starte Synchronisation an Slaves...", KL_MESSAGE);
-                $this->SyncSlaves();
-            }
-        } else {
-            // DIAGNOSE 7: Fehler
-            $this->LogMessage("SAVE-DEBUG ERROR: Die Funktion _encryptAndSave hat FALSE zurückgegeben!", KL_ERROR);
-            echo "❌ Error: The encryption process failed. Check permissions.";
+            $this->ClearVault(); 
+            echo "✅ Tresor erfolgreich verschlüsselt und gespeichert.";
+            if ($this->ReadPropertyInteger("OperationMode") === 1) $this->SyncSlaves();
         }
     }
 
@@ -568,6 +517,51 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * Prepares the data list for the UI EditorList element.
      */
+
+    /**
+     * Takes the current state of the EditorList from the UI and synchronizes 
+     * it into the unencrypted RAM buffer (DecryptedCache).
+     */
+    private function SyncListToBuffer(array $listData): void {
+        // 1. Get the full tree from the RAM buffer
+        $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
+        
+        // 2. Get a reference to the current level we are looking at
+        $temp = &$this->getCurrentLevelReference($fullData);
+        
+        // 3. Iterate through the rows sent by the UI
+        foreach ($listData as $row) {
+            $key = $row['Key'] ?? '';
+            if ($key === '') continue;
+
+            // Only update if the entry exists in our buffer
+            if (isset($temp[$key])) {
+                // If it's not an array yet (old format), convert it
+                if (!is_array($temp[$key])) {
+                    $temp[$key] = [
+                        'User'     => '',
+                        'PW'       => (string)$temp[$key],
+                        'URL'      => '',
+                        'Location' => '',
+                        'IP'       => ''
+                    ];
+                }
+
+                // Sync the 5 data fields from the UI row to the buffer
+                // Folders are skipped here because they don't have these fields
+                if ($row['Type'] === 'Secret') {
+                    $temp[$key]['User']     = $row['User']     ?? '';
+                    $temp[$key]['PW']       = $row['PW']       ?? '';
+                    $temp[$key]['URL']      = $row['URL']      ?? '';
+                    $temp[$key]['Location'] = $row['Location'] ?? '';
+                    $temp[$key]['IP']       = $row['IP']       ?? '';
+                }
+            }
+        }
+
+        // 4. Write the updated full tree back into the RAM buffer
+        $this->SetBuffer("DecryptedCache", json_encode($fullData));
+    }
     private function PrepareListValues(): array {
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
         $temp = $this->getCurrentLevelReference($fullData);
