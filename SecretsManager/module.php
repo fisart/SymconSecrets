@@ -173,7 +173,7 @@ class SecretsManager extends IPSModuleStrict {
         if ($errorMessage !== "") {
             $this->UpdateFormField("HeaderError", "visible", true);
             $this->UpdateFormField("HeaderError", "caption", "!!! CONFIGURATION ERROR: " . $errorMessage . " !!!");
-            $this->UpdateFormField("StatusLabel", "caption", "Status: Error");
+            $this->UpdateFormField("StatusLabel", "caption", "Error: " . $errorMessage);
         } else {
             $this->UpdateFormField("HeaderError", "visible", false);
             $this->UpdateFormField("StatusLabel", "caption", "Instance OK (Idle)");
@@ -184,28 +184,25 @@ class SecretsManager extends IPSModuleStrict {
      * Synchronizes the UI list state into the RAM buffer.
      * Handles IPSList objects from Symcon 8.1 correctly.
      */
-/**
-     * Diese Hilfsfunktion erwartet nun ein sauberes PHP-Array (kein IPSList-Objekt mehr)
-     */
     private function SyncListToBuffer(array $listData): void {
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
         $temp = &$this->getCurrentLevelReference($fullData);
         ksort($temp);
 
         foreach ($listData as $row) {
-            $key = $row['Key'] ?? '';
+            $rowData = (array)$row;
+            $key = $rowData['Key'] ?? '';
+
             if ($key !== '' && isset($temp[$key])) {
-                // Wir prüfen auf Folder (Folders haben im UI values, Secrets nicht)
-                // Oder wir nutzen die Spalte 'Type' aus deiner PrepareListValues
-                if (isset($row['Type']) && $row['Type'] === 'Secret') {
+                if (isset($rowData['Type']) && $rowData['Type'] === 'Secret') {
                     if (!is_array($temp[$key])) {
                         $temp[$key] = ['PW' => (string)$temp[$key]];
                     }
-                    $temp[$key]['User']     = $row['User']     ?? '';
-                    $temp[$key]['PW']       = $row['PW']       ?? '';
-                    $temp[$key]['URL']      = $row['URL']      ?? '';
-                    $temp[$key]['Location'] = $row['Location'] ?? '';
-                    $temp[$key]['IP']       = $row['IP']       ?? '';
+                    $temp[$key]['User']     = $rowData['User']     ?? '';
+                    $temp[$key]['PW']       = $rowData['PW']       ?? '';
+                    $temp[$key]['URL']      = $rowData['URL']      ?? '';
+                    $temp[$key]['Location'] = $rowData['Location'] ?? '';
+                    $temp[$key]['IP']       = $rowData['IP']       ?? '';
                 }
             }
         }
@@ -272,32 +269,25 @@ class SecretsManager extends IPSModuleStrict {
         $this->ReloadForm();
     }
 
-public function HandleListAction(int $index): void {
-        // Daten aktiv vom Formular abrufen
-        $listData = json_decode($this->GetConfigurationFormValue('EditorList'), true) ?: [];
-        $this->SyncListToBuffer($listData);
-        
+    /**
+     * Handles navigation (Open Folder) using the Key name.
+     */
+    public function HandleListAction(string $Key): void {
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
         $temp = &$this->getCurrentLevelReference($fullData);
-        ksort($temp);
-        $keys = array_keys($temp);
 
-        if (isset($keys[$index])) {
-            $chosenKey = $keys[$index];
-            if (is_array($temp[$chosenKey])) {
-                $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
-                $path[] = $chosenKey;
-                $this->SetBuffer("CurrentPath", json_encode($path));
-                $this->ReloadForm();
-            }
+        if (isset($temp[$Key]) && is_array($temp[$Key])) {
+            $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
+            $path[] = $Key;
+            $this->SetBuffer("CurrentPath", json_encode($path));
+            $this->ReloadForm();
         }
     }
 
+    /**
+     * Navigates one level back up.
+     */
     public function NavigateUp(): void {
-        // Daten aktiv vom Formular abrufen
-        $listData = json_decode($this->GetConfigurationFormValue('EditorList'), true) ?: [];
-        $this->SyncListToBuffer($listData);
-
         $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
         if (count($path) > 0) {
             array_pop($path);
@@ -306,38 +296,28 @@ public function HandleListAction(int $index): void {
         }
     }
 
-/**
-     * Updates a field based on the Key name (not the index!).
-     * This is 100% stable regardless of sorting.
+    /**
+     * Updates a field based on the Key name.
      */
     public function UpdateValue(string $Key, string $Field, string $Value): void {
-        // Log zur Verifizierung (erscheint im Meldungsfenster)
-        $this->LogMessage("Update empfangen: Key $Key, Feld $Field, Wert $Value", KL_MESSAGE);
-
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
         $temp = &$this->getCurrentLevelReference($fullData);
 
         if (isset($temp[$Key])) {
-            // Konvertierung falls nötig
             if (!is_array($temp[$Key])) {
                 $temp[$Key] = ['PW' => (string)$temp[$Key], 'User' => '', 'URL' => '', 'Location' => '', 'IP' => ''];
             }
-            
-            // Wert im RAM-Speicher setzen
             $temp[$Key][$Field] = $Value;
-            
-            // Zurück in den Buffer
             $this->SetBuffer("DecryptedCache", json_encode($fullData));
         }
     }
 
-
- public function AddEntry(string $NewKeyName, string $NewKeyType): void {
-        // Daten aktiv vom Formular abrufen
-        $listData = json_decode($this->GetConfigurationFormValue('EditorList'), true) ?: [];
-        $this->SyncListToBuffer($listData);
-
+    /**
+     * Adds a new folder or a new secret to the current path.
+     */
+    public function AddEntry(string $NewKeyName, string $NewKeyType): void {
         if (trim($NewKeyName) === "") return;
+
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
         $temp = &$this->getCurrentLevelReference($fullData);
 
@@ -351,10 +331,12 @@ public function HandleListAction(int $index): void {
         $this->ReloadForm();
     }
 
-public function EncryptAndSave(): void {
+    /**
+     * Encrypts the current RAM state and saves it permanently.
+     */
+    public function EncryptAndSave(): void {
         if ($this->ReadPropertyInteger("OperationMode") === 0) return;
         
-        // Die Daten sind bereits durch UpdateValue im Buffer!
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
 
         if ($this->_encryptAndSave($fullData)) {
@@ -486,3 +468,4 @@ public function EncryptAndSave(): void {
         if ($path !== "") @file_put_contents($path, $hexKey);
     }
 }
+?>
