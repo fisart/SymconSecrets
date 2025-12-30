@@ -1,49 +1,77 @@
+```json
 {
-    "translations": {
-        "de": {
-            "!!! CONFIGURATION ERROR !!!": "!!! KONFIGURATIONSFEHLER !!!",
-            "Security Configuration": "Sicherheitskonfiguration",
-            "WebHook URL: (Save settings to generate)": "WebHook URL: (Speichern zum Generieren)",
-            "System Role": "Systemrolle",
-            "Slave (Receiver)": "Slave (Empfänger)",
-            "Master (Sender)": "Master (Sender)",
-            "Standalone (Local Vault)": "Standalone (Lokaler Tresor)",
-            "Key Storage (Filename 'master.key' is added automatically)": "Schlüsselspeicher (Dateiname 'master.key' wird automatisch ergänzt)",
-            "Directory Path (e.g. /var/lib/symcon_keys/)": "Verzeichnispfad (z.B. /var/lib/symcon_keys/)",
-            "Check Directory Permissions": "Verzeichnisberechtigungen prüfen",
-            "Synchronization Token (Shared Secret)": "Synchronisierungs-Token (Gemeinsames Geheimnis)",
-            "Sync Token": "Sync-Token",
-            "Generate Random Token": "Zufälliges Token generieren",
-            "Show/Copy Token": "Token anzeigen/kopieren",
-            "WebHook Protection (Optional Basic Auth)": "WebHook-Schutz (Optional Basic Auth)",
-            "WebHook User (Optional)": "WebHook Benutzer (Optional)",
-            "WebHook Password (Optional)": "WebHook Passwort (Optional)",
-            "Slave WebHooks (Master Only)": "Slave WebHooks (Nur Master)",
-            "URL (e.g., http://ip:3777/hook/secrets_ID)": "URL (z.B. http://ip:3777/hook/secrets_ID)",
-            "User (Optional)": "Benutzer (Optional)",
-            "Pass (Optional)": "Passwort (Optional)",
-            "Master: Secret Management / Vault Editor": "Tresor-Editor / Geheimnisverwaltung (Master & Standalone)",
-            "⚠️ CAUTION: Unencrypted data is currently visible!": "⚠️ ACHTUNG: Unverschlüsselte Daten sind derzeit sichtbar!",
-            "JSON Editor": "JSON Editor",
-            "🔓 Unlock & Load Data": "🔓 Tresor öffnen & Daten laden",
-            "💾 Encrypt & Save": "💾 Verschlüsseln & Speichern",
-            "❌ Cancel / Wipe": "❌ Abbrechen / RAM leeren",
-            "Status:": "Status:",
-            "Idle": "Leerlauf",
-            "Instance OK": "Instanz OK",
-            "Manually Sync to Slaves": "Manuell an Slaves synchronisieren",
-            "Token Generated & Inserted.": "Token generiert & eingefügt.",
-            "No token set.": "Kein Token gesetzt.",
-            "Master only.": "Nur Master.",
-            "Dir Error.": "Verzeichnisfehler.",
-            "Input empty.": "Eingabe leer.",
-            "Invalid JSON.": "Ungültiges JSON.",
-            "Saved & Encrypted.": "Gespeichert & Verschlüsselt.",
-            "Saved & Encrypted locally.": "Lokal gespeichert & verschlüsselt.",
-            "Encryption failed.": "Verschlüsselung fehlgeschlagen.",
-            "Sync cancelled: Standalone systems are isolated.": "Sync abgebrochen: Standalone-Systeme sind isoliert.",
-            "Access Denied: This instance is not configured as a Slave.": "Zugriff verweigert: Diese Instanz ist nicht als Slave konfiguriert.",
-            "WebHook URL für diesen Slave: /hook/secrets_": "WebHook URL für diesen Slave: /hook/secrets_"
-        }
+  "translations": {
+    "de": {
+      "!!! CONFIGURATION ERROR !!!": "!!! KONFIGURATIONSFEHLER !!!",
+      "Security Configuration": "Sicherheitskonfiguration",
+      "WebHook URL: (Save settings to generate)": "WebHook URL: (Speichern zum Generieren)",
+      "System Role": "Systemrolle",
+      "Slave (Receiver)": "Slave (Empfänger)",
+      "Master (Sender)": "Master (Sender)",
+      "Standalone (Local Vault)": "Standalone (Lokaler Tresor)",
+
+      "Key Storage (Filename 'master.key' is added automatically)": "Schlüsselspeicher (Dateiname 'master.key' wird automatisch ergänzt)",
+      "Directory Path (e.g. /var/lib/symcon_keys/)": "Verzeichnispfad (z.B. /var/lib/symcon_keys/)",
+      "Check Directory Permissions": "Verzeichnisberechtigungen prüfen",
+
+      "Synchronization Token (Stored encrypted in system.vault)": "Synchronisierungs-Token (verschlüsselt in system.vault gespeichert)",
+      "Sync Token": "Sync-Token",
+      "Generate Random Token": "Zufälliges Token generieren",
+      "Show/Copy Token": "Token anzeigen/kopieren",
+      "Save Token (encrypted)": "Token speichern (verschlüsselt)",
+
+      "WebHook Protection (Optional Basic Auth)": "WebHook-Schutz (Optional Basic Auth)",
+      "WebHook User (Optional)": "WebHook Benutzer (Optional)",
+      "WebHook Password (Optional, stored encrypted)": "WebHook Passwort (Optional, verschlüsselt gespeichert)",
+      "Save WebHook Password (encrypted)": "WebHook Passwort speichern (verschlüsselt)",
+
+      "Allow Key Transport via Sync Payload (Slave only)": "Key-Transport per Sync-Payload erlauben (nur Slave)",
+
+      "Slave WebHooks (Master Only)": "Slave WebHooks (Nur Master)",
+      "Server (Label)": "Server (Bezeichnung)",
+      "URL (http://ip:3777/...  OR  https://host/... )": "URL (http://ip:3777/...  ODER  https://host/... )",
+      "TLS Mode": "TLS-Modus",
+      "1) HTTP (no TLS)": "1) HTTP (kein TLS)",
+      "2) HTTPS Strict": "2) HTTPS Strict",
+      "3) HTTPS Pinned": "3) HTTPS Pinned",
+      "Key Provisioning": "Key-Bereitstellung",
+      "Manual (out-of-band)": "Manuell (out-of-band)",
+      "Sync payload (send key)": "Sync-Payload (Key senden)",
+      "Pinned Fingerprint (SHA256 hex, only for Pinned)": "Pinned Fingerprint (SHA256 hex, nur für Pinned)",
+      "User (Optional)": "Benutzer (Optional)",
+
+      "Master Only: Store per-Slave Basic-Auth Passwords (encrypted)": "Nur Master: Pro-Slave Basic-Auth Passwörter speichern (verschlüsselt)",
+      "Slave (Server — URL)": "Slave (Server — URL)",
+      "Password for selected Slave (stored encrypted)": "Passwort für ausgewählten Slave (verschlüsselt gespeichert)",
+      "Save Slave Password (encrypted)": "Slave Passwort speichern (verschlüsselt)",
+
+      "Master: Secret Management / Vault Editor": "Master: Geheimnisverwaltung / Tresor-Editor",
+      "⚠️ CAUTION: Unencrypted data is currently visible!": "⚠️ ACHTUNG: Unverschlüsselte Daten sind derzeit sichtbar!",
+      "JSON Editor": "JSON Editor",
+      "🔓 Unlock & Load Data": "🔓 Tresor öffnen & Daten laden",
+      "💾 Encrypt & Save": "💾 Verschlüsseln & Speichern",
+      "❌ Cancel / Wipe": "❌ Abbrechen / RAM leeren",
+
+      "Status:": "Status:",
+      "Idle": "Leerlauf",
+      "Instance OK": "Instanz OK",
+      "Manually Sync to Slaves": "Manuell an Slaves synchronisieren",
+      "🔁 Rotate Encryption Key": "🔁 Verschlüsselungs-Key rotieren",
+
+      "Token Generated & Inserted.": "Token generiert & eingefügt.",
+      "No token set.": "Kein Token gesetzt.",
+      "Master only.": "Nur Master.",
+      "Dir Error.": "Verzeichnisfehler.",
+      "Input empty.": "Eingabe leer.",
+      "Invalid JSON.": "Ungültiges JSON.",
+      "Saved & Encrypted.": "Gespeichert & Verschlüsselt.",
+      "Saved & Encrypted locally.": "Lokal gespeichert & verschlüsselt.",
+      "Encryption failed.": "Verschlüsselung fehlgeschlagen.",
+
+      "Sync cancelled: Standalone systems are isolated.": "Sync abgebrochen: Standalone-Systeme sind isoliert.",
+      "Access Denied: This instance is not configured as a Slave.": "Zugriff verweigert: Diese Instanz ist nicht als Slave konfiguriert.",
+      "WebHook URL für diesen Slave: /hook/secrets_": "WebHook URL für diesen Slave: /hook/secrets_"
     }
+  }
 }
+```
