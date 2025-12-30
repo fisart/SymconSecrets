@@ -146,6 +146,7 @@ class SecretsManager extends IPSModuleStrict {
             $this->LogMessage("AuthToken save failed (system file).", KL_ERROR);
         }
     }
+    
     public function ShowToken(): void
     {
         $token = $this->getAuthToken();
@@ -156,6 +157,8 @@ class SecretsManager extends IPSModuleStrict {
         }
         echo "YOUR SYNC TOKEN:\n\n" . $token;
     }
+  
+
 
     public function SaveHookPass(string $pass): void
     {
@@ -299,10 +302,7 @@ class SecretsManager extends IPSModuleStrict {
     }
 
 
-    public function ShowToken(): void {
-        $token = $this->ReadPropertyString("AuthToken");
-        echo ($token === "") ? "No token set." : "YOUR SYNC TOKEN:\n\n" . $token . "\n\n(Select text and Ctrl+C to copy)";
-    }
+
 
     // =========================================================================
     // EDITOR ACTIONS (Load / Save / Wipe)
