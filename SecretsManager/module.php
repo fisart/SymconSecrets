@@ -306,21 +306,31 @@ public function HandleListAction(int $index): void {
         }
     }
 
-    public function UpdateValue(int $index, string $Field, string $Value): void {
+/**
+     * Updates a field based on the Key name (not the index!).
+     * This is 100% stable regardless of sorting.
+     */
+    public function UpdateValue(string $Key, string $Field, string $Value): void {
+        // Log zur Verifizierung (erscheint im Meldungsfenster)
+        $this->LogMessage("Update empfangen: Key $Key, Feld $Field, Wert $Value", KL_MESSAGE);
+
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
         $temp = &$this->getCurrentLevelReference($fullData);
-        ksort($temp);
-        $keys = array_keys($temp);
 
-        if (isset($keys[$index])) {
-            $keyName = $keys[$index];
-            if (!is_array($temp[$keyName])) {
-                $temp[$keyName] = ['PW' => (string)$temp[$keyName], 'User' => '', 'URL' => '', 'Location' => '', 'IP' => ''];
+        if (isset($temp[$Key])) {
+            // Konvertierung falls nötig
+            if (!is_array($temp[$Key])) {
+                $temp[$Key] = ['PW' => (string)$temp[$Key], 'User' => '', 'URL' => '', 'Location' => '', 'IP' => ''];
             }
-            $temp[$keyName][$Field] = $Value;
+            
+            // Wert im RAM-Speicher setzen
+            $temp[$Key][$Field] = $Value;
+            
+            // Zurück in den Buffer
             $this->SetBuffer("DecryptedCache", json_encode($fullData));
         }
     }
+
 
  public function AddEntry(string $NewKeyName, string $NewKeyType): void {
         // Daten aktiv vom Formular abrufen
@@ -341,20 +351,18 @@ public function HandleListAction(int $index): void {
         $this->ReloadForm();
     }
 
-    public function EncryptAndSave(): void {
-        // Daten aktiv vom Formular abrufen
-        $listData = json_decode($this->GetConfigurationFormValue('EditorList'), true) ?: [];
-        $this->SyncListToBuffer($listData);
-
+public function EncryptAndSave(): void {
         if ($this->ReadPropertyInteger("OperationMode") === 0) return;
-
+        
+        // Die Daten sind bereits durch UpdateValue im Buffer!
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
+
         if ($this->_encryptAndSave($fullData)) {
             $this->ClearVault();
-            echo "✅ SUCCESS: Vault saved.";
+            echo "✅ SUCCESS: Vault encrypted and saved.";
             if ($this->ReadPropertyInteger("OperationMode") === 1) $this->SyncSlaves();
         }
-    } 
+    }
 
     private function PrepareListValues(): array {
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
