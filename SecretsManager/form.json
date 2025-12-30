@@ -122,7 +122,7 @@
             "type": "Button", 
             "name": "BtnBack", 
             "caption": "⬅️ Go Up (Back)", 
-            "onClick": "SEC_NavigateUp($id, $EditorList);",
+            "onClick": "SEC_NavigateUp($id);",
             "visible": false
         },
         {
@@ -133,41 +133,16 @@
             "add": false, 
             "delete": true, 
             "visible": false,
+            "onClick": "SEC_HandleListAction($id, $index, $column);",
             "columns": [
                 { "caption": "Identifier/Key", "name": "Key", "width": "150px" },
-                { 
-                    "caption": "Username", "name": "User", "width": "120px", 
-                    "edit": { "type": "ValidationTextBox" },
-                    "onChange": "SEC_UpdateValue($id, $index, 'User', $Value);" 
-                },
-                { 
-                    "caption": "Password", "name": "PW", "width": "120px", 
-                    "edit": { "type": "ValidationTextBox" },
-                    "onChange": "SEC_UpdateValue($id, $index, 'PW', $Value);" 
-                },
-                { 
-                    "caption": "URL", "name": "URL", "width": "180px", 
-                    "edit": { "type": "ValidationTextBox" },
-                    "onChange": "SEC_UpdateValue($id, $index, 'URL', $Value);" 
-                },
-                { 
-                    "caption": "Location", "name": "Location", "width": "100px", 
-                    "edit": { "type": "ValidationTextBox" },
-                    "onChange": "SEC_UpdateValue($id, $index, 'Location', $Value);" 
-                },
-                { 
-                    "caption": "IP Address", "name": "IP", "width": "110px", 
-                    "edit": { "type": "ValidationTextBox" },
-                    "onChange": "SEC_UpdateValue($id, $index, 'IP', $Value);" 
-                },
+                { "caption": "Username", "name": "User", "width": "120px", "edit": { "type": "ValidationTextBox" } },
+                { "caption": "Password", "name": "PW", "width": "120px", "edit": { "type": "ValidationTextBox" } },
+                { "caption": "URL", "name": "URL", "width": "180px", "edit": { "type": "ValidationTextBox" } },
+                { "caption": "Location", "name": "Location", "width": "100px", "edit": { "type": "ValidationTextBox" } },
+                { "caption": "IP Address", "name": "IP", "width": "110px", "edit": { "type": "ValidationTextBox" } },
                 { "caption": "Type", "name": "Type", "width": "80px" },
-                { 
-                    "caption": "Action", "name": "Action", "width": "100px",
-                    "edit": { 
-                        "type": "Button", "caption": "Open", 
-                        "onClick": "SEC_HandleListAction($id, $index, $EditorList);" 
-                    }
-                }
+                { "caption": "Action", "name": "Action", "width": "100px" }
             ]
         },
         {
@@ -184,7 +159,7 @@
                         { "caption": "Folder (Sub-Level)", "value": "object" }
                     ]
                 },
-                { "type": "Button", "caption": "➕ Add", "onClick": "SEC_AddEntry($id, $NewKeyName, $NewKeyType, $EditorList);" }
+                { "type": "Button", "caption": "➕ Add", "onClick": "SEC_AddEntry($id, $NewKeyName, $NewKeyType);" }
             ]
         },
 
@@ -198,7 +173,7 @@
             "type": "Button", 
             "name": "BtnEncrypt", 
             "caption": "💾 Encrypt & Save Entire Vault", 
-            "onClick": "SEC_EncryptAndSave($id, $EditorList);",
+            "onClick": "SEC_EncryptAndSave($id);",
             "visible": false
         },
         { 
