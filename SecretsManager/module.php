@@ -264,6 +264,10 @@ class SecretsManager extends IPSModuleStrict {
      * Synchronisiert den aktuellen Snapshot der UI-Liste in den RAM-Buffer.
      * Diese Funktion ist der "Übersetzer" zwischen der Web-Ansicht und dem PHP-Speicher.
      */
+    /**
+     * Synchronisiert den aktuellen Snapshot der UI-Liste in den RAM-Buffer.
+     * Diese Funktion ist der "Übersetzer" zwischen der Web-Ansicht und dem PHP-Speicher.
+     */
     private function SyncListToBuffer($listData): void {
         // Falls keine Daten vorhanden sind, abbrechen
         if (!$listData) return;
@@ -559,46 +563,7 @@ class SecretsManager extends IPSModuleStrict {
      * Takes the current state of the EditorList from the UI and synchronizes 
      * it into the unencrypted RAM buffer (DecryptedCache).
      */
-    private function SyncListToBuffer(array $listData): void {
-        // 1. Get the full tree from the RAM buffer
-        $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
-        
-        // 2. Get a reference to the current level we are looking at
-        $temp = &$this->getCurrentLevelReference($fullData);
-        
-        // 3. Iterate through the rows sent by the UI
-        foreach ($listData as $row) {
-            $key = $row['Key'] ?? '';
-            if ($key === '') continue;
 
-            // Only update if the entry exists in our buffer
-            if (isset($temp[$key])) {
-                // If it's not an array yet (old format), convert it
-                if (!is_array($temp[$key])) {
-                    $temp[$key] = [
-                        'User'     => '',
-                        'PW'       => (string)$temp[$key],
-                        'URL'      => '',
-                        'Location' => '',
-                        'IP'       => ''
-                    ];
-                }
-
-                // Sync the 5 data fields from the UI row to the buffer
-                // Folders are skipped here because they don't have these fields
-                if ($row['Type'] === 'Secret') {
-                    $temp[$key]['User']     = $row['User']     ?? '';
-                    $temp[$key]['PW']       = $row['PW']       ?? '';
-                    $temp[$key]['URL']      = $row['URL']      ?? '';
-                    $temp[$key]['Location'] = $row['Location'] ?? '';
-                    $temp[$key]['IP']       = $row['IP']       ?? '';
-                }
-            }
-        }
-
-        // 4. Write the updated full tree back into the RAM buffer
-        $this->SetBuffer("DecryptedCache", json_encode($fullData));
-    }
     private function PrepareListValues(): array {
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
         $temp = $this->getCurrentLevelReference($fullData);
