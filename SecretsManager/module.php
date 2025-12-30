@@ -260,6 +260,49 @@ class SecretsManager extends IPSModuleStrict {
         }
     }
 
+    /**
+     * Synchronisiert den aktuellen Snapshot der UI-Liste in den RAM-Buffer.
+     * Diese Funktion ist der "Übersetzer" zwischen der Web-Ansicht und dem PHP-Speicher.
+     */
+    private function SyncListToBuffer($listData): void {
+        // Falls keine Daten vorhanden sind, abbrechen
+        if (!$listData) return;
+
+        // RAM-Buffer laden
+        $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
+        
+        // Referenz auf die aktuelle Ebene (Ordner) holen
+        $temp = &$this->getCurrentLevelReference($fullData);
+        
+        // Wir iterieren über das IPSList-Objekt aus der UI
+        foreach ($listData as $row) {
+            // Wir wandeln die Zeile sicherheitshalber in ein PHP-Array um
+            $rowData = (array)$row;
+            $key = $rowData['Key'] ?? '';
+
+            if ($key !== '' && isset($temp[$key])) {
+                // Falls es ein Secret ist (kein Ordner), synchronisieren wir die 5 Felder
+                if (isset($rowData['Type']) && $rowData['Type'] === 'Secret') {
+                    
+                    // Sicherstellen, dass das Ziel im RAM-Buffer ein Array ist
+                    if (!is_array($temp[$key])) {
+                        $temp[$key] = ['PW' => (string)$temp[$key]];
+                    }
+
+                    // Werte aus der UI-Zeile in den RAM-Buffer schreiben
+                    $temp[$key]['User']     = $rowData['User']     ?? '';
+                    $temp[$key]['PW']       = $rowData['PW']       ?? '';
+                    $temp[$key]['URL']      = $rowData['URL']      ?? '';
+                    $temp[$key]['Location'] = $rowData['Location'] ?? '';
+                    $temp[$key]['IP']       = $rowData['IP']       ?? '';
+                }
+            }
+        }
+
+        // Den aktualisierten Baum zurück in den RAM-Buffer schreiben
+        $this->SetBuffer("DecryptedCache", json_encode($fullData));
+    }
+
     // =========================================================================
     // CONFIGURATION ACTIONS (Called by UI Buttons)
     // =========================================================================
@@ -471,29 +514,29 @@ class SecretsManager extends IPSModuleStrict {
     /**
      * Adds a new folder or a new secret to the current path.
      */
-    public function AddEntry(string $NewKeyName, string $NewKeyType): void {
-        if (trim($NewKeyName) === "") return;
+    public function AddEntry(string $NewKeyName, string $NewKeyType, $EditorList): void {
+        $this->SyncListToBuffer($EditorList); // Snapshot verarbeiten
         
+        if (trim($NewKeyName) === "") return;
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
         $temp = &$this->getCurrentLevelReference($fullData);
 
-        if ($NewKeyType === "object") {
+        if ($NewKeyType === "object") { 
             $temp[$NewKeyName] = []; 
-        } else {
-            $temp[$NewKeyName] = ['User' => '', 'PW' => '', 'URL' => '', 'Location' => '', 'IP' => ''];
+        } else { 
+            $temp[$NewKeyName] = ['User' => '', 'PW' => '', 'URL' => '', 'Location' => '', 'IP' => '']; 
         }
 
         $this->SetBuffer("DecryptedCache", json_encode($fullData));
         $this->ReloadForm();
-    }
-
+}
     /**
      * Encrypts the current RAM state and saves it permanently.
      */
-    public function EncryptAndSave(): void {
-        if ($this->ReadPropertyInteger("OperationMode") === 0) return;
+    public function EncryptAndSave($EditorList): void {
+        $this->SyncListToBuffer($EditorList); // Snapshot verarbeiten
         
-        // Data is already updated via UpdateValue!
+        if ($this->ReadPropertyInteger("OperationMode") === 0) return;
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
 
         if ($this->_encryptAndSave($fullData)) {
