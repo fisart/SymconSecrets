@@ -69,6 +69,13 @@
     { "type": "PasswordTextBox", "name": "HookPass", "caption": "WebHook Password (Optional)" },
 
     {
+      "type": "CheckBox",
+      "name": "AllowKeyTransport",
+      "caption": "Allow Key Transport via Sync Payload (Slave only)",
+      "visible": false
+    },
+
+    {
       "type": "List",
       "name": "SlaveURLs",
       "caption": "Slave WebHooks (Master Only)",
@@ -79,14 +86,14 @@
         {
           "caption": "URL (http://ip:3777/...  OR  https://host/... )",
           "name": "Url",
-          "width": "380px",
+          "width": "330px",
           "add": "",
           "edit": { "type": "ValidationTextBox" }
         },
         {
           "caption": "TLS Mode",
           "name": "TlsMode",
-          "width": "150px",
+          "width": "140px",
           "add": "strict",
           "edit": {
             "type": "Select",
@@ -98,23 +105,36 @@
           }
         },
         {
+          "caption": "Key Provisioning",
+          "name": "KeyTransport",
+          "width": "140px",
+          "add": "manual",
+          "edit": {
+            "type": "Select",
+            "options": [
+              { "caption": "Manual (out-of-band)", "value": "manual" },
+              { "caption": "Sync payload (send key)", "value": "sync" }
+            ]
+          }
+        },
+        {
           "caption": "Pinned Fingerprint (SHA256 hex, only for Pinned)",
           "name": "Fingerprint",
-          "width": "260px",
+          "width": "240px",
           "add": "",
           "edit": { "type": "ValidationTextBox" }
         },
         {
           "caption": "User (Optional)",
           "name": "User",
-          "width": "140px",
+          "width": "120px",
           "add": "",
           "edit": { "type": "ValidationTextBox" }
         },
         {
           "caption": "Pass (Optional)",
           "name": "Pass",
-          "width": "140px",
+          "width": "120px",
           "add": "",
           "edit": { "type": "PasswordTextBox" }
         }
