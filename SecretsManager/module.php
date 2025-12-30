@@ -125,7 +125,7 @@ class SecretsManager extends IPSModuleStrict {
                 if (in_array($name, ['BtnGenToken', 'BtnShowToken'], true)) {
                     $element['visible'] = $isMaster;
                 }
-                
+
                 // Master only: slave list + slave password editor
                 if (in_array($name, ['SlaveURLs', 'LabelSeparator', 'LabelMasterHead', 'PanelSlaveCreds'], true)) {
                     $element['visible'] = $isMaster;
@@ -163,11 +163,7 @@ class SecretsManager extends IPSModuleStrict {
     {
         $token = trim((string)$token);
 
-        $this->LogMessage(
-            "DEBUG SaveAuthToken(): token_len=" . strlen($token) .
-            " token_sha256=" . substr(hash('sha256', $token), 0, 16),
-            KL_MESSAGE
-        );
+ 
 
         if ($token === "") {
             $this->LogMessage("AuthToken not saved: input is empty.", KL_ERROR);
@@ -202,11 +198,6 @@ class SecretsManager extends IPSModuleStrict {
     {
         $pass = (string)$pass;
 
-        $this->LogMessage(
-            "DEBUG SaveHookPass(): pass_len=" . strlen($pass) .
-            " pass_sha256=" . substr(hash('sha256', $pass), 0, 16),
-            KL_MESSAGE
-        );
 
         if ($pass === "") {
             $this->LogMessage("HookPass not saved: input is empty.", KL_ERROR);
@@ -230,11 +221,7 @@ class SecretsManager extends IPSModuleStrict {
         $pass = (string)$pass;
 
         // DEBUG (TEMP)
-        $this->LogMessage(
-            "DEBUG SaveSlavePass(): url='" . $url . "' pass_len=" . strlen($pass) .
-            " pass_sha256=" . substr(hash('sha256', $pass), 0, 16),
-            KL_MESSAGE
-        );
+
 
         if ($url === "") {
             $this->LogMessage("Slave password not saved: no URL selected.", KL_ERROR);
@@ -252,11 +239,7 @@ class SecretsManager extends IPSModuleStrict {
         $sys['slaves'][$url] = $pass;
 
         if ($this->saveSystemSecrets($sys)) {
-            // DEBUG (TEMP)
-            $this->LogMessage(
-                "DEBUG SaveSlavePass(): stored for url='" . $url . "' (system.vault updated)",
-                KL_MESSAGE
-            );
+
             $this->LogMessage("Slave password saved for: " . $url, KL_MESSAGE);
         } else {
             $this->LogMessage("Slave password save failed for: " . $url, KL_ERROR);
@@ -566,11 +549,7 @@ class SecretsManager extends IPSModuleStrict {
             $user = trim((string)($slave['User'] ?? ''));
             if ($user !== '') {
                 $pass = (string)($slavePassMap[$url] ?? '');
-                $this->LogMessage(
-                    "DEBUG SyncSlaves(): BasicAuth lookup url='" . $url . "' pass_found=" . ($pass !== '' ? 'yes' : 'no') .
-                    ($pass !== '' ? (" pass_len=" . strlen($pass) . " pass_sha256=" . substr(hash('sha256', $pass), 0, 16)) : ""),
-                    KL_MESSAGE
-                );
+
                 if ($pass === '') {
                     $this->LogMessage("❌ Sync blocked: BasicAuth user set but no password stored for $url", KL_ERROR);
                     continue;
