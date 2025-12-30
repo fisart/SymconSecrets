@@ -42,24 +42,7 @@ class SecretsManager extends IPSModuleStrict {
         // Internal Storage for the Encrypted Blob
         $this->RegisterVariableString("Vault", "Encrypted Vault");
     }
-public function SyncList($Value): void
-{
-    // $Value kann je nach Symcon-Version ein IPSList/Array/stdClass/JSON-String sein
-    $listData = [];
 
-    if (is_string($Value)) {
-        $decoded = json_decode($Value, true);
-        $listData = is_array($decoded) ? $decoded : [];
-    } elseif (is_iterable($Value)) {
-        foreach ($Value as $row) {
-            $listData[] = $row;
-        }
-    } elseif (is_array($Value)) {
-        $listData = $Value;
-    }
-
-    $this->SyncListToBuffer($listData);
-}
     /**
      * DYNAMIC FORM GENERATION
      */
