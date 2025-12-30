@@ -234,6 +234,14 @@
       "name": "BtnSync",
       "caption": "Manually Sync to Slaves",
       "onClick": "SEC_SyncSlaves($id);"
+    },
+    {
+      "type": "Button",
+      "name": "BtnRotateKey",
+      "caption": "🔁 Rotate Encryption Key",
+      "onClick": "SEC_RotateKey($id);",
+      "visible": false
     }
   ]
 }
+

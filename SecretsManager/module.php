@@ -145,8 +145,12 @@ class SecretsManager extends IPSModuleStrict {
 
         if (isset($json['actions']) && is_array($json['actions'])) {
             foreach ($json['actions'] as &$action) {
-                if (($action['name'] ?? '') === 'BtnSync') {
+                $an = $action['name'] ?? '';
+                if ($an === 'BtnSync') {
                     $action['visible'] = $isMaster;
+                }
+                if ($an === 'BtnRotateKey') {
+                    $action['visible'] = ($isMaster || $isStandalone);
                 }
             }
         }
@@ -155,7 +159,69 @@ class SecretsManager extends IPSModuleStrict {
     }
 
 
+    public function RotateKey(): void
+    {
+        $mode = $this->ReadPropertyInteger("OperationMode");
+        if (!($mode === 1 || $mode === 2)) {
+            $this->LogMessage("RotateKey denied: only Master/Standalone allowed.", KL_WARNING);
+            return;
+        }
 
+        $oldKeyHex = (string)$this->_readKey();
+        if ($oldKeyHex === '') {
+            $this->LogMessage("RotateKey aborted: master.key missing/unreadable.", KL_ERROR);
+            return;
+        }
+
+        // 1) Decrypt Vault with old key (RAM only)
+        $plainVault = $this->decryptVaultWithKeyHex($oldKeyHex);
+        if ($plainVault === false) {
+            $this->LogMessage("RotateKey aborted: cannot decrypt Vault with current key.", KL_ERROR);
+            return;
+        }
+
+        // 2) Decrypt system secrets with old key (RAM only)
+        $plainSystem = $this->loadSystemSecretsUsingKeyHex($oldKeyHex);
+        if ($plainSystem === null) {
+            $this->LogMessage("RotateKey aborted: cannot decrypt system.vault with current key.", KL_ERROR);
+            return;
+        }
+
+        // 3) Generate new key
+        $newKeyHex = bin2hex(random_bytes(16));
+
+        // 4) Atomically replace master.key (keep .bak)
+        if (!$this->rotateKeyFileAtomic($newKeyHex)) {
+            $this->LogMessage("RotateKey aborted: cannot write new master.key (permissions/path).", KL_ERROR);
+            return;
+        }
+
+        // 5) Re-encrypt Vault and system.vault with new key
+        $newVaultJson = $this->encryptVaultToJsonWithKeyHex($plainVault, $newKeyHex);
+        if ($newVaultJson === false) {
+            $this->LogMessage("RotateKey FAILED: cannot encrypt Vault with new key. Attempting rollback to .bak.", KL_ERROR);
+            $this->restoreKeyFromBak();
+            return;
+        }
+
+        if (!$this->saveSystemSecretsUsingKeyHex($plainSystem, $newKeyHex)) {
+            $this->LogMessage("RotateKey FAILED: cannot encrypt system.vault with new key. Attempting rollback to .bak.", KL_ERROR);
+            $this->restoreKeyFromBak();
+            return;
+        }
+
+        // Commit Vault
+        $this->SetValue("Vault", $newVaultJson);
+
+        // Cleanup
+        $this->SetBuffer("DecryptedCache", "");
+        $this->LogMessage("✅ RotateKey: local key rotation completed.", KL_MESSAGE);
+
+        // Optional: Master pushes to eligible slaves (Manual=Skip policy lives in SyncSlaves)
+        if ($mode === 1) {
+            $this->SyncSlaves();
+        }
+    }
 
     public function SaveAuthToken(string $token): void
     {
@@ -481,6 +547,7 @@ class SecretsManager extends IPSModuleStrict {
      * Pushes the encrypted vault and the master key to all configured remote systems.
      */
 
+
     public function SyncSlaves(): void
     {
         $mode = $this->ReadPropertyInteger("OperationMode");
@@ -499,7 +566,7 @@ class SecretsManager extends IPSModuleStrict {
             return;
         }
 
-        $token = $this->getAuthToken();
+        $token = $this->getAuthToken(); // encrypted system.vault
         if ($token === "") {
             $this->LogMessage("Sync aborted: missing AuthToken in encrypted system file.", KL_ERROR);
             return;
@@ -512,16 +579,15 @@ class SecretsManager extends IPSModuleStrict {
             return;
         }
 
-        $sys = $this->loadSystemSecrets();
+        $sys = $this->loadSystemSecrets(); // current key
         $slavePassMap = (isset($sys['slaves']) && is_array($sys['slaves'])) ? $sys['slaves'] : [];
 
         $successCount = 0;
-        $totalSlaves  = 0;
+        $attempted    = 0;
 
         foreach ($slaves as $slave) {
             $url = trim((string)($slave['Url'] ?? ''));
             if ($url === '') continue;
-            $totalSlaves++;
 
             $label = trim((string)($slave['Server'] ?? ''));
             $who = ($label !== '') ? $label : $url;
@@ -530,22 +596,29 @@ class SecretsManager extends IPSModuleStrict {
             $fpExp        = (string)($slave['Fingerprint'] ?? '');
             $keyTransport = (string)($slave['KeyTransport'] ?? 'manual');   // manual | sync
 
-            if ($tlsMode === 'http' && $keyTransport === 'sync') {
-                $this->LogMessage("❌ Sync blocked: KeyTransport=sync not allowed with HTTP for $who", KL_ERROR);
+            // POLICY: Manual = Skip (vault/key not sent)
+            if ($keyTransport === 'manual') {
+                $this->LogMessage("⚠️ Sync skipped (manual key provisioning): $who", KL_WARNING);
                 continue;
             }
 
+            // POLICY: sync+http = skip entirely
+            if ($keyTransport === 'sync' && $tlsMode === 'http') {
+                $this->LogMessage("❌ Sync skipped (insecure transport for key: HTTP): $who", KL_ERROR);
+                continue;
+            }
+
+            // KeyTransport=sync only allowed with strict/pinned → send key + vault
             $payloadArr = [
                 'auth'  => $token,
-                'vault' => $vault
+                'vault' => $vault,
+                'key'   => $keyHex
             ];
-            if ($keyTransport === 'sync') {
-                $payloadArr['key'] = $keyHex;
-            }
             $payload = json_encode($payloadArr);
 
             $headers = ['Content-Type: application/json'];
 
+            // Optional Basic Auth per slave
             $user = trim((string)($slave['User'] ?? ''));
             if ($user !== '') {
                 $pass = (string)($slavePassMap[$url] ?? '');
@@ -556,46 +629,38 @@ class SecretsManager extends IPSModuleStrict {
                 $headers[] = 'Authorization: Basic ' . base64_encode($user . ':' . $pass);
             }
 
+            $attempted++;
+
             try {
-                if ($tlsMode === 'http') {
-                    $result = $this->httpPostJson($url, $payload, $headers);
-                } elseif ($tlsMode === 'strict') {
+                if ($tlsMode === 'strict') {
                     $result = $this->httpsPostJsonStrict($url, $payload, $headers);
                 } elseif ($tlsMode === 'pinned') {
                     if (trim($fpExp) === '') throw new Exception("Pinned mode requires Fingerprint.");
                     $result = $this->httpsPostJsonPinned($url, $payload, $headers, $fpExp);
                 } else {
-                    throw new Exception("Unknown TLS mode: " . $tlsMode);
+                    throw new Exception("Unknown/unsupported TLS mode for key sync: " . $tlsMode);
                 }
 
                 $statusLine = (string)($result['status'] ?? 'Unknown Status');
                 $body = trim((string)($result['body'] ?? ''));
 
                 $ok = (strpos($statusLine, '200') !== false && $body === 'OK');
-                $kt = ($keyTransport === 'sync') ? "key=sent" : "key=manual";
 
                 if ($ok) {
                     $successCount++;
-                    $this->LogMessage("✅ Sync OK [$tlsMode, $kt] $who", KL_MESSAGE);
+                    $this->LogMessage("✅ Sync OK [$tlsMode, key=sent] $who", KL_MESSAGE);
                 } else {
                     $respShort = $body;
                     if (strlen($respShort) > 180) $respShort = substr($respShort, 0, 180) . "...";
-                    $this->LogMessage("❌ Sync FAIL [$tlsMode, $kt] $who | $statusLine | " . ($respShort ?: '(no body)'), KL_ERROR);
+                    $this->LogMessage("❌ Sync FAIL [$tlsMode, key=sent] $who | $statusLine | " . ($respShort ?: '(no body)'), KL_ERROR);
                 }
 
             } catch (Throwable $e) {
-                $kt = ($keyTransport === 'sync') ? "key=sent" : "key=manual";
-                $this->LogMessage("❌ Sync EXC  [$tlsMode, $kt] $who | " . $e->getMessage(), KL_ERROR);
+                $this->LogMessage("❌ Sync EXC  [$tlsMode, key=sent] $who | " . $e->getMessage(), KL_ERROR);
             }
         }
 
-        if ($totalSlaves === 0) {
-            $this->LogMessage("Sync aborted: No valid slave URLs found.", KL_WARNING);
-            return;
-        }
-
-        $level = ($successCount === $totalSlaves) ? KL_MESSAGE : KL_WARNING;
-        $this->LogMessage("Sync summary: $successCount / $totalSlaves successful.", $level);
+        $this->LogMessage("Sync summary: $successCount / $attempted successful (skipped slaves not counted).", ($successCount === $attempted) ? KL_MESSAGE : KL_WARNING);
     }
 
     
@@ -846,6 +911,188 @@ class SecretsManager extends IPSModuleStrict {
     // =========================================================================
     // INTERNAL CRYPTO HELPERS
     // =========================================================================
+ 
+ 
+    private const SYSTEM_VAULT_FILENAME = 'system.vault';
+
+    private function getSystemVaultPath(): string
+    {
+        $folder = $this->ReadPropertyString("KeyFolderPath");
+        if ($folder === "") return "";
+        return rtrim($folder, '/\\') . DIRECTORY_SEPARATOR . self::SYSTEM_VAULT_FILENAME;
+    }
+
+    private function decryptVaultWithKeyHex(string $keyHex)
+    {
+        $vaultJson = $this->GetValue("Vault");
+        if (!$vaultJson) return false;
+
+        $meta = json_decode($vaultJson, true);
+        if (!is_array($meta) || !isset($meta['data'], $meta['iv'], $meta['tag'])) return false;
+
+        $cipher = $meta['cipher'] ?? "aes-128-gcm";
+
+        $decrypted = openssl_decrypt(
+            (string)$meta['data'],
+            $cipher,
+            hex2bin($keyHex),
+            0,
+            hex2bin((string)$meta['iv']),
+            hex2bin((string)$meta['tag'])
+        );
+
+        if ($decrypted === false) return false;
+
+        $arr = json_decode($decrypted, true);
+        return is_array($arr) ? $arr : false;
+    }
+
+    private function encryptVaultToJsonWithKeyHex(array $dataArray, string $keyHex)
+    {
+        $plain = json_encode($dataArray);
+        if ($plain === false) return false;
+
+        $cipher = "aes-128-gcm";
+        $iv = random_bytes(12);
+        $tag = "";
+
+        $cipherText = openssl_encrypt($plain, $cipher, hex2bin($keyHex), 0, $iv, $tag);
+        if ($cipherText === false) return false;
+
+        return json_encode([
+            'cipher' => $cipher,
+            'iv'     => bin2hex($iv),
+            'tag'    => bin2hex($tag),
+            'data'   => $cipherText
+        ]);
+    }
+
+    private function loadSystemSecretsUsingKeyHex(string $keyHex): ?array
+    {
+        $path = $this->getSystemVaultPath();
+        if ($path === "") return null;
+
+        if (!file_exists($path)) {
+            return []; // not existing is fine
+        }
+
+        $json = @file_get_contents($path);
+        if ($json === false || trim($json) === '') return [];
+
+        $meta = json_decode($json, true);
+        if (!is_array($meta) || !isset($meta['data'], $meta['iv'], $meta['tag'])) return null;
+
+        $cipher = $meta['cipher'] ?? "aes-128-gcm";
+
+        $decrypted = openssl_decrypt(
+            (string)$meta['data'],
+            $cipher,
+            hex2bin($keyHex),
+            0,
+            hex2bin((string)$meta['iv']),
+            hex2bin((string)$meta['tag'])
+        );
+
+        if ($decrypted === false) return null;
+
+        $arr = json_decode($decrypted, true);
+        return is_array($arr) ? $arr : [];
+    }
+
+    private function saveSystemSecretsUsingKeyHex(array $data, string $keyHex): bool
+    {
+        $path = $this->getSystemVaultPath();
+        if ($path === "") return false;
+
+        $plain = json_encode($data);
+        if ($plain === false) return false;
+
+        $cipher = "aes-128-gcm";
+        $iv = random_bytes(12);
+        $tag = "";
+
+        $cipherText = openssl_encrypt($plain, $cipher, hex2bin($keyHex), 0, $iv, $tag);
+        if ($cipherText === false) return false;
+
+        $out = json_encode([
+            'cipher' => $cipher,
+            'iv'     => bin2hex($iv),
+            'tag'    => bin2hex($tag),
+            'data'   => $cipherText
+        ]);
+
+        return $this->writeFileAtomic($path, $out, 0600);
+    }
+
+    private function rotateKeyFileAtomic(string $newKeyHex): bool
+    {
+        $keyPath = $this->_getFullPath();
+        if ($keyPath === "") return false;
+
+        $dir = dirname($keyPath);
+        if (!is_dir($dir)) return false;
+
+        $newPath = $keyPath . ".new";
+        $bakPath = $keyPath . ".bak";
+
+        if (!$this->writeFileAtomic($newPath, $newKeyHex, 0600)) {
+            return false;
+        }
+
+        // move current to .bak (best effort)
+        if (file_exists($keyPath)) {
+            @rename($keyPath, $bakPath);
+        }
+
+        // activate new
+        if (!@rename($newPath, $keyPath)) {
+            // rollback attempt
+            @rename($bakPath, $keyPath);
+            @unlink($newPath);
+            return false;
+        }
+
+        @chmod($keyPath, 0600);
+        return true;
+    }
+
+    private function restoreKeyFromBak(): void
+    {
+        $keyPath = $this->_getFullPath();
+        if ($keyPath === "") return;
+
+        $bakPath = $keyPath . ".bak";
+        if (file_exists($bakPath)) {
+            @rename($bakPath, $keyPath);
+            @chmod($keyPath, 0600);
+        }
+    }
+
+    private function writeFileAtomic(string $path, string $content, int $chmod = 0600): bool
+    {
+        $dir = dirname($path);
+        if (!is_dir($dir)) return false;
+
+        $tmp = $path . ".tmp_" . bin2hex(random_bytes(4));
+
+        $ok = (@file_put_contents($tmp, $content) !== false);
+        if (!$ok) {
+            @unlink($tmp);
+            return false;
+        }
+
+        @chmod($tmp, $chmod);
+
+        if (!@rename($tmp, $path)) {
+            @unlink($tmp);
+            return false;
+        }
+
+        @chmod($path, $chmod);
+        return true;
+    }
+
+ 
     private function applySlaveUrlOptionsRecursive(array &$node, array $slaveOptions): void
     {
         // Node kann ein Element sein oder ein Container mit children/items
