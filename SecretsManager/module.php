@@ -55,7 +55,7 @@ class SecretsManager extends IPSModuleStrict {
 
         $isUnlocked = false; // stateless editor
 
-        // Build slave URL options for credential editor
+        // Build slave URL options for credential editor (PanelSlaveCreds -> items -> SlaveCredUrl)
         $slaveOptions = [];
         $slaves = json_decode($this->ReadPropertyString("SlaveURLs"), true);
         if (is_array($slaves)) {
@@ -70,53 +70,77 @@ class SecretsManager extends IPSModuleStrict {
             $slaveOptions[] = ['caption' => '(no slaves configured)', 'value' => ''];
         }
 
-        foreach ($json['elements'] as &$element) {
-            $name = $element['name'] ?? '';
-
-            if ($name === 'HookInfo') {
-                $element['caption'] = "WebHook URL für diesen Slave: /hook/secrets_" . $this->InstanceID;
-                $element['visible'] = $isSlave;
+        // Helper to apply options inside nested "items"
+        $applySlaveOptions = function (&$node) use (&$applySlaveOptions, $slaveOptions) {
+            if (!is_array($node)) {
+                return;
             }
 
-            if (in_array($name, ['LabelHookAuth', 'HookUser'])) {
-                $element['visible'] = $isSlave;
+            if (($node['name'] ?? '') === 'SlaveCredUrl') {
+                $node['options'] = $slaveOptions;
             }
 
-            // NEW: HookPassInput + SaveHookPass button only on Slave
-            if (in_array($name, ['HookPassInput', 'BtnSaveHookPass'])) {
-                $element['visible'] = $isSlave;
-            }
-
-            // NEW: AuthToken input/buttons for Master+Slave (sync role)
-            if (in_array($name, ['AuthTokenInput', 'BtnGenToken', 'BtnShowToken', 'BtnSaveAuthToken'])) {
-                $element['visible'] = $isSyncRole;
-            }
-
-            // Master only: slave list + slave password editor
-            if (in_array($name, ['SlaveURLs', 'LabelSeparator', 'LabelMasterHead', 'PanelSlaveCreds'])) {
-                $element['visible'] = $isMaster;
-            }
-
-            // Fill options for slave credential select
-            if ($name === 'SlaveCredUrl') {
-                $element['options'] = $slaveOptions;
-            }
-
-            // Editor workflow
-            if (in_array($name, ['BtnLoad', 'InputJson', 'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning'])) {
-                $element['visible'] = $isEditorRole ? $isUnlocked : false;
-                if ($name === 'BtnLoad') {
-                    $element['visible'] = ($isEditorRole && !$isUnlocked);
+            if (isset($node['items']) && is_array($node['items'])) {
+                foreach ($node['items'] as &$child) {
+                    $applySlaveOptions($child);
                 }
             }
 
-            // AllowKeyTransport toggle only on Slave
-            if ($name === 'AllowKeyTransport') {
-                $element['visible'] = $isSlave;
+            // future-proof: if a container uses "elements"
+            if (isset($node['elements']) && is_array($node['elements'])) {
+                foreach ($node['elements'] as &$child) {
+                    $applySlaveOptions($child);
+                }
+            }
+        };
+
+        if (isset($json['elements']) && is_array($json['elements'])) {
+            foreach ($json['elements'] as &$element) {
+                // Apply slave options recursively (fix for nested SlaveCredUrl)
+                $applySlaveOptions($element);
+
+                $name = $element['name'] ?? '';
+
+                if ($name === 'HookInfo') {
+                    $element['caption'] = "WebHook URL für diesen Slave: /hook/secrets_" . $this->InstanceID;
+                    $element['visible'] = $isSlave;
+                }
+
+                if (in_array($name, ['LabelHookAuth', 'HookUser'], true)) {
+                    $element['visible'] = $isSlave;
+                }
+
+                // HookPassInput + SaveHookPass button only on Slave
+                if (in_array($name, ['HookPassInput', 'BtnSaveHookPass'], true)) {
+                    $element['visible'] = $isSlave;
+                }
+
+                // AuthToken input/buttons for Master+Slave (sync role)
+                if (in_array($name, ['AuthTokenInput', 'BtnGenToken', 'BtnShowToken', 'BtnSaveAuthToken'], true)) {
+                    $element['visible'] = $isSyncRole;
+                }
+
+                // Master only: slave list + slave password editor
+                if (in_array($name, ['SlaveURLs', 'LabelSeparator', 'LabelMasterHead', 'PanelSlaveCreds'], true)) {
+                    $element['visible'] = $isMaster;
+                }
+
+                // Editor workflow
+                if (in_array($name, ['BtnLoad', 'InputJson', 'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning'], true)) {
+                    $element['visible'] = $isEditorRole ? $isUnlocked : false;
+                    if ($name === 'BtnLoad') {
+                        $element['visible'] = ($isEditorRole && !$isUnlocked);
+                    }
+                }
+
+                // AllowKeyTransport toggle only on Slave
+                if ($name === 'AllowKeyTransport') {
+                    $element['visible'] = $isSlave;
+                }
             }
         }
 
-        if (isset($json['actions'])) {
+        if (isset($json['actions']) && is_array($json['actions'])) {
             foreach ($json['actions'] as &$action) {
                 if (($action['name'] ?? '') === 'BtnSync') {
                     $action['visible'] = $isMaster;
@@ -804,6 +828,27 @@ class SecretsManager extends IPSModuleStrict {
     // =========================================================================
     // INTERNAL CRYPTO HELPERS
     // =========================================================================
+    private function applySlaveUrlOptionsRecursive(array &$node, array $slaveOptions): void
+    {
+        // Node kann ein Element sein oder ein Container mit children/items
+        if (isset($node['name']) && $node['name'] === 'SlaveCredUrl') {
+            $node['options'] = $slaveOptions;
+        }
+
+        // ExpansionPanel: "items"
+        if (isset($node['items']) && is_array($node['items'])) {
+            foreach ($node['items'] as &$child) {
+                $this->applySlaveUrlOptionsRecursive($child, $slaveOptions);
+            }
+        }
+
+        // Falls es irgendwo "elements" in Unterknoten geben sollte (future-proof)
+        if (isset($node['elements']) && is_array($node['elements'])) {
+            foreach ($node['elements'] as &$child) {
+                $this->applySlaveUrlOptionsRecursive($child, $slaveOptions);
+            }
+        }
+    }
 
     private function getSystemPath(): string
     {
