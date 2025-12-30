@@ -104,7 +104,7 @@ class SecretsManager extends IPSModuleStrict {
 
     public function ApplyChanges(): void {
         parent::ApplyChanges();
-        
+
         // 1. Variable im Baum verstecken
         $vaultID = @$this->GetIDForIdent("Vault");
         if ($vaultID) {
@@ -114,40 +114,33 @@ class SecretsManager extends IPSModuleStrict {
         // 2. Aktuelle Rolle prüfen
         $mode = $this->ReadPropertyInteger("OperationMode");
 
-        // --- SCHRITT 3: Rollenabhängige WebHook Registrierung ---
-        // Nur der Slave (0) muss Daten empfangen können.
-        // Master (1) und Standalone (2) registrieren keinen Hook.
+        // Nur Slave registriert Hook
         if ($mode === 0) {
             @$this->RegisterHook("secrets_" . $this->InstanceID);
         }
-        // Hinweis: Falls die Instanz von Slave auf Standalone umgestellt wird,
-        // bleibt der Hook technisch in IP-Symcon vorhanden, wird aber durch 
-        // die Logik in ProcessHookData (Schritt 6) blockiert.
 
-        // 3. RAM Cache leeren bei Konfigurationsänderung
-        $this->SetBuffer("DecryptedCache", ""); 
+        // (ENTFÄLLT) Disk-clean: kein DecryptedCache mehr
+        // $this->SetBuffer("DecryptedCache", "");
 
         // 4. Validierung des Verzeichnisses
         $folder = $this->ReadPropertyString("KeyFolderPath");
         $errorMessage = "";
-        
+
         if ($folder === "") {
             $this->SetStatus(104); // IS_INACTIVE
         } elseif (!is_dir($folder)) {
             $errorMessage = "Directory does not exist: " . $folder;
-            $this->SetStatus(202); // IS_EBASE (Error)
-        } 
-        // Master (1) und Standalone (2) müssen zwingend schreiben können (Key-Generierung)
-        elseif ($mode !== 0 && !is_writable($folder)) {
+            $this->SetStatus(202);
+        } elseif ($mode !== 0 && !is_writable($folder)) {
             $errorMessage = "Directory is not writable: " . $folder;
             $this->SetStatus(202);
-        } 
-        else {
+        } else {
             $this->SetStatus(102); // IS_ACTIVE
         }
 
         $this->UpdateFormLayout($errorMessage);
     }
+
 
     /**
      * Public wrapper for UI updates (called by form.json)
@@ -298,40 +291,34 @@ class SecretsManager extends IPSModuleStrict {
 
     public function GetKeys(): string {
         if ($this->GetStatus() !== 102) return json_encode([]);
-        
-        $cache = $this->_getCache();
-        if ($cache === null) {
-            $cache = $this->_decryptVault();
-            if ($cache === false) return json_encode([]);
-            $this->_setCache($cache);
-        }
-        return json_encode(array_keys($cache));
+
+        $vault = $this->_decryptVault();
+        if ($vault === false || !is_array($vault)) return json_encode([]);
+
+        return json_encode(array_keys($vault));
     }
+
 
     public function GetSecret(string $ident): string {
         if ($this->GetStatus() !== 102) return "";
 
-        $cache = $this->_getCache();
-        if ($cache === null) {
-            $cache = $this->_decryptVault();
-            if ($cache === false) {
-                if($this->GetValue("Vault") !== "") {
-                    $this->LogMessage("Decryption failed. Check Key File.", KL_ERROR);
-                }
-                return "";
+        $vault = $this->_decryptVault();
+        if ($vault === false || !is_array($vault)) {
+            if ($this->GetValue("Vault") !== "") {
+                $this->LogMessage("Decryption failed. Check Key File.", KL_ERROR);
             }
-            $this->_setCache($cache);
+            return "";
         }
 
-        if (isset($cache[$ident])) {
-            $val = $cache[$ident];
-            // If it's an array, return JSON string. If string, return string.
-            return (is_array($val) || is_object($val)) ? (json_encode($val) ?: "") : (string)$val;
+        if (!array_key_exists($ident, $vault)) {
+            trigger_error("SecretsManager: Secret '$ident' not found.", E_USER_NOTICE);
+            return "";
         }
 
-        trigger_error("SecretsManager: Secret '$ident' not found.", E_USER_NOTICE);
-        return "";
+        $val = $vault[$ident];
+        return (is_array($val) || is_object($val)) ? (json_encode($val) ?: "") : (string)$val;
     }
+
 
     // =========================================================================
     // SYNCHRONIZATION (Master -> Slave)
@@ -443,9 +430,6 @@ class SecretsManager extends IPSModuleStrict {
     protected function ProcessHookData(): void {
         $mode = $this->ReadPropertyInteger("OperationMode");
 
-        // --- SCHRITT 6: Sicherheits-Guard ---
-        // Nur Instanzen im Slave-Modus (0) dürfen Daten empfangen.
-        // Master (1) und Standalone (2) lehnen jeglichen Empfang strikt ab.
         if ($mode !== 0) {
             header("HTTP/1.1 403 Forbidden");
             echo "Access Denied: This instance is not configured as a Slave.";
@@ -453,21 +437,19 @@ class SecretsManager extends IPSModuleStrict {
             return;
         }
 
-        // Sicherstellen, dass es ein POST-Request ist
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
             header("HTTP/1.1 405 Method Not Allowed");
             echo "Only POST requests are allowed.";
             return;
         }
 
-        // 1. Optionaler Basic Auth Check (WebHook-Schutz)
         $hookUser = $this->ReadPropertyString("HookUser");
         $hookPass = $this->ReadPropertyString("HookPass");
 
         if ($hookUser !== "" && $hookPass !== "") {
-            if (!isset($_SERVER['PHP_AUTH_USER']) || 
-                $_SERVER['PHP_AUTH_USER'] !== $hookUser || 
-                $_SERVER['PHP_AUTH_PW'] !== $hookPass) 
+            if (!isset($_SERVER['PHP_AUTH_USER']) ||
+                $_SERVER['PHP_AUTH_USER'] !== $hookUser ||
+                $_SERVER['PHP_AUTH_PW'] !== $hookPass)
             {
                 header('WWW-Authenticate: Basic realm="SecretsManager"');
                 header('HTTP/1.0 401 Unauthorized');
@@ -476,12 +458,9 @@ class SecretsManager extends IPSModuleStrict {
             }
         }
 
-        // Daten einlesen
         $input = file_get_contents("php://input");
         $data = json_decode($input, true);
 
-        // 2. Token Check (Shared Secret)
-        // Vergleicht den empfangenen Token mit dem lokal gespeicherten Sync Token
         if (!isset($data['auth']) || $data['auth'] !== $this->ReadPropertyString("AuthToken")) {
             header("HTTP/1.1 403 Forbidden");
             echo "Invalid Sync Token";
@@ -489,21 +468,19 @@ class SecretsManager extends IPSModuleStrict {
             return;
         }
 
-        // 3. Daten verarbeiten und speichern
-        // Der Slave speichert Key und Vault, ohne sie im Klartext lesen zu müssen.
         if (isset($data['key'])) {
             $this->_writeKey($data['key']);
         }
 
         if (isset($data['vault'])) {
             $this->SetValue("Vault", $data['vault']);
-            // RAM Cache leeren, damit beim nächsten Zugriff mit dem neuen Key entschlüsselt wird
-            $this->SetBuffer("DecryptedCache", ""); 
+            // (ENTFÄLLT) Disk-clean: kein DecryptedCache vorhanden
+            // $this->SetBuffer("DecryptedCache", "");
         }
 
-        // Rückmeldung an den Master
         echo "OK";
     }
+
     // =========================================================================
     // INTERNAL CRYPTO HELPERS
     // =========================================================================
@@ -520,27 +497,29 @@ class SecretsManager extends IPSModuleStrict {
 
         $newKeyBin = hex2bin($keyHex);
         $plain = json_encode($dataArray);
-        
+
         $cipher = "aes-128-gcm";
         $iv = random_bytes(openssl_cipher_iv_length($cipher));
-        $tag = ""; 
-        
-        $cipherText = openssl_encrypt($plain, $cipher, $newKeyBin, 0, $iv, $tag);
+        $tag = "";
 
+        $cipherText = openssl_encrypt($plain, $cipher, $newKeyBin, 0, $iv, $tag);
         if ($cipherText === false) return false;
 
         $vaultData = json_encode([
             'cipher' => $cipher,
-            'iv' => bin2hex($iv),
-            'tag'=> bin2hex($tag),
-            'data'=> $cipherText
+            'iv'     => bin2hex($iv),
+            'tag'    => bin2hex($tag),
+            'data'   => $cipherText
         ]);
 
         $this->SetValue("Vault", $vaultData);
-        $this->_setCache($dataArray);
-        
+
+        // (ENTFÄLLT) Disk-clean: kein Klartext-Cache
+        // $this->_setCache($dataArray);
+
         return true;
     }
+
 
     private function _decryptVault() {
         $vaultJson = $this->GetValue("Vault");
@@ -595,16 +574,6 @@ class SecretsManager extends IPSModuleStrict {
         if ($path !== "") {
             file_put_contents($path, $hexKey);
         }
-    }
-
-    private function _getCache() {
-        $data = $this->GetBuffer("DecryptedCache");
-        if ($data === "") return null;
-        return json_decode($data, true);
-    }
-
-    private function _setCache(array $array): void {
-        $this->SetBuffer("DecryptedCache", json_encode($array));
     }
 }
 ?>
