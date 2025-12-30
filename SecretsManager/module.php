@@ -116,10 +116,16 @@ class SecretsManager extends IPSModuleStrict {
                 }
 
                 // AuthToken input/buttons for Master+Slave (sync role)
-                if (in_array($name, ['AuthTokenInput', 'BtnGenToken', 'BtnShowToken', 'BtnSaveAuthToken'], true)) {
+                // Token-Eingabe + Speichern: Master & Slave
+                if (in_array($name, ['AuthTokenInput', 'BtnSaveAuthToken'], true)) {
                     $element['visible'] = $isSyncRole;
                 }
 
+                // Generate + Show/Copy: nur Master
+                if (in_array($name, ['BtnGenToken', 'BtnShowToken'], true)) {
+                    $element['visible'] = $isMaster;
+                }
+                
                 // Master only: slave list + slave password editor
                 if (in_array($name, ['SlaveURLs', 'LabelSeparator', 'LabelMasterHead', 'PanelSlaveCreds'], true)) {
                     $element['visible'] = $isMaster;
