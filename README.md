@@ -148,6 +148,58 @@ SymconSecrets folgt einem **„Zero-Knowledge“-Prinzip**:
 
 ---
 
+Beispiel Passwort Array
+
+$vault = [
+  "Spotify" => [
+    "User" => "artur@example.com",
+    "PW" => "S3cure!Spotify#2025",
+    "URL" => "https://accounts.spotify.com",
+    "Location" => "Hermitage",
+    "IP" => "0.0.0.0"
+  ],
+  "MySQL_Prod" => [
+    "User" => "db_admin",
+    "PW" => "T9$kL!2zQp#7",
+    "URL" => "mysql://10.10.20.15:3306",
+    "Location" => "Berlin",
+    "IP" => "10.10.20.15"
+  ],
+  "Camera_NVR" => [
+    "User" => "nvr",
+    "PW" => "Nvr-8h*P!44",
+    "URL" => "http://192.168.1.50",
+    "Location" => "Hermitage",
+    "IP" => "192.168.1.50"
+  ]
+];
+
+und hier der entsprechende JSON String
+
+{
+  "Spotify": {
+    "User": "artur@example.com",
+    "PW": "S3cure!Spotify#2025",
+    "URL": "https://accounts.spotify.com",
+    "Location": "Hermitage",
+    "IP": "0.0.0.0"
+  },
+  "MySQL_Prod": {
+    "User": "db_admin",
+    "PW": "T9$kL!2zQp#7",
+    "URL": "mysql://10.10.20.15:3306",
+    "Location": "Berlin",
+    "IP": "10.10.20.15"
+  },
+  "Camera_NVR": {
+    "User": "nvr",
+    "PW": "Nvr-8h*P!44",
+    "URL": "http://192.168.1.50",
+    "Location": "Hermitage",
+    "IP": "192.168.1.50"
+  }
+}
+
 ## PHP Usage (API)
 
 ```php
@@ -162,6 +214,8 @@ $config = json_decode(SEC_GetSecret($instanceID, 'MySQL_Config'), true);
 // List all available keys
 $keys = json_decode(SEC_GetKeys($instanceID), true);
 ```
+
+
 
 **Hinweis:** Unsaved Änderungen im JSON-Editor gehen verloren, wenn du die Konsole schließt oder „Cancel/Wipe“ nutzt. Das ist gewollt (Stateless-Sicherheitsprinzip).
 
@@ -314,6 +368,58 @@ SymconSecrets follows a **“zero-knowledge” concept**:
 * **Manual slaves are not updated (SKIP)** to keep them stable and functional.
 
 ---
+Example Password Array
+
+$vault = [
+  "Spotify" => [
+    "User" => "artur@example.com",
+    "PW" => "S3cure!Spotify#2025",
+    "URL" => "https://accounts.spotify.com",
+    "Location" => "Hermitage",
+    "IP" => "0.0.0.0"
+  ],
+  "MySQL_Prod" => [
+    "User" => "db_admin",
+    "PW" => "T9$kL!2zQp#7",
+    "URL" => "mysql://10.10.20.15:3306",
+    "Location" => "Berlin",
+    "IP" => "10.10.20.15"
+  ],
+  "Camera_NVR" => [
+    "User" => "nvr",
+    "PW" => "Nvr-8h*P!44",
+    "URL" => "http://192.168.1.50",
+    "Location" => "Hermitage",
+    "IP" => "192.168.1.50"
+  ]
+];
+
+Here is the associated JSON String
+
+{
+  "Spotify": {
+    "User": "artur@example.com",
+    "PW": "S3cure!Spotify#2025",
+    "URL": "https://accounts.spotify.com",
+    "Location": "Hermitage",
+    "IP": "0.0.0.0"
+  },
+  "MySQL_Prod": {
+    "User": "db_admin",
+    "PW": "T9$kL!2zQp#7",
+    "URL": "mysql://10.10.20.15:3306",
+    "Location": "Berlin",
+    "IP": "10.10.20.15"
+  },
+  "Camera_NVR": {
+    "User": "nvr",
+    "PW": "Nvr-8h*P!44",
+    "URL": "http://192.168.1.50",
+    "Location": "Hermitage",
+    "IP": "192.168.1.50"
+  }
+}
+
 
 ## PHP Usage (API)
 
