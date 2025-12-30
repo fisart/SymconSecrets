@@ -1,154 +1,176 @@
 {
-    "elements": [
+  "elements": [
+    {
+      "type": "Label",
+      "name": "HeaderError",
+      "caption": "!!! CONFIGURATION ERROR !!!",
+      "visible": false,
+      "italic": true,
+      "bold": true
+    },
+    {
+      "type": "Label",
+      "caption": "Security Configuration"
+    },
+    {
+      "type": "Label",
+      "name": "HookInfo",
+      "caption": "WebHook URL: (Save settings to generate)"
+    },
+    {
+      "type": "Select",
+      "name": "OperationMode",
+      "caption": "System Role",
+      "options": [
+        { "caption": "Slave (Receiver)", "value": 0 },
+        { "caption": "Master (Sender)", "value": 1 },
+        { "caption": "Standalone (Local Vault)", "value": 2 }
+      ],
+      "onChange": "SEC_UpdateUI($id);"
+    },
+    {
+      "type": "Label",
+      "caption": "Key Storage (Filename 'master.key' is added automatically)"
+    },
+    {
+      "type": "ValidationTextBox",
+      "name": "KeyFolderPath",
+      "caption": "Directory Path (e.g. /var/lib/symcon_keys/)"
+    },
+    {
+      "type": "Button",
+      "caption": "Check Directory Permissions",
+      "onClick": "SEC_CheckDirectory($id);"
+    },
+    {
+      "type": "Label",
+      "caption": "Synchronization Token (Shared Secret)"
+    },
+    {
+      "type": "PasswordTextBox",
+      "name": "AuthToken",
+      "caption": "Sync Token"
+    },
+    {
+      "type": "Button",
+      "name": "BtnGenToken",
+      "caption": "Generate Random Token",
+      "onClick": "SEC_GenerateToken($id);"
+    },
+    {
+      "type": "Button",
+      "name": "BtnShowToken",
+      "caption": "Show/Copy Token",
+      "onClick": "SEC_ShowToken($id);"
+    },
+
+    { "type": "Label", "name": "LabelHookAuth", "caption": "WebHook Protection (Optional Basic Auth)" },
+    { "type": "ValidationTextBox", "name": "HookUser", "caption": "WebHook User (Optional)" },
+    { "type": "PasswordTextBox", "name": "HookPass", "caption": "WebHook Password (Optional)" },
+
+    {
+      "type": "List",
+      "name": "SlaveURLs",
+      "caption": "Slave WebHooks (Master Only)",
+      "rowCount": 5,
+      "add": true,
+      "delete": true,
+      "columns": [
         {
-            "type": "Label",
-            "name": "HeaderError",
-            "caption": "!!! CONFIGURATION ERROR !!!",
-            "visible": false,
-            "italic": true,
-            "bold": true
+          "caption": "URL (http://ip:3777/...  OR  https://host/... )",
+          "name": "Url",
+          "width": "380px",
+          "add": "",
+          "edit": { "type": "ValidationTextBox" }
         },
         {
-            "type": "Label",
-            "caption": "Security Configuration"
-        },
-        {
-            "type": "Label",
-            "name": "HookInfo",
-            "caption": "WebHook URL: (Save settings to generate)"
-        },
-        {
+          "caption": "TLS Mode",
+          "name": "TlsMode",
+          "width": "150px",
+          "add": "strict",
+          "edit": {
             "type": "Select",
-            "name": "OperationMode",
-            "caption": "System Role",
             "options": [
-                { "caption": "Slave (Receiver)", "value": 0 },
-                { "caption": "Master (Sender)", "value": 1 },
-                { "caption": "Standalone (Local Vault)", "value": 2 }
-            ],
-            "onChange": "SEC_UpdateUI($id);"
-        },
-        {
-            "type": "Label",
-            "caption": "Key Storage (Filename 'master.key' is added automatically)"
-        },
-        { 
-            "type": "ValidationTextBox", 
-            "name": "KeyFolderPath", 
-            "caption": "Directory Path (e.g. /var/lib/symcon_keys/)" 
-        },
-        { 
-            "type": "Button", 
-            "caption": "Check Directory Permissions", 
-            "onClick": "SEC_CheckDirectory($id);" 
-        },
-        {
-            "type": "Label",
-            "caption": "Synchronization Token (Shared Secret)"
-        },
-        { 
-            "type": "PasswordTextBox", 
-            "name": "AuthToken", 
-            "caption": "Sync Token" 
-        },
-        { 
-            "type": "Button", 
-            "name": "BtnGenToken", 
-            "caption": "Generate Random Token", 
-            "onClick": "SEC_GenerateToken($id);" 
-        },
-        { 
-            "type": "Button", 
-            "name": "BtnShowToken", 
-            "caption": "Show/Copy Token", 
-            "onClick": "SEC_ShowToken($id);" 
-        },
-
-        { "type": "Label", "name": "LabelHookAuth", "caption": "WebHook Protection (Optional Basic Auth)" },
-        { "type": "ValidationTextBox", "name": "HookUser", "caption": "WebHook User (Optional)" },
-        { "type": "PasswordTextBox", "name": "HookPass", "caption": "WebHook Password (Optional)" },
-
-        {
-            "type": "List", 
-            "name": "SlaveURLs", 
-            "caption": "Slave WebHooks (Master Only)",
-            "rowCount": 5, 
-            "add": true, 
-            "delete": true,
-            "columns": [
-                { 
-                    "caption": "URL (e.g., http://ip:3777/hook/secrets_ID)", 
-                    "name": "Url", 
-                    "width": "400px", 
-                    "add": "",
-                    "edit": { "type": "ValidationTextBox" } 
-                },
-                { 
-                    "caption": "User (Optional)", 
-                    "name": "User", 
-                    "width": "150px", 
-                    "add": "",
-                    "edit": { "type": "ValidationTextBox" } 
-                },
-                { 
-                    "caption": "Pass (Optional)", 
-                    "name": "Pass", 
-                    "width": "150px", 
-                    "add": "",
-                    "edit": { "type": "PasswordTextBox" } 
-                }
+              { "caption": "1) HTTP (no TLS)", "value": "http" },
+              { "caption": "2) HTTPS Strict", "value": "strict" },
+              { "caption": "3) HTTPS Pinned", "value": "pinned" }
             ]
+          }
         },
         {
-            "type": "Label",
-            "name": "LabelSeparator",
-            "caption": "________________________________________________________________________________"
+          "caption": "Pinned Fingerprint (SHA256 hex, only for Pinned)",
+          "name": "Fingerprint",
+          "width": "260px",
+          "add": "",
+          "edit": { "type": "ValidationTextBox" }
         },
         {
-            "type": "Label",
-            "name": "LabelMasterHead",
-            "caption": "Master: Secret Management / Vault Editor"
+          "caption": "User (Optional)",
+          "name": "User",
+          "width": "140px",
+          "add": "",
+          "edit": { "type": "ValidationTextBox" }
         },
         {
-            "type": "Label",
-            "name": "LabelSecurityWarning",
-            "caption": "⚠️ CAUTION: Unencrypted data is currently visible!",
-            "visible": false,
-            "bold": true
-        },
-        {
-            "type": "ValidationTextBox", 
-            "name": "InputJson", 
-            "caption": "JSON Editor", 
-            "value": ""
-        },
-        { 
-            "type": "Button", 
-            "name": "BtnLoad", 
-            "caption": "🔓 Unlock & Load Data", 
-            "onClick": "SEC_LoadVault($id);" 
-        },
-        { 
-            "type": "Button", 
-            "name": "BtnEncrypt", 
-            "caption": "💾 Encrypt & Save", 
-            "onClick": "SEC_EncryptAndSave($id, $InputJson);" 
-        },
-        { 
-            "type": "Button", 
-            "name": "BtnClear", 
-            "caption": "❌ Cancel / Wipe", 
-            "onClick": "SEC_ClearVault($id);" 
+          "caption": "Pass (Optional)",
+          "name": "Pass",
+          "width": "140px",
+          "add": "",
+          "edit": { "type": "PasswordTextBox" }
         }
-    ],
-    "actions": [
-        { "type": "Label", "caption": "Status:" },
-        { "type": "Label", "name": "StatusLabel", "caption": "Idle" },
-        { 
-            "type": "Button", 
-            "name": "BtnSync", 
-            "caption": "Manually Sync to Slaves", 
-            "onClick": "SEC_SyncSlaves($id);" 
-        }
-    ]
+      ]
+    },
+
+    {
+      "type": "Label",
+      "name": "LabelSeparator",
+      "caption": "________________________________________________________________________________"
+    },
+    {
+      "type": "Label",
+      "name": "LabelMasterHead",
+      "caption": "Master: Secret Management / Vault Editor"
+    },
+    {
+      "type": "Label",
+      "name": "LabelSecurityWarning",
+      "caption": "⚠️ CAUTION: Unencrypted data is currently visible!",
+      "visible": false,
+      "bold": true
+    },
+    {
+      "type": "ValidationTextBox",
+      "name": "InputJson",
+      "caption": "JSON Editor",
+      "value": ""
+    },
+    {
+      "type": "Button",
+      "name": "BtnLoad",
+      "caption": "🔓 Unlock & Load Data",
+      "onClick": "SEC_LoadVault($id);"
+    },
+    {
+      "type": "Button",
+      "name": "BtnEncrypt",
+      "caption": "💾 Encrypt & Save",
+      "onClick": "SEC_EncryptAndSave($id, $InputJson);"
+    },
+    {
+      "type": "Button",
+      "name": "BtnClear",
+      "caption": "❌ Cancel / Wipe",
+      "onClick": "SEC_ClearVault($id);"
+    }
+  ],
+  "actions": [
+    { "type": "Label", "caption": "Status:" },
+    { "type": "Label", "name": "StatusLabel", "caption": "Idle" },
+    {
+      "type": "Button",
+      "name": "BtnSync",
+      "caption": "Manually Sync to Slaves",
+      "onClick": "SEC_SyncSlaves($id);"
+    }
+  ]
 }

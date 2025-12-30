@@ -330,9 +330,6 @@ class SecretsManager extends IPSModuleStrict {
      */
     public function SyncSlaves(): void {
         $mode = $this->ReadPropertyInteger("OperationMode");
-
-        // --- SCHRITT 5: Funktions-Schutz ---
-        // Nur ein Master (1) darf Daten an Slaves senden.
         if ($mode !== 1) {
             if ($mode === 2) {
                 echo "Sync cancelled: Standalone systems are isolated.";
@@ -342,85 +339,258 @@ class SecretsManager extends IPSModuleStrict {
             return;
         }
 
-        // Slaves aus der Konfiguration laden
         $slaves = json_decode($this->ReadPropertyString("SlaveURLs"), true);
         if (!is_array($slaves) || count($slaves) === 0) {
             echo "No slaves configured in the list.";
             return;
         }
 
-        // Vorbereitung der Daten
-        $keyHex = $this->_readKey();
-        $vault = $this->GetValue("Vault");
         $token = $this->ReadPropertyString("AuthToken");
-
         if ($token === "") {
             echo "Error: Sync Token is missing. Please generate a token first.";
             return;
         }
 
-        // Das Paket für die Slaves schnüren
+        $keyHex = $this->_readKey();
+        $vault  = $this->GetValue("Vault");
+        if (!$keyHex || $vault === "") {
+            echo "Error: Missing key or vault. Save/encrypt vault first.";
+            return;
+        }
+
         $payload = json_encode([
-            'auth' => $token,
-            'key'  => $keyHex,
-            'vault'=> $vault
+            'auth'  => $token,
+            'key'   => $keyHex,
+            'vault' => $vault
         ]);
 
         $successCount = 0;
         $totalSlaves = count($slaves);
 
-        // Alle konfigurierten Slaves nacheinander abarbeiten
         foreach ($slaves as $slave) {
-            if (!isset($slave['Url']) || $slave['Url'] == "") {
-                continue;
-            }
+            $url = (string)($slave['Url'] ?? '');
+            if ($url === '') continue;
 
-            $headers = "Content-type: application/json\r\n";
-            
-            // Basic Auth Header hinzufügen, falls Benutzername gesetzt ist
-            if (isset($slave['User']) && isset($slave['Pass']) && $slave['User'] !== "") {
-                $auth = base64_encode($slave['User'] . ":" . $slave['Pass']);
-                $headers .= "Authorization: Basic " . $auth . "\r\n";
-            }
+            $tlsMode = (string)($slave['TlsMode'] ?? 'strict');   // default
+            $fpExp   = (string)($slave['Fingerprint'] ?? '');
 
-            // Stream Context Konfiguration (inkl. SSL-Fix für lokale IPs)
-            $options = [
-                'http' => [
-                    'method' => 'POST',
-                    'header' => $headers,
-                    'content'=> $payload,
-                    'timeout'=> 5,
-                    'ignore_errors' => true 
-                ],
-                'ssl' => [
-                    'verify_peer' => false,
-                    'verify_peer_name' => false,
-                    'allow_self_signed' => true
-                ]
+            $headers = [
+                'Content-Type: application/json'
             ];
 
-            $ctx = stream_context_create($options);
-            
-            // Paket senden
-            $res = @file_get_contents($slave['Url'], false, $ctx);
-            
-            // HTTP Antwort analysieren
-            $statusLine = $http_response_header[0] ?? "Unknown Status"; 
+            // Optional Basic Auth (per slave)
+            $user = (string)($slave['User'] ?? '');
+            $pass = (string)($slave['Pass'] ?? '');
+            if ($user !== '') {
+                $headers[] = 'Authorization: Basic ' . base64_encode($user . ':' . $pass);
+            }
 
-            if ($res !== false && strpos($statusLine, "200") !== false && trim($res) === "OK") {
-                $this->LogMessage("✅ Sync Success: " . $slave['Url'], KL_MESSAGE);
-                $successCount++;
-            } else {
-                $this->LogMessage("❌ Sync Failed: " . $slave['Url'] . " -> " . $statusLine . " (Response: " . trim((string)$res) . ")", KL_ERROR);
+            try {
+                if ($tlsMode === 'http') {
+                    // Option 1: Plain HTTP (no TLS)
+                    $result = $this->httpPostJson($url, $payload, $headers);
+
+                } elseif ($tlsMode === 'strict') {
+                    // Option 2: HTTPS Strict
+                    $result = $this->httpsPostJsonStrict($url, $payload, $headers);
+
+                } elseif ($tlsMode === 'pinned') {
+                    // Option 3: HTTPS + Certificate Pinning (SHA256)
+                    if ($fpExp === '') {
+                        throw new Exception("Pinned mode requires Fingerprint.");
+                    }
+                    $result = $this->httpsPostJsonPinned($url, $payload, $headers, $fpExp);
+
+                } else {
+                    throw new Exception("Unknown TLS mode: " . $tlsMode);
+                }
+
+                $statusLine = $result['status'] ?? 'Unknown Status';
+                $body = trim((string)($result['body'] ?? ''));
+
+                if (strpos($statusLine, '200') !== false && $body === 'OK') {
+                    $this->LogMessage("✅ Sync Success: $url ($tlsMode)", KL_MESSAGE);
+                    $successCount++;
+                } else {
+                    $this->LogMessage("❌ Sync Failed: $url ($tlsMode) -> $statusLine (Response: $body)", KL_ERROR);
+                }
+
+            } catch (Throwable $e) {
+                $this->LogMessage("❌ Sync Exception: $url ($tlsMode) -> " . $e->getMessage(), KL_ERROR);
             }
         }
-        
-        // Abschließende Meldung für die Konsole
+
         if ($successCount === $totalSlaves) {
             echo "✅ Synchronization completed successfully for all $successCount slaves.";
         } else {
-            echo "Sync finished. Success: $successCount / Total: $totalSlaves. Check the IP-Symcon log for detailed errors.";
+            echo "Sync finished. Success: $successCount / Total: $totalSlaves. Check the IP-Symcon log for details.";
         }
+    }
+    private function httpPostJson(string $url, string $payload, array $headers): array {
+        $ctx = stream_context_create([
+            'http' => [
+                'method'        => 'POST',
+                'header'        => implode("\r\n", $headers) . "\r\n",
+                'content'       => $payload,
+                'timeout'       => 5,
+                'ignore_errors' => true
+            ]
+        ]);
+
+        $body = @file_get_contents($url, false, $ctx);
+        $status = $http_response_header[0] ?? 'Unknown Status';
+
+        return [
+            'status' => $status,
+            'body'   => ($body === false) ? '' : (string)$body
+        ];
+    }
+    private function httpsPostJsonStrict(string $url, string $payload, array $headers): array {
+        $parts = parse_url($url);
+        if (!is_array($parts) || ($parts['scheme'] ?? '') !== 'https') {
+            throw new Exception("Strict mode requires https:// URL");
+        }
+
+        $host = (string)($parts['host'] ?? '');
+        if ($host === '') throw new Exception("Invalid URL host.");
+
+        $ctx = stream_context_create([
+            'http' => [
+                'method'        => 'POST',
+                'header'        => implode("\r\n", $headers) . "\r\n",
+                'content'       => $payload,
+                'timeout'       => 5,
+                'ignore_errors' => true
+            ],
+            'ssl' => [
+                'verify_peer'       => true,
+                'verify_peer_name'  => true,
+                'allow_self_signed' => false,
+                'SNI_enabled'       => true,
+                'peer_name'         => $host
+            ]
+        ]);
+
+        $body = @file_get_contents($url, false, $ctx);
+        $status = $http_response_header[0] ?? 'Unknown Status';
+
+        return [
+            'status' => $status,
+            'body'   => ($body === false) ? '' : (string)$body
+        ];
+    }
+
+    private function httpsPostJsonPinned(string $url, string $payload, array $headers, string $expectedFingerprint): array {
+        $parts = parse_url($url);
+        if (!is_array($parts) || ($parts['scheme'] ?? '') !== 'https') {
+            throw new Exception("Pinned mode requires https:// URL");
+        }
+
+        $host = (string)($parts['host'] ?? '');
+        if ($host === '') throw new Exception("Invalid URL host.");
+
+        $port = (int)($parts['port'] ?? 443);
+        $path = (string)($parts['path'] ?? '/');
+        $query = (string)($parts['query'] ?? '');
+        if ($query !== '') $path .= '?' . $query;
+
+        $expected = $this->normalizeFingerprint($expectedFingerprint);
+
+        $sslCtx = stream_context_create([
+            'ssl' => [
+                'capture_peer_cert' => true,
+                'verify_peer'       => false,
+                'verify_peer_name'  => false,
+                'SNI_enabled'       => true,
+                'peer_name'         => $host
+            ]
+        ]);
+
+        $fp = @stream_socket_client(
+            "ssl://{$host}:{$port}",
+            $errno,
+            $errstr,
+            5,
+            STREAM_CLIENT_CONNECT,
+            $sslCtx
+        );
+
+        if ($fp === false) {
+            throw new Exception("TLS connect failed: $errstr ($errno)");
+        }
+
+        // Zertifikat auslesen und Fingerprint berechnen
+        $params = stream_context_get_params($fp);
+        $cert = $params['options']['ssl']['peer_certificate'] ?? null;
+        if (!$cert) {
+            fclose($fp);
+            throw new Exception("No peer certificate received.");
+        }
+
+        $actual = $this->certSha256Fingerprint($cert);
+        if ($actual === '' || $actual !== $expected) {
+            fclose($fp);
+            throw new Exception("Pinned cert mismatch. Expected=$expected Actual=$actual");
+        }
+
+        // Ab hier: Cert ist OK -> jetzt erst HTTP senden
+        $reqHeaders = $headers;
+        $reqHeaders[] = "Host: {$host}";
+        $reqHeaders[] = "Content-Length: " . strlen($payload);
+        $reqHeaders[] = "Connection: close";
+
+        $request =
+            "POST {$path} HTTP/1.1\r\n" .
+            implode("\r\n", $reqHeaders) . "\r\n\r\n" .
+            $payload;
+
+        fwrite($fp, $request);
+
+        $response = stream_get_contents($fp);
+        fclose($fp);
+
+        if ($response === false) $response = '';
+
+        // Statuszeile + Body trennen
+        $statusLine = 'Unknown Status';
+        $body = $response;
+
+        $pos = strpos($response, "\r\n");
+        if ($pos !== false) {
+            $statusLine = substr($response, 0, $pos);
+        }
+        $sep = strpos($response, "\r\n\r\n");
+        if ($sep !== false) {
+            $body = substr($response, $sep + 4);
+        }
+
+        return [
+            'status' => $statusLine,
+            'body'   => (string)$body
+        ];
+    }
+
+
+    private function normalizeFingerprint(string $fp): string {
+    $fp = strtolower($fp);
+    // erlaubt Eingaben mit ":" oder Leerzeichen – wir nehmen nur hex
+    $fp = preg_replace('/[^0-9a-f]/', '', $fp) ?? '';
+    return $fp;
+}
+
+    private function certSha256Fingerprint($x509Cert): string {
+        // Export zu PEM
+        $pem = '';
+        if (!openssl_x509_export($x509Cert, $pem)) {
+            return '';
+        }
+
+        // PEM -> DER (Base64)
+        $pem = preg_replace('/-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----|\s+/', '', $pem) ?? '';
+        $der = base64_decode($pem, true);
+        if ($der === false) return '';
+
+        return hash('sha256', $der);
     }
 
 /**
