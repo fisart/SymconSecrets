@@ -48,7 +48,7 @@
       "caption": "Synchronization Token (Stored encrypted in system.vault)"
     },
     {
-      "type": "ValidationTextBox",
+      "type": "PasswordTextBox",
       "name": "AuthTokenInput",
       "caption": "Sync Token"
     },
