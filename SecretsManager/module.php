@@ -127,12 +127,7 @@ class SecretsManager extends IPSModuleStrict {
         return json_encode($json);
     }
 
-    public function GenerateToken(): void
-    {
-        $token = bin2hex(random_bytes(32));
-        $this->UpdateFormField("AuthTokenInput", "value", $token);
-        $this->LogMessage("Sync token generated (not yet saved).", KL_MESSAGE);
-    }
+
 
     public function SaveAuthToken(string $token): void
     {
@@ -296,11 +291,13 @@ class SecretsManager extends IPSModuleStrict {
         echo "✅ SUCCESS!\n\nDir: $folder\nFile: " . (file_exists($f) ? "Found" : "Will create on save");
     }
 
-    public function GenerateToken(): void {
+    public function GenerateToken(): void
+    {
         $token = bin2hex(random_bytes(32));
-        $this->UpdateFormField("AuthToken", "value", $token);
-        echo "Token Generated & Inserted.";
+        $this->UpdateFormField("AuthTokenInput", "value", $token);
+        $this->LogMessage("Sync token generated (not yet saved).", KL_MESSAGE);
     }
+
 
     public function ShowToken(): void {
         $token = $this->ReadPropertyString("AuthToken");
