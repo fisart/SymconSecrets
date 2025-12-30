@@ -1,7 +1,3 @@
-Die Dokumentation ist inhaltlich sehr fundiert. Um die wichtige Änderung der Stateless UI (Vermeidung von Klartext in der settings.json während der Eingabe) korrekt abzubilden, habe ich die entsprechenden Abschnitte ergänzt.
-
-Hier ist die aktualisierte Dokumentation mit den hervorgehobenen Änderungen:
-
 SymconSecrets – Dokumentation
 1. Warum benötigt man dieses Modul in IP-Symcon?
 
