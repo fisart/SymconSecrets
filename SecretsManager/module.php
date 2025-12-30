@@ -201,30 +201,16 @@ public function SyncList($Value): void
      * Synchronizes the UI list state into the RAM buffer.
      * Handles IPSList objects from Symcon 8.1 correctly.
      */
-    private function SyncListToBuffer(array $listData): void {
-        $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
-        $temp = &$this->getCurrentLevelReference($fullData);
-        ksort($temp);
-
-        foreach ($listData as $row) {
-            $rowData = (array)$row;
-            $key = $rowData['Key'] ?? '';
-
-            if ($key !== '' && isset($temp[$key])) {
-                if (isset($rowData['Type']) && $rowData['Type'] === 'Secret') {
-                    if (!is_array($temp[$key])) {
-                        $temp[$key] = ['PW' => (string)$temp[$key]];
-                    }
-                    $temp[$key]['User']     = $rowData['User']     ?? '';
-                    $temp[$key]['PW']       = $rowData['PW']       ?? '';
-                    $temp[$key]['URL']      = $rowData['URL']      ?? '';
-                    $temp[$key]['Location'] = $rowData['Location'] ?? '';
-                    $temp[$key]['IP']       = $rowData['IP']       ?? '';
-                }
-            }
-        }
-        $this->SetBuffer("DecryptedCache", json_encode($fullData));
+ public function SyncList(string $Value): void
+{
+    // In der Form kommt $Value als JSON-String
+    $listData = json_decode($Value, true);
+    if (!is_array($listData)) {
+        $listData = [];
     }
+
+    $this->SyncListToBuffer($listData);
+}
 
     // =========================================================================
     // CONFIGURATION ACTIONS
