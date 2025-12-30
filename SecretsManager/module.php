@@ -6,31 +6,33 @@ class SecretsManager extends IPSModuleStrict {
 
     // The name of the key file stored on the OS
     private const KEY_FILENAME = 'master.key';
+    private const SYSTEM_FILENAME = 'system.vault';
 
     public function Create(): void
     {
         parent::Create();
 
-        // 0 = Slave (Receiver), 1 = Master (Sender), 2 = Standalone (Local Vault Only)
         $this->RegisterPropertyInteger("OperationMode", 0);
 
-        // Configuration Properties
+        // Key Storage
         $this->RegisterPropertyString("KeyFolderPath", "");
-        $this->RegisterPropertyString("AuthToken", "");
 
-        // Basic Auth Properties (Optional Protection for WebHook)
+        // IMPORTANT: AuthToken / HookPass werden NICHT mehr als Property gespeichert
+        // $this->RegisterPropertyString("AuthToken", "");   // REMOVE
+        // $this->RegisterPropertyString("HookPass", "");    // REMOVE
+
+        // Hook user bleibt (nicht geheim)
         $this->RegisterPropertyString("HookUser", "");
-        $this->RegisterPropertyString("HookPass", "");
 
-        // NEW: Slave-side permission to accept a key via sync payload
+        // Slave-side permission to accept a key via sync payload
         $this->RegisterPropertyBoolean("AllowKeyTransport", false);
 
-        // List of Slaves (Master Only)
+        // Slave list bleibt, aber OHNE Pass-Spalte
         $this->RegisterPropertyString("SlaveURLs", "[]");
 
-        // Internal Storage for the Encrypted Blob
         $this->RegisterVariableString("Vault", "Encrypted Vault");
     }
+
 
 
     /**
@@ -51,8 +53,22 @@ class SecretsManager extends IPSModuleStrict {
         $isEditorRole = ($isMaster || $isStandalone);
         $isSyncRole   = ($isMaster || $isSlave);
 
-        // Stateless UI: beim Öffnen immer "Locked"
-        $isUnlocked = false;
+        $isUnlocked = false; // stateless editor
+
+        // Build slave URL options for credential editor
+        $slaveOptions = [];
+        $slaves = json_decode($this->ReadPropertyString("SlaveURLs"), true);
+        if (is_array($slaves)) {
+            foreach ($slaves as $s) {
+                $u = trim((string)($s['Url'] ?? ''));
+                if ($u !== '') {
+                    $slaveOptions[] = ['caption' => $u, 'value' => $u];
+                }
+            }
+        }
+        if (count($slaveOptions) === 0) {
+            $slaveOptions[] = ['caption' => '(no slaves configured)', 'value' => ''];
+        }
 
         foreach ($json['elements'] as &$element) {
             $name = $element['name'] ?? '';
@@ -62,29 +78,41 @@ class SecretsManager extends IPSModuleStrict {
                 $element['visible'] = $isSlave;
             }
 
-            if (in_array($name, ['LabelHookAuth', 'HookUser', 'HookPass'])) {
+            if (in_array($name, ['LabelHookAuth', 'HookUser'])) {
                 $element['visible'] = $isSlave;
             }
 
-            // NEW: allow key transport toggle only on Slave
-            if ($name === 'AllowKeyTransport') {
+            // NEW: HookPassInput + SaveHookPass button only on Slave
+            if (in_array($name, ['HookPassInput', 'BtnSaveHookPass'])) {
                 $element['visible'] = $isSlave;
             }
 
-            if (in_array($name, ['BtnGenToken', 'AuthToken', 'BtnShowToken'])) {
+            // NEW: AuthToken input/buttons for Master+Slave (sync role)
+            if (in_array($name, ['AuthTokenInput', 'BtnGenToken', 'BtnShowToken', 'BtnSaveAuthToken'])) {
                 $element['visible'] = $isSyncRole;
             }
 
-            if (in_array($name, ['SlaveURLs', 'LabelSeparator', 'LabelMasterHead'])) {
+            // Master only: slave list + slave password editor
+            if (in_array($name, ['SlaveURLs', 'LabelSeparator', 'LabelMasterHead', 'PanelSlaveCreds'])) {
                 $element['visible'] = $isMaster;
             }
 
+            // Fill options for slave credential select
+            if ($name === 'SlaveCredUrl') {
+                $element['options'] = $slaveOptions;
+            }
+
+            // Editor workflow
             if (in_array($name, ['BtnLoad', 'InputJson', 'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning'])) {
                 $element['visible'] = $isEditorRole ? $isUnlocked : false;
-
                 if ($name === 'BtnLoad') {
                     $element['visible'] = ($isEditorRole && !$isUnlocked);
                 }
+            }
+
+            // AllowKeyTransport toggle only on Slave
+            if ($name === 'AllowKeyTransport') {
+                $element['visible'] = $isSlave;
             }
         }
 
@@ -97,6 +125,86 @@ class SecretsManager extends IPSModuleStrict {
         }
 
         return json_encode($json);
+    }
+
+    public function GenerateToken(): void
+    {
+        $token = bin2hex(random_bytes(32));
+        $this->UpdateFormField("AuthTokenInput", "value", $token);
+        $this->LogMessage("Sync token generated (not yet saved).", KL_MESSAGE);
+    }
+
+    public function SaveAuthToken(string $token): void
+    {
+        $token = trim($token);
+        if ($token === "") {
+            $this->LogMessage("AuthToken not saved: input is empty.", KL_ERROR);
+            return;
+        }
+
+        $sys = $this->loadSystemSecrets();
+        $sys['authToken'] = $token;
+
+        if ($this->saveSystemSecrets($sys)) {
+            $this->LogMessage("AuthToken saved to encrypted system file.", KL_MESSAGE);
+        } else {
+            $this->LogMessage("AuthToken save failed (system file).", KL_ERROR);
+        }
+    }
+    public function ShowToken(): void
+    {
+        $token = $this->getAuthToken();
+        if ($token === "") {
+            $this->LogMessage("No AuthToken configured in system file.", KL_WARNING);
+            echo "No token set."; // optional
+            return;
+        }
+        echo "YOUR SYNC TOKEN:\n\n" . $token;
+    }
+
+    public function SaveHookPass(string $pass): void
+    {
+        $pass = (string)$pass;
+        if ($pass === "") {
+            $this->LogMessage("HookPass not saved: input is empty.", KL_ERROR);
+            return;
+        }
+
+        $sys = $this->loadSystemSecrets();
+        $sys['hookPass'] = $pass;
+
+        if ($this->saveSystemSecrets($sys)) {
+            $this->LogMessage("HookPass saved to encrypted system file.", KL_MESSAGE);
+        } else {
+            $this->LogMessage("HookPass save failed (system file).", KL_ERROR);
+        }
+    }
+
+    public function SaveSlavePass(string $url, string $pass): void
+    {
+        $url  = trim((string)$url);
+        $pass = (string)$pass;
+
+        if ($url === "") {
+            $this->LogMessage("Slave password not saved: no URL selected.", KL_ERROR);
+            return;
+        }
+        if ($pass === "") {
+            $this->LogMessage("Slave password not saved: empty password.", KL_ERROR);
+            return;
+        }
+
+        $sys = $this->loadSystemSecrets();
+        if (!isset($sys['slaves']) || !is_array($sys['slaves'])) {
+            $sys['slaves'] = [];
+        }
+        $sys['slaves'][$url] = $pass;
+
+        if ($this->saveSystemSecrets($sys)) {
+            $this->LogMessage("Slave password saved for: " . $url, KL_MESSAGE);
+        } else {
+            $this->LogMessage("Slave password save failed for: " . $url, KL_ERROR);
+        }
     }
 
 
@@ -287,14 +395,24 @@ class SecretsManager extends IPSModuleStrict {
     // PUBLIC API (For Scripts)
     // =========================================================================
 
-    public function GetKeys(): string {
+    public function GetKeys(): string
+    {
         if ($this->GetStatus() !== 102) return json_encode([]);
 
-        $vault = $this->_decryptVault();
-        if ($vault === false || !is_array($vault)) return json_encode([]);
+        $cache = $this->_decryptVault();
+        if ($cache === false || !is_array($cache)) return json_encode([]);
 
-        return json_encode(array_keys($vault));
+        $keys = array_keys($cache);
+
+        // option 1: interne Keys ausblenden
+        $keys = array_values(array_filter($keys, function ($k) {
+            $k = (string)$k;
+            return (strpos($k, "__") !== 0);
+        }));
+
+        return json_encode($keys);
     }
+
 
 
     public function GetSecret(string $ident): string {
@@ -330,12 +448,12 @@ class SecretsManager extends IPSModuleStrict {
     public function SyncSlaves(): void
     {
         $mode = $this->ReadPropertyInteger("OperationMode");
-
         if ($mode !== 1) {
-            $msg = ($mode === 2)
-                ? "Sync cancelled: Standalone systems are isolated."
-                : "Sync cancelled: Only Master instances can initiate synchronization.";
-            $this->LogMessage($msg, KL_WARNING);
+            $this->LogMessage(
+                ($mode === 2) ? "Sync cancelled: Standalone systems are isolated."
+                            : "Sync cancelled: Only Master instances can initiate synchronization.",
+                KL_WARNING
+            );
             return;
         }
 
@@ -345,9 +463,9 @@ class SecretsManager extends IPSModuleStrict {
             return;
         }
 
-        $token = $this->ReadPropertyString("AuthToken");
+        $token = $this->getAuthToken();
         if ($token === "") {
-            $this->LogMessage("Sync aborted: Sync Token (AuthToken) is missing.", KL_ERROR);
+            $this->LogMessage("Sync aborted: missing AuthToken in encrypted system file.", KL_ERROR);
             return;
         }
 
@@ -358,27 +476,26 @@ class SecretsManager extends IPSModuleStrict {
             return;
         }
 
+        $sys = $this->loadSystemSecrets();
+        $slavePassMap = (isset($sys['slaves']) && is_array($sys['slaves'])) ? $sys['slaves'] : [];
+
         $successCount = 0;
         $totalSlaves  = 0;
 
         foreach ($slaves as $slave) {
             $url = trim((string)($slave['Url'] ?? ''));
-            if ($url === '') {
-                continue;
-            }
+            if ($url === '') continue;
             $totalSlaves++;
 
             $tlsMode      = (string)($slave['TlsMode'] ?? 'strict');        // http | strict | pinned
             $fpExp        = (string)($slave['Fingerprint'] ?? '');
             $keyTransport = (string)($slave['KeyTransport'] ?? 'manual');   // manual | sync
 
-            // Block key transport over plain HTTP
             if ($tlsMode === 'http' && $keyTransport === 'sync') {
-                $this->LogMessage("❌ Sync blocked: KeyTransport=sync is NOT allowed with TLS Mode=HTTP for $url", KL_ERROR);
+                $this->LogMessage("❌ Sync blocked: KeyTransport=sync not allowed with HTTP for $url", KL_ERROR);
                 continue;
             }
 
-            // Payload per slave
             $payloadArr = [
                 'auth'  => $token,
                 'vault' => $vault
@@ -386,33 +503,29 @@ class SecretsManager extends IPSModuleStrict {
             if ($keyTransport === 'sync') {
                 $payloadArr['key'] = $keyHex;
             }
-
             $payload = json_encode($payloadArr);
 
-            $headers = [
-                'Content-Type: application/json'
-            ];
+            $headers = ['Content-Type: application/json'];
 
-            // Optional Basic Auth (per slave)
-            $user = (string)($slave['User'] ?? '');
-            $pass = (string)($slave['Pass'] ?? '');
+            // Optional Basic Auth (per slave): User from list, Pass from system.vault
+            $user = trim((string)($slave['User'] ?? ''));
             if ($user !== '') {
+                $pass = (string)($slavePassMap[$url] ?? '');
+                if ($pass === '') {
+                    $this->LogMessage("❌ Sync blocked: BasicAuth user set but no password stored for $url", KL_ERROR);
+                    continue;
+                }
                 $headers[] = 'Authorization: Basic ' . base64_encode($user . ':' . $pass);
             }
 
             try {
                 if ($tlsMode === 'http') {
                     $result = $this->httpPostJson($url, $payload, $headers);
-
                 } elseif ($tlsMode === 'strict') {
                     $result = $this->httpsPostJsonStrict($url, $payload, $headers);
-
                 } elseif ($tlsMode === 'pinned') {
-                    if (trim($fpExp) === '') {
-                        throw new Exception("Pinned mode requires Fingerprint.");
-                    }
+                    if (trim($fpExp) === '') throw new Exception("Pinned mode requires Fingerprint.");
                     $result = $this->httpsPostJsonPinned($url, $payload, $headers, $fpExp);
-
                 } else {
                     throw new Exception("Unknown TLS mode: " . $tlsMode);
                 }
@@ -421,17 +534,15 @@ class SecretsManager extends IPSModuleStrict {
                 $body = trim((string)($result['body'] ?? ''));
 
                 $ok = (strpos($statusLine, '200') !== false && $body === 'OK');
-
                 $kt = ($keyTransport === 'sync') ? "key=sent" : "key=manual";
+
                 if ($ok) {
                     $successCount++;
                     $this->LogMessage("✅ Sync OK [$tlsMode, $kt] $url", KL_MESSAGE);
                 } else {
                     $respShort = $body;
-                    if (strlen($respShort) > 180) {
-                        $respShort = substr($respShort, 0, 180) . "...";
-                    }
-                    $this->LogMessage("❌ Sync FAIL [$tlsMode, $kt] $url | $statusLine | " . ($respShort !== '' ? $respShort : '(no body)'), KL_ERROR);
+                    if (strlen($respShort) > 180) $respShort = substr($respShort, 0, 180) . "...";
+                    $this->LogMessage("❌ Sync FAIL [$tlsMode, $kt] $url | $statusLine | " . ($respShort ?: '(no body)'), KL_ERROR);
                 }
 
             } catch (Throwable $e) {
@@ -448,6 +559,7 @@ class SecretsManager extends IPSModuleStrict {
         $level = ($successCount === $totalSlaves) ? KL_MESSAGE : KL_WARNING;
         $this->LogMessage("Sync summary: $successCount / $totalSlaves successful.", $level);
     }
+    
 
 
 
@@ -624,9 +736,7 @@ class SecretsManager extends IPSModuleStrict {
      */
     protected function ProcessHookData(): void
     {
-        $mode = $this->ReadPropertyInteger("OperationMode");
-
-        if ($mode !== 0) {
+        if ($this->ReadPropertyInteger("OperationMode") !== 0) {
             header("HTTP/1.1 403 Forbidden");
             echo "Access Denied: This instance is not configured as a Slave.";
             $this->LogMessage("Unauthorized WebHook access attempt: Instance is not a Slave.", KL_WARNING);
@@ -639,34 +749,42 @@ class SecretsManager extends IPSModuleStrict {
             return;
         }
 
-        // Optional Basic Auth
-        $hookUser = $this->ReadPropertyString("HookUser");
-        $hookPass = $this->ReadPropertyString("HookPass");
+        $expectedToken = $this->getAuthToken();
+        if ($expectedToken === "") {
+            header("HTTP/1.1 500 Internal Server Error");
+            echo "Slave not configured: missing auth token";
+            $this->LogMessage("WebHook Error: Slave has no AuthToken in encrypted system file.", KL_ERROR);
+            return;
+        }
+
+        // Optional Basic Auth: HookUser from property, HookPass from system.vault
+        $hookUser = trim($this->ReadPropertyString("HookUser"));
+        $hookPass = $this->getHookPass(); // from encrypted system file
 
         if ($hookUser !== "" && $hookPass !== "") {
             if (!isset($_SERVER['PHP_AUTH_USER']) ||
                 $_SERVER['PHP_AUTH_USER'] !== $hookUser ||
-                $_SERVER['PHP_AUTH_PW'] !== $hookPass)
+                ($_SERVER['PHP_AUTH_PW'] ?? '') !== $hookPass)
             {
                 header('WWW-Authenticate: Basic realm="SecretsManager"');
                 header('HTTP/1.0 401 Unauthorized');
                 echo 'Authentication Required';
                 return;
             }
+        } elseif ($hookUser !== "" && $hookPass === "") {
+            // Misconfig warning: user set but pass missing -> BasicAuth effectively OFF
+            $this->LogMessage("Warning: HookUser set but HookPass missing in system file. BasicAuth not enforced.", KL_WARNING);
         }
 
-        $input = file_get_contents("php://input");
-        $data = json_decode($input, true);
+        $data = json_decode(file_get_contents("php://input"), true);
 
-        // Token check
-        if (!isset($data['auth']) || $data['auth'] !== $this->ReadPropertyString("AuthToken")) {
+        if (!isset($data['auth']) || $data['auth'] !== $expectedToken) {
             header("HTTP/1.1 403 Forbidden");
             echo "Invalid Sync Token";
             $this->LogMessage("WebHook Error: Received an invalid or missing Sync Token.", KL_ERROR);
             return;
         }
 
-        // Key handling (optional)
         if (isset($data['key'])) {
             $allow = $this->ReadPropertyBoolean("AllowKeyTransport");
             if ($allow) {
@@ -677,18 +795,98 @@ class SecretsManager extends IPSModuleStrict {
             }
         }
 
-        // Vault handling
         if (isset($data['vault'])) {
             $this->SetValue("Vault", (string)$data['vault']);
         }
 
         echo "OK";
     }
+ 
 
 
     // =========================================================================
     // INTERNAL CRYPTO HELPERS
     // =========================================================================
+
+    private function getSystemPath(): string
+    {
+        $folder = $this->ReadPropertyString("KeyFolderPath");
+        if ($folder === "") return "";
+        return rtrim($folder, '/\\') . DIRECTORY_SEPARATOR . self::SYSTEM_FILENAME;
+    }
+
+    private function loadSystemSecrets(): array
+    {
+        $path = $this->getSystemPath();
+        if ($path === "" || !file_exists($path)) return [];
+
+        $keyHex = $this->_readKey();
+        if (!$keyHex) return [];
+
+        $blob = @file_get_contents($path);
+        if ($blob === false || trim($blob) === "") return [];
+
+        $meta = json_decode($blob, true);
+        if (!is_array($meta) || !isset($meta['data'], $meta['iv'], $meta['tag'])) return [];
+
+        $plain = openssl_decrypt(
+            (string)$meta['data'],
+            "aes-128-gcm",
+            hex2bin($keyHex),
+            0,
+            hex2bin((string)$meta['iv']),
+            hex2bin((string)$meta['tag'])
+        );
+
+        if ($plain === false) return [];
+
+        $arr = json_decode($plain, true);
+        return is_array($arr) ? $arr : [];
+    }
+
+    private function saveSystemSecrets(array $data): bool
+    {
+        $path = $this->getSystemPath();
+        if ($path === "") return false;
+
+        $keyHex = $this->_readKey();
+        if (!$keyHex) return false;
+
+        $iv = random_bytes(12);
+        $tag = "";
+        $cipherText = openssl_encrypt(
+            json_encode($data),
+            "aes-128-gcm",
+            hex2bin($keyHex),
+            0,
+            $iv,
+            $tag
+        );
+        if ($cipherText === false) return false;
+
+        $blob = json_encode([
+            'cipher' => 'aes-128-gcm',
+            'iv'     => bin2hex($iv),
+            'tag'    => bin2hex($tag),
+            'data'   => $cipherText
+        ]);
+
+        return (@file_put_contents($path, $blob) !== false);
+    }
+
+    private function getAuthToken(): string
+    {
+        $sys = $this->loadSystemSecrets();
+        return (string)($sys['authToken'] ?? '');
+    }
+
+    private function getHookPass(): string
+    {
+        $sys = $this->loadSystemSecrets();
+        return (string)($sys['hookPass'] ?? '');
+    }
+
+
 
     private function _getFullPath(): string {
         $folder = $this->ReadPropertyString("KeyFolderPath");

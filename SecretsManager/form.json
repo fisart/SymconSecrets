@@ -42,13 +42,14 @@
       "caption": "Check Directory Permissions",
       "onClick": "SEC_CheckDirectory($id);"
     },
+
     {
       "type": "Label",
-      "caption": "Synchronization Token (Shared Secret)"
+      "caption": "Synchronization Token (Stored encrypted in system.vault)"
     },
     {
       "type": "PasswordTextBox",
-      "name": "AuthToken",
+      "name": "AuthTokenInput",
       "caption": "Sync Token"
     },
     {
@@ -63,10 +64,26 @@
       "caption": "Show/Copy Token",
       "onClick": "SEC_ShowToken($id);"
     },
+    {
+      "type": "Button",
+      "name": "BtnSaveAuthToken",
+      "caption": "Save Token (encrypted)",
+      "onClick": "SEC_SaveAuthToken($id, $AuthTokenInput);"
+    },
 
     { "type": "Label", "name": "LabelHookAuth", "caption": "WebHook Protection (Optional Basic Auth)" },
     { "type": "ValidationTextBox", "name": "HookUser", "caption": "WebHook User (Optional)" },
-    { "type": "PasswordTextBox", "name": "HookPass", "caption": "WebHook Password (Optional)" },
+    {
+      "type": "PasswordTextBox",
+      "name": "HookPassInput",
+      "caption": "WebHook Password (Optional, stored encrypted)"
+    },
+    {
+      "type": "Button",
+      "name": "BtnSaveHookPass",
+      "caption": "Save WebHook Password (encrypted)",
+      "onClick": "SEC_SaveHookPass($id, $HookPassInput);"
+    },
 
     {
       "type": "CheckBox",
@@ -130,13 +147,34 @@
           "width": "120px",
           "add": "",
           "edit": { "type": "ValidationTextBox" }
+        }
+      ]
+    },
+
+    {
+      "type": "ExpansionPanel",
+      "name": "PanelSlaveCreds",
+      "caption": "Master Only: Store per-Slave Basic-Auth Passwords (encrypted)",
+      "visible": false,
+      "items": [
+        {
+          "type": "Select",
+          "name": "SlaveCredUrl",
+          "caption": "Slave URL",
+          "options": [
+            { "caption": "(no slaves configured)", "value": "" }
+          ]
         },
         {
-          "caption": "Pass (Optional)",
-          "name": "Pass",
-          "width": "120px",
-          "add": "",
-          "edit": { "type": "PasswordTextBox" }
+          "type": "PasswordTextBox",
+          "name": "SlavePassInput",
+          "caption": "Password for selected Slave (stored encrypted)"
+        },
+        {
+          "type": "Button",
+          "name": "BtnSaveSlavePass",
+          "caption": "Save Slave Password (encrypted)",
+          "onClick": "SEC_SaveSlavePass($id, $SlaveCredUrl, $SlavePassInput);"
         }
       ]
     },
