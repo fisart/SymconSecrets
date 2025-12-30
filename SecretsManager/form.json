@@ -8,10 +8,7 @@
       "italic": true,
       "bold": true
     },
-    {
-      "type": "Label",
-      "caption": "Security Configuration"
-    },
+    { "type": "Label", "caption": "Security Configuration" },
     {
       "type": "Label",
       "name": "HookInfo",
@@ -28,6 +25,7 @@
       ],
       "onChange": "SEC_UpdateUI($id);"
     },
+
     {
       "type": "Label",
       "caption": "Key Storage (Filename 'master.key' is added automatically)"
@@ -48,7 +46,7 @@
       "caption": "Synchronization Token (Stored encrypted in system.vault)"
     },
     {
-      "type": "PasswordTextBox",
+      "type": "ValidationTextBox",
       "name": "AuthTokenInput",
       "caption": "Sync Token"
     },
@@ -100,6 +98,13 @@
       "add": true,
       "delete": true,
       "columns": [
+        {
+          "caption": "Server (Label)",
+          "name": "Server",
+          "width": "160px",
+          "add": "",
+          "edit": { "type": "ValidationTextBox" }
+        },
         {
           "caption": "URL (http://ip:3777/...  OR  https://host/... )",
           "name": "Url",
@@ -160,7 +165,7 @@
         {
           "type": "Select",
           "name": "SlaveCredUrl",
-          "caption": "Slave URL",
+          "caption": "Slave (Server — URL)",
           "options": [
             { "caption": "(no slaves configured)", "value": "" }
           ]

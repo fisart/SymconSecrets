@@ -55,15 +55,19 @@ class SecretsManager extends IPSModuleStrict {
 
         $isUnlocked = false; // stateless editor
 
-        // Build slave URL options for credential editor (PanelSlaveCreds -> items -> SlaveCredUrl)
+        // Build slave URL options with label (Server — URL)
         $slaveOptions = [];
         $slaves = json_decode($this->ReadPropertyString("SlaveURLs"), true);
         if (is_array($slaves)) {
             foreach ($slaves as $s) {
                 $u = trim((string)($s['Url'] ?? ''));
-                if ($u !== '') {
-                    $slaveOptions[] = ['caption' => $u, 'value' => $u];
-                }
+                if ($u === '') continue;
+
+                $label = trim((string)($s['Server'] ?? ''));
+                $cap = ($label !== '') ? ($label . " — " . $u) : $u;
+
+                // value MUST stay URL (used as key in system.vault mapping)
+                $slaveOptions[] = ['caption' => $cap, 'value' => $u];
             }
         }
         if (count($slaveOptions) === 0) {
@@ -72,9 +76,7 @@ class SecretsManager extends IPSModuleStrict {
 
         // Helper to apply options inside nested "items"
         $applySlaveOptions = function (&$node) use (&$applySlaveOptions, $slaveOptions) {
-            if (!is_array($node)) {
-                return;
-            }
+            if (!is_array($node)) return;
 
             if (($node['name'] ?? '') === 'SlaveCredUrl') {
                 $node['options'] = $slaveOptions;
@@ -86,7 +88,6 @@ class SecretsManager extends IPSModuleStrict {
                 }
             }
 
-            // future-proof: if a container uses "elements"
             if (isset($node['elements']) && is_array($node['elements'])) {
                 foreach ($node['elements'] as &$child) {
                     $applySlaveOptions($child);
@@ -96,7 +97,8 @@ class SecretsManager extends IPSModuleStrict {
 
         if (isset($json['elements']) && is_array($json['elements'])) {
             foreach ($json['elements'] as &$element) {
-                // Apply slave options recursively (fix for nested SlaveCredUrl)
+
+                // Apply slave options recursively (PanelSlaveCreds -> items -> SlaveCredUrl)
                 $applySlaveOptions($element);
 
                 $name = $element['name'] ?? '';
@@ -110,28 +112,24 @@ class SecretsManager extends IPSModuleStrict {
                     $element['visible'] = $isSlave;
                 }
 
-                // HookPassInput + SaveHookPass button only on Slave
                 if (in_array($name, ['HookPassInput', 'BtnSaveHookPass'], true)) {
                     $element['visible'] = $isSlave;
                 }
 
-                // AuthToken input/buttons for Master+Slave (sync role)
-                // Token-Eingabe + Speichern: Master & Slave
+                // Token input + save: Master & Slave
                 if (in_array($name, ['AuthTokenInput', 'BtnSaveAuthToken'], true)) {
                     $element['visible'] = $isSyncRole;
                 }
 
-                // Generate + Show/Copy: nur Master
+                // Generate + Show: only Master (as discussed)
                 if (in_array($name, ['BtnGenToken', 'BtnShowToken'], true)) {
                     $element['visible'] = $isMaster;
                 }
 
-                // Master only: slave list + slave password editor
                 if (in_array($name, ['SlaveURLs', 'LabelSeparator', 'LabelMasterHead', 'PanelSlaveCreds'], true)) {
                     $element['visible'] = $isMaster;
                 }
 
-                // Editor workflow
                 if (in_array($name, ['BtnLoad', 'InputJson', 'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning'], true)) {
                     $element['visible'] = $isEditorRole ? $isUnlocked : false;
                     if ($name === 'BtnLoad') {
@@ -139,7 +137,6 @@ class SecretsManager extends IPSModuleStrict {
                     }
                 }
 
-                // AllowKeyTransport toggle only on Slave
                 if ($name === 'AllowKeyTransport') {
                     $element['visible'] = $isSlave;
                 }
@@ -156,6 +153,7 @@ class SecretsManager extends IPSModuleStrict {
 
         return json_encode($json);
     }
+
 
 
 
@@ -525,12 +523,15 @@ class SecretsManager extends IPSModuleStrict {
             if ($url === '') continue;
             $totalSlaves++;
 
+            $label = trim((string)($slave['Server'] ?? ''));
+            $who = ($label !== '') ? $label : $url;
+
             $tlsMode      = (string)($slave['TlsMode'] ?? 'strict');        // http | strict | pinned
             $fpExp        = (string)($slave['Fingerprint'] ?? '');
             $keyTransport = (string)($slave['KeyTransport'] ?? 'manual');   // manual | sync
 
             if ($tlsMode === 'http' && $keyTransport === 'sync') {
-                $this->LogMessage("❌ Sync blocked: KeyTransport=sync not allowed with HTTP for $url", KL_ERROR);
+                $this->LogMessage("❌ Sync blocked: KeyTransport=sync not allowed with HTTP for $who", KL_ERROR);
                 continue;
             }
 
@@ -545,13 +546,11 @@ class SecretsManager extends IPSModuleStrict {
 
             $headers = ['Content-Type: application/json'];
 
-            // Optional Basic Auth (per slave): User from list, Pass from system.vault
             $user = trim((string)($slave['User'] ?? ''));
             if ($user !== '') {
                 $pass = (string)($slavePassMap[$url] ?? '');
-
                 if ($pass === '') {
-                    $this->LogMessage("❌ Sync blocked: BasicAuth user set but no password stored for $url", KL_ERROR);
+                    $this->LogMessage("❌ Sync blocked: BasicAuth user set but no password stored for $who", KL_ERROR);
                     continue;
                 }
                 $headers[] = 'Authorization: Basic ' . base64_encode($user . ':' . $pass);
@@ -577,16 +576,16 @@ class SecretsManager extends IPSModuleStrict {
 
                 if ($ok) {
                     $successCount++;
-                    $this->LogMessage("✅ Sync OK [$tlsMode, $kt] $url", KL_MESSAGE);
+                    $this->LogMessage("✅ Sync OK [$tlsMode, $kt] $who", KL_MESSAGE);
                 } else {
                     $respShort = $body;
                     if (strlen($respShort) > 180) $respShort = substr($respShort, 0, 180) . "...";
-                    $this->LogMessage("❌ Sync FAIL [$tlsMode, $kt] $url | $statusLine | " . ($respShort ?: '(no body)'), KL_ERROR);
+                    $this->LogMessage("❌ Sync FAIL [$tlsMode, $kt] $who | $statusLine | " . ($respShort ?: '(no body)'), KL_ERROR);
                 }
 
             } catch (Throwable $e) {
                 $kt = ($keyTransport === 'sync') ? "key=sent" : "key=manual";
-                $this->LogMessage("❌ Sync EXC  [$tlsMode, $kt] $url | " . $e->getMessage(), KL_ERROR);
+                $this->LogMessage("❌ Sync EXC  [$tlsMode, $kt] $who | " . $e->getMessage(), KL_ERROR);
             }
         }
 
@@ -598,6 +597,7 @@ class SecretsManager extends IPSModuleStrict {
         $level = ($successCount === $totalSlaves) ? KL_MESSAGE : KL_WARNING;
         $this->LogMessage("Sync summary: $successCount / $totalSlaves successful.", $level);
     }
+
     
 
 
