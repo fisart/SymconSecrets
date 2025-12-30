@@ -184,27 +184,28 @@ class SecretsManager extends IPSModuleStrict {
      * Synchronizes the UI list state into the RAM buffer.
      * Handles IPSList objects from Symcon 8.1 correctly.
      */
-    private function SyncListToBuffer($listData): void {
-        if (!$listData) return;
-
+/**
+     * Diese Hilfsfunktion erwartet nun ein sauberes PHP-Array (kein IPSList-Objekt mehr)
+     */
+    private function SyncListToBuffer(array $listData): void {
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
         $temp = &$this->getCurrentLevelReference($fullData);
         ksort($temp);
 
         foreach ($listData as $row) {
-            $rowData = (array)$row;
-            $key = $rowData['Key'] ?? '';
-
+            $key = $row['Key'] ?? '';
             if ($key !== '' && isset($temp[$key])) {
-                if (isset($rowData['Type']) && $rowData['Type'] === 'Secret') {
+                // Wir prüfen auf Folder (Folders haben im UI values, Secrets nicht)
+                // Oder wir nutzen die Spalte 'Type' aus deiner PrepareListValues
+                if (isset($row['Type']) && $row['Type'] === 'Secret') {
                     if (!is_array($temp[$key])) {
                         $temp[$key] = ['PW' => (string)$temp[$key]];
                     }
-                    $temp[$key]['User']     = $rowData['User']     ?? '';
-                    $temp[$key]['PW']       = $rowData['PW']       ?? '';
-                    $temp[$key]['URL']      = $rowData['URL']      ?? '';
-                    $temp[$key]['Location'] = $rowData['Location'] ?? '';
-                    $temp[$key]['IP']       = $rowData['IP']       ?? '';
+                    $temp[$key]['User']     = $row['User']     ?? '';
+                    $temp[$key]['PW']       = $row['PW']       ?? '';
+                    $temp[$key]['URL']      = $row['URL']      ?? '';
+                    $temp[$key]['Location'] = $row['Location'] ?? '';
+                    $temp[$key]['IP']       = $row['IP']       ?? '';
                 }
             }
         }
@@ -271,8 +272,10 @@ class SecretsManager extends IPSModuleStrict {
         $this->ReloadForm();
     }
 
-    public function HandleListAction(int $index, $EditorList): void {
-        $this->SyncListToBuffer($EditorList);
+public function HandleListAction(int $index): void {
+        // Daten aktiv vom Formular abrufen
+        $listData = json_decode($this->GetConfigurationFormValue('EditorList'), true) ?: [];
+        $this->SyncListToBuffer($listData);
         
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
         $temp = &$this->getCurrentLevelReference($fullData);
@@ -290,8 +293,11 @@ class SecretsManager extends IPSModuleStrict {
         }
     }
 
-    public function NavigateUp($EditorList): void {
-        $this->SyncListToBuffer($EditorList);
+    public function NavigateUp(): void {
+        // Daten aktiv vom Formular abrufen
+        $listData = json_decode($this->GetConfigurationFormValue('EditorList'), true) ?: [];
+        $this->SyncListToBuffer($listData);
+
         $path = json_decode($this->GetBuffer("CurrentPath"), true) ?: [];
         if (count($path) > 0) {
             array_pop($path);
@@ -316,10 +322,12 @@ class SecretsManager extends IPSModuleStrict {
         }
     }
 
-    public function AddEntry(string $NewKeyName, string $NewKeyType, $EditorList): void {
-        $this->SyncListToBuffer($EditorList);
-        if (trim($NewKeyName) === "") return;
+ public function AddEntry(string $NewKeyName, string $NewKeyType): void {
+        // Daten aktiv vom Formular abrufen
+        $listData = json_decode($this->GetConfigurationFormValue('EditorList'), true) ?: [];
+        $this->SyncListToBuffer($listData);
 
+        if (trim($NewKeyName) === "") return;
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
         $temp = &$this->getCurrentLevelReference($fullData);
 
@@ -333,8 +341,11 @@ class SecretsManager extends IPSModuleStrict {
         $this->ReloadForm();
     }
 
-    public function EncryptAndSave($EditorList): void {
-        $this->SyncListToBuffer($EditorList);
+    public function EncryptAndSave(): void {
+        // Daten aktiv vom Formular abrufen
+        $listData = json_decode($this->GetConfigurationFormValue('EditorList'), true) ?: [];
+        $this->SyncListToBuffer($listData);
+
         if ($this->ReadPropertyInteger("OperationMode") === 0) return;
 
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
@@ -342,10 +353,8 @@ class SecretsManager extends IPSModuleStrict {
             $this->ClearVault();
             echo "✅ SUCCESS: Vault saved.";
             if ($this->ReadPropertyInteger("OperationMode") === 1) $this->SyncSlaves();
-        } else {
-            echo "❌ Error: Encryption failed.";
         }
-    }
+    } 
 
     private function PrepareListValues(): array {
         $fullData = json_decode($this->GetBuffer("DecryptedCache"), true) ?: [];
