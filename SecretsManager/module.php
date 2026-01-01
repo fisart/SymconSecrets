@@ -1541,18 +1541,6 @@ public function GetConfigurationForm(): string
     private function GetSelected(): string { return (string)$this->GetBuffer("SelectedRecord"); }
     private function SetSelected(string $ident): void { $this->SetBuffer("SelectedRecord", $ident); }
 
-    private function CheckIfFolder($value): bool {
-        if (!is_array($value)) return false;
-        if (isset($value['__folder'])) return true;
-        foreach ($value as $v) { if (is_array($v)) return true; }
-        return false;
-    }
-
-    private function GetNestedValue($array, $path) {
-        $parts = explode('/', $path);
-        foreach ($parts as $part) { if (isset($array[$part])) $array = $array[$part]; else return null; }
-        return $array;
-    }
     private function _loadOrGenerateKey() {
         $path = $this->_getFullPath();
         if ($path === "") return false;
