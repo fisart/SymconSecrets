@@ -771,33 +771,6 @@ public function GetConfigurationForm(): string
     }
 
     
-public function RequestAction($Ident, $Value): void
-    {
-        // Weiche für den Explorer
-        if (strpos($Ident, 'EXPL_') === 0) {
-            switch ($Ident) {
-                case "EXPL_HandleClick":
-                    $row = json_decode((string)$Value, true);
-                    if ($row['Type'] === "Folder") {
-                        $this->SetNavPath(($this->GetNavPath() === "") ? $row['Ident'] : $this->GetNavPath() . "/" . $row['Ident']);
-                        $this->SetSelected("");
-                    } else { $this->SetSelected($row['Ident']); }
-                    break;
-                case "EXPL_NavUp":
-                    $parts = explode('/', $this->GetNavPath()); array_pop($parts);
-                    $this->SetNavPath(implode('/', $parts)); $this->SetSelected("");
-                    break;
-                case "EXPL_SaveRecord":
-                    $this->LogMessage("Explorer Speichern gestartet", KL_MESSAGE);
-                    $this->HandleExplorerSave(json_decode((string)$Value, true));
-                    break;
-            }
-            $this->ReloadForm();
-            return;
-        }
-        
-        // Hier bleibt Platz für deine anderen RequestAction-Identifikationsschlüssel
-    }
 
 // =========================================================================
     // NAVIGATION & LOGIK FÜR DEN EXPLORER
