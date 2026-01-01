@@ -799,6 +799,165 @@ public function RequestAction($Ident, $Value): void
         // Hier bleibt Platz für deine anderen RequestAction-Identifikationsschlüssel
     }
 
+// =========================================================================
+    // NAVIGATION & LOGIK FÜR DEN EXPLORER
+    // =========================================================================
+
+    /**
+     * RequestAction ist das zentrale Eingangstor für alle Buttons des Explorers.
+     */
+    public function RequestAction($Ident, $Value): void
+    {
+        // Wir prüfen, ob der Befehl vom grafischen Explorer kommt
+        if (strpos($Ident, 'EXPL_') === 0) {
+            switch ($Ident) {
+                case "EXPL_HandleClick":
+                    $row = json_decode((string)$Value, true);
+                    if (isset($row['Ident'])) {
+                        if ($row['Type'] === "Folder") {
+                            $current = (string)$this->GetBuffer("CurrentPath");
+                            $newPath = ($current === "") ? $row['Ident'] : $current . "/" . $row['Ident'];
+                            $this->SetBuffer("CurrentPath", $newPath);
+                            $this->SetBuffer("SelectedRecord", ""); // Detail-Editor schließen
+                        } else {
+                            // Es ist ein Record -> zum Editieren auswählen
+                            $this->SetBuffer("SelectedRecord", $row['Ident']);
+                        }
+                    }
+                    break;
+
+                case "EXPL_NavUp":
+                    $current = (string)$this->GetBuffer("CurrentPath");
+                    $parts = explode('/', $current);
+                    array_pop($parts);
+                    $this->SetBuffer("CurrentPath", implode('/', $parts));
+                    $this->SetBuffer("SelectedRecord", "");
+                    break;
+
+                case "EXPL_DeleteItem":
+                    $row = json_decode((string)$Value, true);
+                    if (isset($row['Ident'])) {
+                        $this->LogMessage("Explorer Löschauftrag: " . $row['Ident'], KL_MESSAGE);
+                        $this->ProcessExplorerDelete($row['Ident']);
+                    }
+                    break;
+
+                case "EXPL_SaveRecord":
+                    $this->ProcessExplorerSave(json_decode((string)$Value, true));
+                    break;
+
+                case "EXPL_CreateFolder":
+                    $this->ProcessExplorerCreate($Value, 'Folder');
+                    break;
+
+                case "EXPL_CreateRecord":
+                    $this->ProcessExplorerCreate($Value, 'Record');
+                    break;
+            }
+            // Nach jeder Aktion das Formular neu laden, um die Änderungen anzuzeigen
+            $this->ReloadForm();
+            return;
+        }
+
+        // Falls du andere RequestActions hast, hier normal weitermachen...
+        // parent::RequestAction($Ident, $Value);
+    }
+
+    private function ProcessExplorerDelete(string $name): void
+    {
+        // 1. Tresor mit deiner bestehenden Funktion entschlüsseln
+        $vaultData = $this->_decryptVault();
+        if ($vaultData === false) return;
+
+        $currentPath = (string)$this->GetBuffer("CurrentPath");
+        $temp = &$vaultData;
+
+        // 2. Zum aktuellen Ordner navigieren
+        if ($currentPath !== "") {
+            foreach (explode('/', $currentPath) as $part) {
+                if (isset($temp[$part]) && is_array($temp[$part])) {
+                    $temp = &$temp[$part];
+                }
+            }
+        }
+
+        // 3. Den Key (Ordner oder Record) löschen
+        if (isset($temp[$name])) {
+            unset($temp[$name]);
+            // 4. Mit deiner bestehenden Funktion verschlüsselt speichern
+            $this->_encryptAndSave($vaultData);
+            $this->SetBuffer("SelectedRecord", ""); 
+            $this->LogMessage("Erfolgreich gelöscht: " . $name, KL_MESSAGE);
+        }
+    }
+
+    private function ProcessExplorerSave(array $inputList): void
+    {
+        $vaultData = $this->_decryptVault() ?: [];
+        $currentPath = (string)$this->GetBuffer("CurrentPath");
+        $selected = (string)$this->GetBuffer("SelectedRecord");
+        $fullPath = ($currentPath === "") ? $selected : $currentPath . "/" . $selected;
+
+        $newFields = [];
+        foreach ($inputList as $row) {
+            if (isset($row['Key']) && $row['Key'] !== "") {
+                $newFields[(string)$row['Key']] = (string)$row['Value'];
+            }
+        }
+
+        $parts = explode('/', $fullPath);
+        $temp = &$vaultData;
+        foreach ($parts as $part) {
+            if (!isset($temp[$part]) || !is_array($temp[$part])) $temp[$part] = [];
+            $temp = &$temp[$part];
+        }
+        $temp = $newFields;
+
+        if ($this->_encryptAndSave($vaultData)) {
+            echo "✅ Tresor aktualisiert!";
+            if ($this->ReadPropertyInteger("OperationMode") === 1) {
+                $this->SyncSlaves();
+            }
+        }
+    }
+
+    private function ProcessExplorerCreate(string $name, string $type): void
+    {
+        if ($name === "") return;
+        $vaultData = $this->_decryptVault() ?: [];
+        $currentPath = (string)$this->GetBuffer("CurrentPath");
+
+        $temp = &$vaultData;
+        if ($currentPath !== "") {
+            foreach (explode('/', $currentPath) as $part) {
+                if (!isset($temp[$part])) $temp[$part] = [];
+                $temp = &$temp[$part];
+            }
+        }
+
+        if ($type === 'Folder') {
+            $temp[$name] = ["__folder" => true];
+        } else {
+            $temp[$name] = ["User" => "", "PW" => ""];
+            $this->SetBuffer("SelectedRecord", $name);
+        }
+        $this->_encryptAndSave($vaultData);
+    }
+
+    // Hilfsfunktion für Ordner-Check (muss in der Klasse vorhanden sein)
+    private function CheckIfFolder($value): bool {
+        if (!is_array($value)) return false;
+        if (isset($value['__folder'])) return true;
+        foreach ($value as $v) { if (is_array($v)) return true; }
+        return false;
+    }
+
+    // Hilfsfunktion für Feld-Zugriff (muss in der Klasse vorhanden sein)
+    private function GetNestedValue($array, $path) {
+        $parts = explode('/', $path);
+        foreach ($parts as $part) { if (isset($array[$part])) $array = $array[$part]; else return null; }
+        return $array;
+    }
     private function HandleExplorerSave(array $inputList): void {
         $vaultData = $this->_decryptVault() ?: [];
         $selected = $this->GetSelected();
