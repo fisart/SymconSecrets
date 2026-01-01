@@ -40,7 +40,7 @@ class SecretsManager extends IPSModuleStrict {
      * This is called by IP-Symcon BEFORE the settings window opens.
      * It modifies the static form.json to hide irrelevant fields based on Master/Slave role.
      */
-    public function GetConfigurationForm(): string
+public function GetConfigurationForm(): string
     {
         $json = json_decode(file_get_contents(__DIR__ . "/form.json"), true);
 
@@ -154,6 +154,113 @@ class SecretsManager extends IPSModuleStrict {
                 }
             }
         }
+
+        // --- START GRAFISCHER EXPLORER INTEGRATION ---
+        if ($isEditorRole) {
+            $vaultData = $this->_decryptVault() ?: [];
+            $currentPath = (string)$this->GetBuffer("CurrentPath");
+            $selectedRecord = (string)$this->GetBuffer("SelectedRecord");
+
+            // Navigation zum Pfad
+            $displayData = $vaultData;
+            if ($currentPath !== "") {
+                foreach (explode('/', $currentPath) as $part) {
+                    if (isset($displayData[$part]) && is_array($displayData[$part])) $displayData = $displayData[$part];
+                }
+            }
+
+            // Liste für aktuelle Ebene
+            $masterList = [];
+            if (is_array($displayData)) {
+                ksort($displayData);
+                foreach ($displayData as $key => $value) {
+                    if ($key === "__folder") continue;
+                    $isFolder = $this->CheckIfFolder($value);
+                    $masterList[] = [
+                        "Icon"  => $isFolder ? "📁" : "🔑",
+                        "Ident" => (string)$key,
+                        "Type"  => $isFolder ? "Folder" : "Record"
+                    ];
+                }
+            }
+
+            $json['actions'][] = ["type" => "Label", "caption" => "________________________________________________________________________________________________"];
+            $json['actions'][] = ["type" => "Label", "caption" => "📂 GRAFISCHER TRESOR-EXPLORER", "bold" => true];
+            $json['actions'][] = ["type" => "Label", "caption" => "📍 Position: root" . ($currentPath !== "" ? " / " . str_replace("/", " / ", $currentPath) : "")];
+
+            if ($currentPath !== "") {
+                $json['actions'][] = ["type" => "Button", "caption" => "⬅️ ZURÜCK", "onClick" => "IPS_RequestAction(\$id, 'EXPL_NavUp', '');"];
+            }
+
+            $json['actions'][] = [
+                "type" => "List",
+                "name" => "MasterListUI",
+                "caption" => "Inhalt",
+                "rowCount" => 6,
+                "columns" => [
+                    ["caption" => " ", "name" => "Icon", "width" => "35px"],
+                    ["caption" => "Name", "name" => "Ident", "width" => "auto"],
+                    ["caption" => "Typ", "name" => "Type", "width" => "100px"]
+                ],
+                "values" => $masterList
+            ];
+
+            $json['actions'][] = [
+                "type" => "Button",
+                "caption" => "➡️ ÖFFNEN / EDITIEREN",
+                "onClick" => "if(isset(\$MasterListUI)) { IPS_RequestAction(\$id, 'EXPL_HandleClick', json_encode(\$MasterListUI)); } else { echo 'Bitte erst eine Zeile markieren!'; }"
+            ];
+
+            $json['actions'][] = [
+                "type" => "Button",
+                "caption" => "🗑️ MARKIERTE ZEILE LÖSCHEN",
+                "onClick" => "if(isset(\$MasterListUI)) { IPS_RequestAction(\$id, 'EXPL_DeleteItem', json_encode(\$MasterListUI)); } else { echo 'Bitte erst eine Zeile markieren!'; }"
+            ];
+
+            $json['actions'][] = ["type" => "Label", "caption" => "➕ NEU AN DIESER POSITION:"];
+            $json['actions'][] = ["type" => "ValidationTextBox", "name" => "NewItemName", "caption" => "Name für Element"];
+            $json['actions'][] = ["type" => "Button", "caption" => "📁 + Ordner", "onClick" => "IPS_RequestAction(\$id, 'EXPL_CreateFolder', \$NewItemName);"];
+            $json['actions'][] = ["type" => "Button", "caption" => "🔑 + Record", "onClick" => "IPS_RequestAction(\$id, 'EXPL_CreateRecord', \$NewItemName);"];
+
+            // Detail Panel
+            if ($selectedRecord !== "") {
+                $recordPath = ($currentPath === "") ? $selectedRecord : $currentPath . "/" . $selectedRecord;
+                $fields = $this->GetNestedValue($vaultData, $recordPath);
+                $detailValues = [];
+                if (is_array($fields)) {
+                    foreach ($fields as $k => $v) {
+                        if (!is_array($v) && $k !== "__folder") $detailValues[] = ["Key" => $k, "Value" => (string)$v];
+                    }
+                }
+
+                $json['actions'][] = ["type" => "Label", "caption" => "________________________________________________________________________________________________"];
+                $json['actions'][] = [
+                    "type" => "ExpansionPanel",
+                    "caption" => "📝 Editor: " . $recordPath,
+                    "expanded" => true,
+                    "items" => [
+                        [
+                            "type" => "List",
+                            "name" => "DetailListUI",
+                            "rowCount" => 6,
+                            "add" => true,
+                            "delete" => true,
+                            "columns" => [
+                                ["caption" => "Feld", "name" => "Key", "width" => "200px", "add" => "", "edit" => ["type" => "ValidationTextBox"]],
+                                ["caption" => "Wert", "name" => "Value", "width" => "auto", "add" => "", "edit" => ["type" => "ValidationTextBox"]]
+                            ],
+                            "values" => $detailValues
+                        ],
+                        [
+                            "type" => "Button",
+                            "caption" => "💾 Details speichern",
+                            "onClick" => "\$D=[]; foreach(\$DetailListUI as \$r){ \$D[]=\$r; } IPS_RequestAction(\$id, 'EXPL_SaveRecord', json_encode(\$D));"
+                        ]
+                    ]
+                ];
+            }
+        }
+        // --- ENDE GRAFISCHER EXPLORER INTEGRATION ---
 
         return json_encode($json);
     }
@@ -664,7 +771,52 @@ class SecretsManager extends IPSModuleStrict {
     }
 
     
+public function RequestAction($Ident, $Value): void
+    {
+        // Weiche für den Explorer
+        if (strpos($Ident, 'EXPL_') === 0) {
+            switch ($Ident) {
+                case "EXPL_HandleClick":
+                    $row = json_decode((string)$Value, true);
+                    if ($row['Type'] === "Folder") {
+                        $this->SetNavPath(($this->GetNavPath() === "") ? $row['Ident'] : $this->GetNavPath() . "/" . $row['Ident']);
+                        $this->SetSelected("");
+                    } else { $this->SetSelected($row['Ident']); }
+                    break;
+                case "EXPL_NavUp":
+                    $parts = explode('/', $this->GetNavPath()); array_pop($parts);
+                    $this->SetNavPath(implode('/', $parts)); $this->SetSelected("");
+                    break;
+                case "EXPL_SaveRecord":
+                    $this->LogMessage("Explorer Speichern gestartet", KL_MESSAGE);
+                    $this->HandleExplorerSave(json_decode((string)$Value, true));
+                    break;
+            }
+            $this->ReloadForm();
+            return;
+        }
+        
+        // Hier bleibt Platz für deine anderen RequestAction-Identifikationsschlüssel
+    }
 
+    private function HandleExplorerSave(array $inputList): void {
+        $vaultData = $this->_decryptVault() ?: [];
+        $selected = $this->GetSelected();
+        $fullPath = ($this->GetNavPath() === "") ? $selected : $this->GetNavPath() . "/" . $selected;
+
+        $newFields = [];
+        foreach ($inputList as $row) { if ($row['Key'] !== "") $newFields[(string)$row['Key']] = (string)$row['Value']; }
+
+        // Navigiere im Array und setze Daten
+        $parts = explode('/', $fullPath); $temp = &$vaultData;
+        foreach ($parts as $part) { if (!isset($temp[$part]) || !is_array($temp[$part])) $temp[$part] = []; $temp = &$temp[$part]; }
+        $temp = $newFields;
+
+        if ($this->_encryptAndSave($vaultData)) {
+            echo "✅ Tresor aktualisiert!";
+            if ($this->ReadPropertyInteger("OperationMode") === 1) $this->SyncSlaves();
+        }
+    }
 
 
     private function httpPostJson(string $url, string $payload, array $headers): array {
@@ -1251,7 +1403,24 @@ class SecretsManager extends IPSModuleStrict {
 
         return json_decode($decrypted, true);
     }
+// --- NEU: EXPLORER HELPER ---
+    private function GetNavPath(): string { return (string)$this->GetBuffer("CurrentPath"); }
+    private function SetNavPath(string $path): void { $this->SetBuffer("CurrentPath", $path); }
+    private function GetSelected(): string { return (string)$this->GetBuffer("SelectedRecord"); }
+    private function SetSelected(string $ident): void { $this->SetBuffer("SelectedRecord", $ident); }
 
+    private function CheckIfFolder($value): bool {
+        if (!is_array($value)) return false;
+        if (isset($value['__folder'])) return true;
+        foreach ($value as $v) { if (is_array($v)) return true; }
+        return false;
+    }
+
+    private function GetNestedValue($array, $path) {
+        $parts = explode('/', $path);
+        foreach ($parts as $part) { if (isset($array[$part])) $array = $array[$part]; else return null; }
+        return $array;
+    }
     private function _loadOrGenerateKey() {
         $path = $this->_getFullPath();
         if ($path === "") return false;
