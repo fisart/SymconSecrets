@@ -155,13 +155,13 @@ public function GetConfigurationForm(): string
             }
         }
 
-        // --- START GRAFISCHER EXPLORER INTEGRATION ---
+        // --- START DER VEREINBARTEN EXPLORER-INTEGRATION ---
         if ($isEditorRole) {
             $vaultData = $this->_decryptVault() ?: [];
             $currentPath = (string)$this->GetBuffer("CurrentPath");
             $selectedRecord = (string)$this->GetBuffer("SelectedRecord");
 
-            // Navigation zum Pfad
+            // Navigation zum aktuellen Zweig im Array
             $displayData = $vaultData;
             if ($currentPath !== "") {
                 foreach (explode('/', $currentPath) as $part) {
@@ -169,7 +169,7 @@ public function GetConfigurationForm(): string
                 }
             }
 
-            // Liste für aktuelle Ebene
+            // Master-Liste für aktuelle Ebene aufbereiten
             $masterList = [];
             if (is_array($displayData)) {
                 ksort($displayData);
@@ -184,6 +184,7 @@ public function GetConfigurationForm(): string
                 }
             }
 
+            // UI Elemente anhängen
             $json['actions'][] = ["type" => "Label", "caption" => "________________________________________________________________________________________________"];
             $json['actions'][] = ["type" => "Label", "caption" => "📂 GRAFISCHER TRESOR-EXPLORER", "bold" => true];
             $json['actions'][] = ["type" => "Label", "caption" => "📍 Position: root" . ($currentPath !== "" ? " / " . str_replace("/", " / ", $currentPath) : "")];
@@ -222,7 +223,7 @@ public function GetConfigurationForm(): string
             $json['actions'][] = ["type" => "Button", "caption" => "📁 + Ordner", "onClick" => "IPS_RequestAction(\$id, 'EXPL_CreateFolder', \$NewItemName);"];
             $json['actions'][] = ["type" => "Button", "caption" => "🔑 + Record", "onClick" => "IPS_RequestAction(\$id, 'EXPL_CreateRecord', \$NewItemName);"];
 
-            // Detail Panel
+            // Detail Panel (Editor für Felder)
             if ($selectedRecord !== "") {
                 $recordPath = ($currentPath === "") ? $selectedRecord : $currentPath . "/" . $selectedRecord;
                 $fields = $this->GetNestedValue($vaultData, $recordPath);
@@ -259,8 +260,14 @@ public function GetConfigurationForm(): string
                     ]
                 ];
             }
+
+            // Bereich für JSON Import (Aktualisiert den Explorer)
+            $json['actions'][] = ["type" => "Label", "caption" => "________________________________________________________________________________________________"];
+            $json['actions'][] = ["type" => "Label", "caption" => "📥 JSON IMPORT (Aktualisiert Explorer)", "bold" => true];
+            $json['actions'][] = ["type" => "ValidationTextBox", "name" => "ImportInput", "caption" => "JSON String"];
+            $json['actions'][] = ["type" => "Button", "caption" => "Importieren & Explorer Reset", "onClick" => "IPS_RequestAction(\$id, 'EXPL_ImportJson', \$ImportInput);"];
         }
-        // --- ENDE GRAFISCHER EXPLORER INTEGRATION ---
+        // --- ENDE DER EXPLORER-INTEGRATION ---
 
         return json_encode($json);
     }
@@ -779,9 +786,12 @@ public function GetConfigurationForm(): string
     /**
      * RequestAction ist das zentrale Eingangstor für alle Buttons des Explorers.
      */
+/**
+     * ZENTRALES EINGANGSTOR FÜR UI-AKTIONEN
+     */
     public function RequestAction($Ident, $Value): void
     {
-        // Wir prüfen, ob der Befehl vom grafischen Explorer kommt
+        // Prüfung auf Befehle des grafischen Explorers
         if (strpos($Ident, 'EXPL_') === 0) {
             switch ($Ident) {
                 case "EXPL_HandleClick":
@@ -791,9 +801,8 @@ public function GetConfigurationForm(): string
                             $current = (string)$this->GetBuffer("CurrentPath");
                             $newPath = ($current === "") ? $row['Ident'] : $current . "/" . $row['Ident'];
                             $this->SetBuffer("CurrentPath", $newPath);
-                            $this->SetBuffer("SelectedRecord", ""); // Detail-Editor schließen
+                            $this->SetBuffer("SelectedRecord", ""); 
                         } else {
-                            // Es ist ein Record -> zum Editieren auswählen
                             $this->SetBuffer("SelectedRecord", $row['Ident']);
                         }
                     }
@@ -810,7 +819,6 @@ public function GetConfigurationForm(): string
                 case "EXPL_DeleteItem":
                     $row = json_decode((string)$Value, true);
                     if (isset($row['Ident'])) {
-                        $this->LogMessage("Explorer Löschauftrag: " . $row['Ident'], KL_MESSAGE);
                         $this->ProcessExplorerDelete($row['Ident']);
                     }
                     break;
@@ -820,32 +828,42 @@ public function GetConfigurationForm(): string
                     break;
 
                 case "EXPL_CreateFolder":
-                    $this->ProcessExplorerCreate($Value, 'Folder');
+                    $this->ProcessExplorerCreate((string)$Value, 'Folder');
                     break;
 
                 case "EXPL_CreateRecord":
-                    $this->ProcessExplorerCreate($Value, 'Record');
+                    $this->ProcessExplorerCreate((string)$Value, 'Record');
+                    break;
+
+                case "EXPL_ImportJson":
+                    $data = json_decode((string)$Value, true);
+                    if (is_array($data)) {
+                        $this->_encryptAndSave($data);
+                        $this->SetBuffer("CurrentPath", ""); 
+                        $this->SetBuffer("SelectedRecord", "");
+                        echo "✅ Import erfolgreich!";
+                    }
                     break;
             }
-            // Nach jeder Aktion das Formular neu laden, um die Änderungen anzuzeigen
             $this->ReloadForm();
             return;
         }
 
-        // Falls du andere RequestActions hast, hier normal weitermachen...
-        // parent::RequestAction($Ident, $Value);
+        // Hier können andere RequestAction-Befehle folgen...
     }
+
+    // =========================================================================
+    // PRIVATE VERARBEITUNGSMETHODEN FÜR EXPLORER
+    // =========================================================================
 
     private function ProcessExplorerDelete(string $name): void
     {
-        // 1. Tresor mit deiner bestehenden Funktion entschlüsseln
         $vaultData = $this->_decryptVault();
         if ($vaultData === false) return;
 
         $currentPath = (string)$this->GetBuffer("CurrentPath");
         $temp = &$vaultData;
 
-        // 2. Zum aktuellen Ordner navigieren
         if ($currentPath !== "") {
             foreach (explode('/', $currentPath) as $part) {
                 if (isset($temp[$part]) && is_array($temp[$part])) {
@@ -854,13 +872,11 @@ public function GetConfigurationForm(): string
             }
         }
 
-        // 3. Den Key (Ordner oder Record) löschen
         if (isset($temp[$name])) {
             unset($temp[$name]);
-            // 4. Mit deiner bestehenden Funktion verschlüsselt speichern
             $this->_encryptAndSave($vaultData);
             $this->SetBuffer("SelectedRecord", ""); 
-            $this->LogMessage("Erfolgreich gelöscht: " . $name, KL_MESSAGE);
+            $this->LogMessage("Explorer: '" . $name . "' gelöscht.", KL_MESSAGE);
         }
     }
 
@@ -881,13 +897,16 @@ public function GetConfigurationForm(): string
         $parts = explode('/', $fullPath);
         $temp = &$vaultData;
         foreach ($parts as $part) {
-            if (!isset($temp[$part]) || !is_array($temp[$part])) $temp[$part] = [];
+            if (!isset($temp[$part]) || !is_array($temp[$part])) {
+                $temp[$part] = [];
+            }
             $temp = &$temp[$part];
         }
         $temp = $newFields;
 
         if ($this->_encryptAndSave($vaultData)) {
             echo "✅ Tresor aktualisiert!";
+            // Automatische Synchronisation bei Master-Rolle
             if ($this->ReadPropertyInteger("OperationMode") === 1) {
                 $this->SyncSlaves();
             }
@@ -917,7 +936,6 @@ public function GetConfigurationForm(): string
         $this->_encryptAndSave($vaultData);
     }
 
-    // Hilfsfunktion für Ordner-Check (muss in der Klasse vorhanden sein)
     private function CheckIfFolder($value): bool {
         if (!is_array($value)) return false;
         if (isset($value['__folder'])) return true;
@@ -925,7 +943,6 @@ public function GetConfigurationForm(): string
         return false;
     }
 
-    // Hilfsfunktion für Feld-Zugriff (muss in der Klasse vorhanden sein)
     private function GetNestedValue($array, $path) {
         $parts = explode('/', $path);
         foreach ($parts as $part) { if (isset($array[$part])) $array = $array[$part]; else return null; }
