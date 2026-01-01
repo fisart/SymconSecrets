@@ -43,6 +43,7 @@
 
     {
       "type": "Label",
+      "name": "LabelSyncToken",
       "caption": "Synchronization Token (Stored encrypted in system.vault)"
     },
     {
@@ -187,12 +188,14 @@
     {
       "type": "Label",
       "name": "LabelSeparator",
-      "caption": "________________________________________________________________________________"
+      "caption": "________________________________________________________________________________",
+      "visible": false
     },
     {
       "type": "Label",
       "name": "LabelMasterHead",
-      "caption": "Master: Secret Management / Vault Editor"
+      "caption": "Master: Secret Management / Vault Editor",
+      "visible": false
     },
     {
       "type": "Label",
@@ -205,25 +208,29 @@
       "type": "ValidationTextBox",
       "name": "InputJson",
       "caption": "JSON Editor",
-      "value": ""
+      "value": "",
+      "visible": false
     },
     {
       "type": "Button",
       "name": "BtnLoad",
       "caption": "🔓 Unlock & Load Data",
-      "onClick": "SEC_LoadVault($id);"
+      "onClick": "SEC_LoadVault($id);",
+      "visible": false
     },
     {
       "type": "Button",
       "name": "BtnEncrypt",
       "caption": "💾 Encrypt & Save",
-      "onClick": "SEC_EncryptAndSave($id, $InputJson);"
+      "onClick": "SEC_EncryptAndSave($id, $InputJson);",
+      "visible": false
     },
     {
       "type": "Button",
       "name": "BtnClear",
       "caption": "❌ Cancel / Wipe",
-      "onClick": "SEC_ClearVault($id);"
+      "onClick": "SEC_ClearVault($id);",
+      "visible": false
     }
   ],
   "actions": [

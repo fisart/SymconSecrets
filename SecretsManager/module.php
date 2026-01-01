@@ -116,25 +116,20 @@ public function GetConfigurationForm(): string
                     $element['visible'] = $isSlave;
                 }
 
-                // Token input + save: Master & Slave
-                if (in_array($name, ['AuthTokenInput', 'BtnSaveAuthToken'], true)) {
+                // --- ANPASSUNG: Sync Token & Label ---
+                // Nur anzeigen wenn Master oder Slave, verstecken in Standalone (isSyncRole)
+                if (in_array($name, ['LabelSyncToken', 'AuthTokenInput', 'BtnGenToken', 'BtnShowToken', 'BtnSaveAuthToken'], true)) {
                     $element['visible'] = $isSyncRole;
-                }
-
-                // Generate + Show: only Master (as discussed)
-                if (in_array($name, ['BtnGenToken', 'BtnShowToken'], true)) {
-                    $element['visible'] = $isMaster;
                 }
 
                 if (in_array($name, ['SlaveURLs', 'LabelSeparator', 'LabelMasterHead', 'PanelSlaveCreds'], true)) {
                     $element['visible'] = $isMaster;
                 }
 
-                if (in_array($name, ['BtnLoad', 'InputJson', 'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning'], true)) {
-                    $element['visible'] = $isEditorRole ? $isUnlocked : false;
-                    if ($name === 'BtnLoad') {
-                        $element['visible'] = ($isEditorRole && !$isUnlocked);
-                    }
+                // --- ANPASSUNG: Alten Editor entfernen ---
+                // Den alten Button "Unlock & Load Data" und alle zugehörigen Felder in ALLEN Modi ausblenden
+                if (in_array($name, ['BtnLoad', 'InputJson', 'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning', 'LabelSeparator', 'LabelMasterHead'], true)) {
+                    $element['visible'] = false;
                 }
 
                 if ($name === 'AllowKeyTransport') {
@@ -271,7 +266,6 @@ public function GetConfigurationForm(): string
 
         return json_encode($json);
     }
-
 
     public function RotateKey(): void
     {
