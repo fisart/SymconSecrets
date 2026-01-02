@@ -210,7 +210,7 @@ public function GetConfigurationForm(): string
                     "} else {",
                     "    return [",
                     "        ['type' => 'Label', 'caption' => 'Ordner umbenennen: ' . \$item['Ident']],",
-                    "        ['type' => 'ValidationTextBox', 'name' => 'NewName', 'caption' => 'Neuer Name', 'value' => \$item['Ident']],",
+                    "        ['type' => 'ValidationTextBox', 'name' => 'NewName', 'caption' => 'Neuer Name', 'value' => \$item['Ident'],'validate' => '^[^/]+$'],],",
                     "        ['type' => 'Button', 'caption' => '💾 Umbenennen', 'onClick' => 'IPS_RequestAction(\$id, \"EXPL_RenameFolder\", json_encode([\"Old\" => \"' . \$item['Ident'] . '\", \"New\" => \$NewName]));']",
                     "    ];",
                     "}"
@@ -231,7 +231,7 @@ public function GetConfigurationForm(): string
             ];
 
             $json['actions'][] = ["type" => "Label", "caption" => "➕ NEU AN DIESER POSITION:"];
-            $json['actions'][] = ["type" => "ValidationTextBox", "name" => "NewItemName", "caption" => "Name für Element"];
+            $json['actions'][] = ["type" => "ValidationTextBox", "name" => "NewItemName", "caption" => "Name für Element","validate" => "^[^/]+$" ];
             $json['actions'][] = ["type" => "Button", "caption" => "📁 + Unterordner", "onClick" => "IPS_RequestAction(\$id, 'EXPL_CreateFolder', \$NewItemName);"];
             $json['actions'][] = ["type" => "Button", "caption" => "🔑 + Record", "onClick" => "IPS_RequestAction(\$id, 'EXPL_CreateRecord', \$NewItemName);"];
 
@@ -701,15 +701,11 @@ public function GetConfigurationForm(): string
      */
  public function RequestAction($Ident, $Value): void
     {
-        // DEBUG: Zeige JEDEN Aufruf sofort im Meldungsfenster
-        $this->LogMessage("DEBUG: RequestAction Ident: " . $Ident . " | Value: " . (is_string($Value) ? $Value : "Object"), KL_MESSAGE);
 
         if (strpos($Ident, 'EXPL_') === 0) {
             switch ($Ident) {
                 case "EXPL_HandleClick":
                     // LOG: Rohdaten prüfen
-                    $this->LogMessage("DEBUG: Rohdaten vom Browser: " . (string)$Value, KL_MESSAGE);
-
                     $row = json_decode((string)$Value, true);
                     $ident = $row['Ident'] ?? 'FEHLT';
                     $type = $row['Type'] ?? 'FEHLT';
@@ -929,41 +925,61 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
     }
 
  private function ProcessExplorerCreate(string $name, string $type): void
-{
-    if ($name === "") return;
-    $vaultData = $this->_decryptVault() ?: [];
-    $currentPath = (string)$this->GetBuffer("CurrentPath");
+    {
+        // 1. Basis-Validierung
+        if ($name === "") {
+            return;
+        }
 
-    // 1. Navigiere zum aktuellen Pfad (wo wir gerade im Explorer sind)
-    $temp = &$vaultData;
-    if ($currentPath !== "") {
-        $parts = array_filter(explode('/', $currentPath));
-        foreach ($parts as $part) {
-            // Wir erzwingen, dass jeder Teil des Pfades ein Array ist
-            if (!isset($temp[$part]) || !is_array($temp[$part])) {
-                $temp[$part] = [];
+        // 2. Sicherheits-Validierung: Schrägstriche im Namen verbieten
+        if (strpos($name, '/') !== false) {
+            echo "❌ Fehler: Der Name darf keinen Schrägstrich (/) enthalten!";
+            return;
+        }
+
+        $vaultData = $this->_decryptVault() ?: [];
+        $currentPath = (string)$this->GetBuffer("CurrentPath");
+
+        // 3. Navigiere zum aktuellen Pfad im Array (Deep Navigation)
+        $temp = &$vaultData;
+        if ($currentPath !== "") {
+            // array_filter entfernt leere Fragmente bei führenden/folgenden Slashes
+            $parts = array_filter(explode('/', $currentPath));
+            foreach ($parts as $part) {
+                // Wir stellen sicher, dass jeder Teil des Pfades ein Array ist
+                if (!isset($temp[$part]) || !is_array($temp[$part])) {
+                    $temp[$part] = [];
+                }
+                $temp = &$temp[$part];
             }
-            $temp = &$temp[$part];
         }
-    }
 
-    // 2. Erstelle das neue Element im aktuellen Ordner
-    if ($type === 'Folder') {
-        // Falls der Ordner schon existiert, überschreiben wir ihn nicht
-        if (!isset($temp[$name])) {
+        // 4. Kollisionsprüfung: Existiert der Name bereits auf dieser Ebene?
+        if (isset($temp[$name])) {
+            echo "❌ Fehler: Ein Element mit dem Namen '$name' existiert bereits an dieser Position.";
+            return;
+        }
+
+        // 5. Erstelle das neue Element
+        if ($type === 'Folder') {
+            // Ordner mit technischem Flag anlegen
             $temp[$name] = ["__folder" => true];
+            $this->LogMessage("Explorer: Unterordner '$name' erstellt in Pfad '$currentPath'.", KL_MESSAGE);
+        } else {
+            // Neuer Datensatz mit Standardfeldern
+            $temp[$name] = ["User" => "", "Pass" => ""];
+            $this->LogMessage("Explorer: Datensatz '$name' erstellt in Pfad '$currentPath'.", KL_MESSAGE);
         }
-        $this->LogMessage("Explorer: Unterordner '$name' erstellt unter '$currentPath'", KL_MESSAGE);
-    } else {
-        $temp[$name] = ["User" => "", "Pass" => ""];
-        $this->SetBuffer("SelectedRecord", $name);
+
+        // 6. Alles verschlüsselt speichern und UI aktualisieren
+        if ($this->_encryptAndSave($vaultData)) {
+            $this->ReloadForm();
+            // Falls Master-Rolle, Slaves informieren
+            if ($this->ReadPropertyInteger("OperationMode") === 1) {
+                $this->SyncSlaves();
+            }
+        }
     }
-
-    // 3. Alles verschlüsselt speichern
-    $this->_encryptAndSave($vaultData);
-    $this->ReloadForm();
-}
-
 /**
      * Prüft, ob ein Array als Ordner (Container) oder als Datensatz (Record) zu behandeln ist.
      */
