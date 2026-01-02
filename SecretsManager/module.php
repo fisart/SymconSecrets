@@ -109,9 +109,13 @@ public function GetConfigurationForm(): string
                     $element['visible'] = $isSlave;
                 }
 
-                // --- ANPASSUNG: Sync Token Sektion (Verstecken in Standalone) ---
+                // --- ANPASSUNG: Sync Token Sektion (Granular für Master/Slave/Standalone) ---
                 if (in_array($name, ['LabelSyncToken', 'AuthTokenInput', 'BtnGenToken', 'BtnShowToken', 'BtnSaveAuthToken'], true)) {
-                    $element['visible'] = $isSyncRole;
+                    if (in_array($name, ['BtnGenToken', 'BtnShowToken'], true)) {
+                        $element['visible'] = $isMaster; // Nur Master sieht Generieren/Anzeigen
+                    } else {
+                        $element['visible'] = $isSyncRole; // Master und Slave sehen Label, Input und Save
+                    }
                 }
 
                 if (in_array($name, ['SlaveURLs', 'PanelSlaveCreds'], true)) {
@@ -145,6 +149,7 @@ public function GetConfigurationForm(): string
         if ($isEditorRole) {
             $vaultData = $this->_decryptVault() ?: [];
             $currentPath = (string)$this->GetBuffer("CurrentPath");
+            $selectedRecord = (string)$this->GetBuffer("SelectedRecord");
 
             // Navigation zum aktuellen Zweig im Array
             $displayData = $vaultData;
@@ -192,7 +197,6 @@ public function GetConfigurationForm(): string
                     ["caption" => "Typ", "name" => "Type", "width" => "100px"]
                 ],
                 "values" => $masterList,
-                // onClick auf der Liste wurde entfernt, da unzuverlässig im actions-Bereich
                 "form" => [
                     "\$item = isset(\$dynamicList) ? \$dynamicList : \$MasterListUI;",
                     "if (\$item['Type'] == 'Record') {",
@@ -210,14 +214,13 @@ public function GetConfigurationForm(): string
                     "} else {",
                     "    return [",
                     "        ['type' => 'Label', 'caption' => 'Ordner umbenennen: ' . \$item['Ident']],",
-                    "        ['type' => 'ValidationTextBox', 'name' => 'NewName', 'caption' => 'Neuer Name', 'value' => \$item['Ident'],'validate' => '^[^/]+$'],],",
+                    "        ['type' => 'ValidationTextBox', 'name' => 'NewName', 'caption' => 'Neuer Name', 'value' => \$item['Ident'],'validate' => '^[^/]+$'],",
                     "        ['type' => 'Button', 'caption' => '💾 Umbenennen', 'onClick' => 'IPS_RequestAction(\$id, \"EXPL_RenameFolder\", json_encode([\"Old\" => \"' . \$item['Ident'] . '\", \"New\" => \$NewName]));']",
                     "    ];",
                     "}"
                 ]
             ];
 
-            // Navigation und Aktion erfolgt jetzt stabil über diesen Button
             $json['actions'][] = [
                 "type" => "Button",
                 "caption" => "➡️ ÖFFNEN / EDITIEREN",
@@ -243,7 +246,6 @@ public function GetConfigurationForm(): string
 
         return json_encode($json);
     }
-
     public function SaveAuthToken(string $token): void
     {
         $token = trim((string)$token);
