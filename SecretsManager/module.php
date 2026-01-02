@@ -738,7 +738,7 @@ public function GetConfigurationForm(): string
     }
         // Andere Standard-Aktionen von IP-Symcon (z.B. SEC_UpdateUI) falls nötig durchreichen
         // parent::RequestAction($Ident, $Value);
-    }
+    
 
     // =========================================================================
     // PRIVATE VERARBEITUNGSMETHODEN FÜR EXPLORER
@@ -1493,5 +1493,5 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
             file_put_contents($path, $hexKey);
         }
     }
-
+}
 ?>
