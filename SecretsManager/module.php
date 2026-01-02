@@ -43,59 +43,117 @@ class SecretsManager extends IPSModuleStrict {
 public function GetConfigurationForm(): string
     {
         $json = json_decode(file_get_contents(__DIR__ . "/form.json"), true);
+
         $mode = $this->ReadPropertyInteger("OperationMode");
 
         $isSlave      = ($mode === 0);
         $isMaster     = ($mode === 1);
         $isStandalone = ($mode === 2);
+
         $isEditorRole = ($isMaster || $isStandalone);
         $isSyncRole   = ($isMaster || $isSlave);
 
-        // ... [Bestehende Slave-Optionen Logik bleibt identisch] ...
+        $isUnlocked = false; // stateless editor
+
+        // Build slave URL options with label (Server — URL)
         $slaveOptions = [];
         $slaves = json_decode($this->ReadPropertyString("SlaveURLs"), true);
         if (is_array($slaves)) {
             foreach ($slaves as $s) {
-                $u = trim((string)($s['Url'] ?? '')); if ($u === '') continue;
+                $u = trim((string)($s['Url'] ?? ''));
+                if ($u === '') continue;
+
                 $label = trim((string)($s['Server'] ?? ''));
-                $slaveOptions[] = ['caption' => ($label !== '') ? ($label . " — " . $u) : $u, 'value' => $u];
+                $cap = ($label !== '') ? ($label . " — " . $u) : $u;
+
+                // value MUST stay URL (used as key in system.vault mapping)
+                $slaveOptions[] = ['caption' => $cap, 'value' => $u];
             }
         }
-        if (count($slaveOptions) === 0) { $slaveOptions[] = ['caption' => '(no slaves configured)', 'value' => '']; }
+        if (count($slaveOptions) === 0) {
+            $slaveOptions[] = ['caption' => '(no slaves configured)', 'value' => ''];
+        }
 
+        // Helper to apply options inside nested "items"
         $applySlaveOptions = function (&$node) use (&$applySlaveOptions, $slaveOptions) {
             if (!is_array($node)) return;
-            if (($node['name'] ?? '') === 'SlaveCredUrl') { $node['options'] = $slaveOptions; }
-            if (isset($node['items']) && is_array($node['items'])) { foreach ($node['items'] as &$child) { $applySlaveOptions($child); } }
-            if (isset($node['elements']) && is_array($node['elements'])) { foreach ($node['elements'] as &$child) { $applySlaveOptions($child); } }
+
+            if (($node['name'] ?? '') === 'SlaveCredUrl') {
+                $node['options'] = $slaveOptions;
+            }
+
+            if (isset($node['items']) && is_array($node['items'])) {
+                foreach ($node['items'] as &$child) {
+                    $applySlaveOptions($child);
+                }
+            }
+
+            if (isset($node['elements']) && is_array($node['elements'])) {
+                foreach ($node['elements'] as &$child) {
+                    $applySlaveOptions($child);
+                }
+            }
         };
 
         if (isset($json['elements']) && is_array($json['elements'])) {
             foreach ($json['elements'] as &$element) {
+
+                // Apply slave options recursively (PanelSlaveCreds -> items -> SlaveCredUrl)
                 $applySlaveOptions($element);
+
                 $name = $element['name'] ?? '';
-                if ($name === 'HookInfo') { $element['caption'] = "WebHook URL für diesen Slave: /hook/secrets_" . $this->InstanceID; $element['visible'] = $isSlave; }
-                if (in_array($name, ['LabelHookAuth', 'HookUser', 'HookPassInput', 'BtnSaveHookPass'], true)) { $element['visible'] = $isSlave; }
-                if (in_array($name, ['LabelSyncToken', 'AuthTokenInput', 'BtnGenToken', 'BtnShowToken', 'BtnSaveAuthToken'], true)) { $element['visible'] = $isSyncRole; }
-                if (in_array($name, ['SlaveURLs', 'PanelSlaveCreds'], true)) { $element['visible'] = $isMaster; }
-                if (in_array($name, ['BtnLoad', 'InputJson', 'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning', 'LabelSeparator', 'LabelMasterHead'], true)) { $element['visible'] = false; }
-                if ($name === 'AllowKeyTransport') { $element['visible'] = $isSlave; }
+
+                if ($name === 'HookInfo') {
+                    $element['caption'] = "WebHook URL für diesen Slave: /hook/secrets_" . $this->InstanceID;
+                    $element['visible'] = $isSlave;
+                }
+
+                if (in_array($name, ['LabelHookAuth', 'HookUser'], true)) {
+                    $element['visible'] = $isSlave;
+                }
+
+                if (in_array($name, ['HookPassInput', 'BtnSaveHookPass'], true)) {
+                    $element['visible'] = $isSlave;
+                }
+
+                // --- ANPASSUNG: Sync Token Sichtbarkeit (Verstecken im Standalone Modus) ---
+                if (in_array($name, ['LabelSyncToken', 'AuthTokenInput', 'BtnGenToken', 'BtnShowToken', 'BtnSaveAuthToken'], true)) {
+                    $element['visible'] = $isSyncRole;
+                }
+
+                if (in_array($name, ['SlaveURLs', 'PanelSlaveCreds'], true)) {
+                    $element['visible'] = $isMaster;
+                }
+
+                // --- ANPASSUNG: Alten Editor in ALLEN Modi verstecken ---
+                if (in_array($name, ['BtnLoad', 'InputJson', 'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning', 'LabelSeparator', 'LabelMasterHead'], true)) {
+                    $element['visible'] = false;
+                }
+
+                if ($name === 'AllowKeyTransport') {
+                    $element['visible'] = $isSlave;
+                }
             }
         }
 
         if (isset($json['actions']) && is_array($json['actions'])) {
             foreach ($json['actions'] as &$action) {
                 $an = $action['name'] ?? '';
-                if ($an === 'BtnSync') $action['visible'] = $isMaster;
-                if ($an === 'BtnRotateKey') $action['visible'] = ($isMaster || $isStandalone);
+                if ($an === 'BtnSync') {
+                    $action['visible'] = $isMaster;
+                }
+                if ($an === 'BtnRotateKey') {
+                    $action['visible'] = ($isMaster || $isStandalone);
+                }
             }
         }
 
-        // --- GRAFISCHER EXPLORER INTEGRATION ---
+        // --- START DER VEREINBARTEN EXPLORER-INTEGRATION ---
         if ($isEditorRole) {
             $vaultData = $this->_decryptVault() ?: [];
             $currentPath = (string)$this->GetBuffer("CurrentPath");
 
+            // Navigation zum aktuellen Zweig im Array
             $displayData = $vaultData;
             if ($currentPath !== "") {
                 foreach (explode('/', $currentPath) as $part) {
@@ -103,6 +161,7 @@ public function GetConfigurationForm(): string
                 }
             }
 
+            // Master-Liste für aktuelle Ebene aufbereiten
             $masterList = [];
             if (is_array($displayData)) {
                 ksort($displayData);
@@ -117,8 +176,9 @@ public function GetConfigurationForm(): string
                 }
             }
 
+            // UI Elemente anhängen
             $json['actions'][] = ["type" => "Label", "caption" => "________________________________________________________________________________________________"];
-            $json['actions'][] = ["type" => "Label", "caption" => "📂 TRESOR-EXPLORER", "bold" => true];
+            $json['actions'][] = ["type" => "Label", "caption" => "📂 GRAFISCHER TRESOR-EXPLORER", "bold" => true];
             $json['actions'][] = ["type" => "Label", "caption" => "📍 Position: root" . ($currentPath !== "" ? " / " . str_replace("/", " / ", $currentPath) : "")];
 
             if ($currentPath !== "") {
@@ -128,6 +188,7 @@ public function GetConfigurationForm(): string
             $json['actions'][] = [
                 "type" => "List",
                 "name" => "MasterListUI",
+                "caption" => "Inhalt",
                 "rowCount" => 6,
                 "columns" => [
                     ["caption" => " ", "name" => "Icon", "width" => "35px"],
@@ -135,9 +196,9 @@ public function GetConfigurationForm(): string
                     ["caption" => "Typ", "name" => "Type", "width" => "100px"]
                 ],
                 "values" => $masterList,
-                "onClick" => "IPS_RequestAction(\$id, 'EXPL_HandleClick', json_encode(\$MasterListUI));",
+                "onClick" => "if(\$MasterListUI['Type'] == 'Folder') { IPS_RequestAction(\$id, 'EXPL_HandleClick', json_encode(\$MasterListUI)); }",
                 
-                // KORREKTUR: Dynamisches Formular mit sicherem Variablen-Zugriff
+                // KORREKTUR: Wir nutzen AVT_GetExplorerFields($id, ...) statt $this
                 "form" => [
                     "\$item = isset(\$dynamicList) ? \$dynamicList : \$MasterListUI;",
                     "if (\$item['Type'] == 'Record') {",
@@ -148,7 +209,7 @@ public function GetConfigurationForm(): string
                     "             ['caption' => 'Feld', 'name' => 'Key', 'width' => '150px', 'add' => '', 'edit' => ['type' => 'ValidationTextBox']],",
                     "             ['caption' => 'Wert', 'name' => 'Value', 'width' => 'auto', 'add' => '', 'edit' => ['type' => 'ValidationTextBox']]",
                     "         ],",
-                    "         'values' => \$this->GetExplorerFields(\$item['Ident'])",
+                    "         'values' => AVT_GetExplorerFields(\$id, \$item['Ident'])",
                     "        ],",
                     "        ['type' => 'Button', 'caption' => '💾 Speichern', 'onClick' => '\$D=[]; foreach(\$RecordFields as \$r){ \$D[]=\$r; } \$Payload = [\"Ident\" => \$item[\"Ident\"], \"Data\" => \$D]; IPS_RequestAction(\$id, \"EXPL_SaveRecord\", json_encode(\$Payload));']",
                     "    ];",
@@ -156,21 +217,27 @@ public function GetConfigurationForm(): string
                 ]
             ];
 
-            $json['actions'][] = ["type" => "Button", "caption" => "🗑️ MARKIERTE ZEILE LÖSCHEN", "onClick" => "if(isset(\$MasterListUI)) { IPS_RequestAction(\$id, 'EXPL_DeleteItem', json_encode(\$MasterListUI)); }"];
-            $json['actions'][] = ["type" => "Label", "caption" => "➕ NEU:"];
-            $json['actions'][] = ["type" => "ValidationTextBox", "name" => "NewItemName", "caption" => "Name"];
+            $json['actions'][] = [
+                "type" => "Button",
+                "caption" => "🗑️ MARKIERTE ZEILE LÖSCHEN",
+                "onClick" => "if(isset(\$MasterListUI)) { IPS_RequestAction(\$id, 'EXPL_DeleteItem', json_encode(\$MasterListUI)); } else { echo 'Bitte erst eine Zeile markieren!'; }"
+            ];
+
+            $json['actions'][] = ["type" => "Label", "caption" => "➕ NEU AN DIESER POSITION:"];
+            $json['actions'][] = ["type" => "ValidationTextBox", "name" => "NewItemName", "caption" => "Name für Element"];
             $json['actions'][] = ["type" => "Button", "caption" => "📁 + Ordner", "onClick" => "IPS_RequestAction(\$id, 'EXPL_CreateFolder', \$NewItemName);"];
             $json['actions'][] = ["type" => "Button", "caption" => "🔑 + Record", "onClick" => "IPS_RequestAction(\$id, 'EXPL_CreateRecord', \$NewItemName);"];
 
+            // Bereich für JSON Import (Aktualisiert den Explorer)
             $json['actions'][] = ["type" => "Label", "caption" => "________________________________________________________________________________________________"];
-            $json['actions'][] = ["type" => "Label", "caption" => "📥 JSON IMPORT", "bold" => true];
+            $json['actions'][] = ["type" => "Label", "caption" => "📥 JSON IMPORT (Aktualisiert Explorer)", "bold" => true];
             $json['actions'][] = ["type" => "ValidationTextBox", "name" => "ImportInput", "caption" => "JSON String"];
-            $json['actions'][] = ["type" => "Button", "caption" => "Importieren", "onClick" => "IPS_RequestAction(\$id, 'EXPL_ImportJson', \$ImportInput);"];
+            $json['actions'][] = ["type" => "Button", "caption" => "Importieren & Explorer Reset", "onClick" => "IPS_RequestAction(\$id, 'EXPL_ImportJson', \$ImportInput);"];
         }
+        // --- ENDE DER EXPLORER-INTEGRATION ---
 
         return json_encode($json);
     }
-
     public function RotateKey(): void
     {
         $mode = $this->ReadPropertyInteger("OperationMode");
