@@ -2,7 +2,8 @@
 
 declare(strict_types=1);
 
-class SecretsManager extends IPSModuleStrict {
+class SecretsManager extends IPSModuleStrict
+{
 
     // The name of the key file stored on the OS
     private const KEY_FILENAME = 'master.key';
@@ -42,7 +43,7 @@ class SecretsManager extends IPSModuleStrict {
      */
 
 
-public function GetConfigurationForm(): string
+    public function GetConfigurationForm(): string
     {
         $json = json_decode(file_get_contents(__DIR__ . "/form.json"), true);
 
@@ -167,9 +168,9 @@ public function GetConfigurationForm(): string
                 ksort($displayData);
                 foreach ($displayData as $key => $value) {
                     if ($key === "__folder") continue;
-                    
+
                     $isFolder = $this->CheckIfFolder($value);
-                    
+
                     $masterList[] = [
                         "Icon"  => $isFolder ? "📁" : "🔑",
                         "Ident" => (string)$key,
@@ -234,7 +235,7 @@ public function GetConfigurationForm(): string
             ];
 
             $json['actions'][] = ["type" => "Label", "caption" => "➕ NEU AN DIESER POSITION:"];
-            $json['actions'][] = ["type" => "ValidationTextBox", "name" => "NewItemName", "caption" => "Name für Element","validate" => "^[^/]+$" ];
+            $json['actions'][] = ["type" => "ValidationTextBox", "name" => "NewItemName", "caption" => "Name für Element", "validate" => "^[^/]+$"];
             $json['actions'][] = ["type" => "Button", "caption" => "📁 + Unterordner", "onClick" => "IPS_RequestAction(\$id, 'EXPL_CreateFolder', \$NewItemName);"];
             $json['actions'][] = ["type" => "Button", "caption" => "🔑 + Record", "onClick" => "IPS_RequestAction(\$id, 'EXPL_CreateRecord', \$NewItemName);"];
 
@@ -250,7 +251,7 @@ public function GetConfigurationForm(): string
     {
         $token = trim((string)$token);
 
- 
+
 
         if ($token === "") {
             $this->LogMessage("AuthToken not saved: input is empty.", KL_ERROR);
@@ -267,7 +268,7 @@ public function GetConfigurationForm(): string
         }
     }
 
-    
+
     public function ShowToken(): void
     {
         $token = $this->getAuthToken();
@@ -278,7 +279,7 @@ public function GetConfigurationForm(): string
         }
         echo "YOUR SYNC TOKEN:\n\n" . $token;
     }
-  
+
 
 
     public function SaveHookPass(string $pass): void
@@ -334,7 +335,8 @@ public function GetConfigurationForm(): string
     }
 
 
-    public function ApplyChanges(): void {
+    public function ApplyChanges(): void
+    {
         parent::ApplyChanges();
 
         // 1. Variable im Baum verstecken
@@ -377,14 +379,16 @@ public function GetConfigurationForm(): string
     /**
      * Public wrapper for UI updates (called by form.json)
      */
-    public function UpdateUI(): void {
+    public function UpdateUI(): void
+    {
         $this->UpdateFormLayout("");
     }
 
     /**
      * Internal helper to update static UI elements like Error Headers
      */
-    private function UpdateFormLayout(string $errorMessage): void {
+    private function UpdateFormLayout(string $errorMessage): void
+    {
         if ($errorMessage !== "") {
             $this->UpdateFormField("HeaderError", "visible", true);
             $this->UpdateFormField("HeaderError", "caption", "!!! CONFIGURATION ERROR: " . $errorMessage . " !!!");
@@ -399,7 +403,8 @@ public function GetConfigurationForm(): string
     // CONFIGURATION ACTIONS (Called by Buttons)
     // =========================================================================
 
-    public function CheckDirectory(): void {
+    public function CheckDirectory(): void
+    {
         $folder = $this->ReadPropertyString("KeyFolderPath");
         $mode = $this->ReadPropertyInteger("OperationMode");
 
@@ -436,9 +441,10 @@ public function GetConfigurationForm(): string
     // EDITOR ACTIONS (Load / Save / Wipe)
     // =========================================================================
 
-    public function LoadVault(): void {
+    public function LoadVault(): void
+    {
         $cache = $this->_decryptVault();
-        
+
         if ($cache === false) {
             $json = ($this->GetValue("Vault") === "") ? "{}" : "";
             if ($json === "") {
@@ -458,33 +464,34 @@ public function GetConfigurationForm(): string
         $this->UpdateFormField("LabelSecurityWarning", "visible", true);
         $this->UpdateFormField("BtnLoad", "visible", false);
     }
-// Beachte den Parameter $jsonInput!
-    public function EncryptAndSave(string $jsonInput): void {
+    // Beachte den Parameter $jsonInput!
+    public function EncryptAndSave(string $jsonInput): void
+    {
         $mode = $this->ReadPropertyInteger("OperationMode");
 
         // --- SCHRITT 4: Zugriffskontrolle ---
         // Nur Master (1) und Standalone (2) dürfen lokal verschlüsseln und speichern.
         // Slaves (0) empfangen Daten nur über den WebHook.
-        if ($mode === 0) { 
-            echo "Operation not allowed in Slave mode."; 
-            return; 
+        if ($mode === 0) {
+            echo "Operation not allowed in Slave mode.";
+            return;
         }
-        
-        if (trim($jsonInput) === "") { 
-            echo "Input empty."; 
-            return; 
+
+        if (trim($jsonInput) === "") {
+            echo "Input empty.";
+            return;
         }
-        
+
         // JSON validieren
         $decoded = json_decode($jsonInput, true);
-        if ($decoded === null) { 
-            echo "❌ JSON Syntax Error!"; 
-            return; 
+        if ($decoded === null) {
+            echo "❌ JSON Syntax Error!";
+            return;
         }
 
         // Verschlüsseln und lokal in die Variable "Vault" schreiben
         if ($this->_encryptAndSave($decoded)) {
-            
+
             // UI wieder in den "Sicheren Modus" (Gesperrt) versetzen
             $this->UpdateFormField("InputJson", "value", "");
             $this->UpdateFormField("InputJson", "visible", false);
@@ -492,9 +499,9 @@ public function GetConfigurationForm(): string
             $this->UpdateFormField("BtnClear", "visible", false);
             $this->UpdateFormField("LabelSecurityWarning", "visible", false);
             $this->UpdateFormField("BtnLoad", "visible", true);
-            
+
             echo "✅ Saved & Encrypted locally.";
-            
+
             // --- SCHRITT 4: Bedingter Sync ---
             // Nur wenn wir Master (1) sind, stossen wir den Sync an die Slaves an.
             // Ein Standalone-System (2) bleibt hier stehen.
@@ -506,7 +513,8 @@ public function GetConfigurationForm(): string
         }
     }
 
-    public function ClearVault(): void {
+    public function ClearVault(): void
+    {
         // Einfach alles wieder verstecken und leeren
         $this->UpdateFormField("InputJson", "value", "");
         $this->UpdateFormField("InputJson", "visible", false);
@@ -540,7 +548,8 @@ public function GetConfigurationForm(): string
 
 
 
-    public function GetSecret(string $ident): string {
+    public function GetSecret(string $ident): string
+    {
         if ($this->GetStatus() !== 102) return "";
 
         $vault = $this->_decryptVault();
@@ -565,7 +574,7 @@ public function GetConfigurationForm(): string
     // SYNCHRONIZATION (Master -> Slave)
     // =========================================================================
 
-/**
+    /**
      * SYNCHRONIZATION (Master -> Slave)
      * Pushes the encrypted vault and the master key to all configured remote systems.
      */
@@ -577,7 +586,7 @@ public function GetConfigurationForm(): string
         if ($mode !== 1) {
             $this->LogMessage(
                 ($mode === 2) ? "Sync cancelled: Standalone systems are isolated."
-                            : "Sync cancelled: Only Master instances can initiate synchronization.",
+                    : "Sync cancelled: Only Master instances can initiate synchronization.",
                 KL_WARNING
             );
             return;
@@ -677,7 +686,6 @@ public function GetConfigurationForm(): string
                     if (strlen($respShort) > 180) $respShort = substr($respShort, 0, 180) . "...";
                     $this->LogMessage("❌ Sync FAIL [$tlsMode, key=sent] $who | $statusLine | " . ($respShort ?: '(no body)'), KL_ERROR);
                 }
-
             } catch (Throwable $e) {
                 $this->LogMessage("❌ Sync EXC  [$tlsMode, key=sent] $who | " . $e->getMessage(), KL_ERROR);
             }
@@ -695,13 +703,13 @@ public function GetConfigurationForm(): string
     /**
      * RequestAction ist das zentrale Eingangstor für alle Buttons des Explorers.
      */
-/**
+    /**
      * ZENTRALES EINGANGSTOR FÜR UI-AKTIONEN
      */
-/**
+    /**
      * ZENTRALES EINGANGSTOR FÜR UI-AKTIONEN
      */
- public function RequestAction($Ident, $Value): void
+    public function RequestAction($Ident, $Value): void
     {
 
         if (strpos($Ident, 'EXPL_') === 0) {
@@ -718,9 +726,9 @@ public function GetConfigurationForm(): string
                     if ($type === "Folder") {
                         $current = (string)$this->GetBuffer("CurrentPath");
                         $newPath = ($current === "") ? $ident : $current . "/" . $ident;
-                        
+
                         $this->SetBuffer("CurrentPath", $newPath);
-                        
+
                         // LOG: Erfolgsmeldung Navigation
                         $this->LogMessage("DEBUG: Navigation ERFOLGREICH. Neuer Pfad: " . $newPath, KL_MESSAGE);
                     }
@@ -729,7 +737,7 @@ public function GetConfigurationForm(): string
 
                 case "EXPL_NavUp":
                     $this->LogMessage("DEBUG: Navigation EBENE HOCH", KL_MESSAGE);
-                    $parts = explode('/', (string)$this->GetBuffer("CurrentPath")); 
+                    $parts = explode('/', (string)$this->GetBuffer("CurrentPath"));
                     array_pop($parts);
                     $this->SetBuffer("CurrentPath", implode('/', $parts));
                     break;
@@ -762,7 +770,7 @@ public function GetConfigurationForm(): string
                     $data = json_decode((string)$Value, true);
                     if (is_array($data)) {
                         $this->_encryptAndSave($data);
-                        $this->SetBuffer("CurrentPath", ""); 
+                        $this->SetBuffer("CurrentPath", "");
                         echo "✅ Import erfolgreich!";
                     }
                     break;
@@ -770,10 +778,10 @@ public function GetConfigurationForm(): string
             $this->ReloadForm();
             return;
         }
-        
+
         // Falls du das Modul später erweiterst, hier Platz für weitere Standard-Actions...
     }
-  /**
+    /**
      * Benennt einen Ordner oder einen Record innerhalb der aktuellen Ebene um.
      */
     private function ProcessExplorerRename(string $old, string $new): void
@@ -817,7 +825,7 @@ public function GetConfigurationForm(): string
             if ($this->_encryptAndSave($vaultData)) {
                 $this->LogMessage("Explorer: '$old' wurde in '$new' umbenannt.", KL_MESSAGE);
                 echo "✅ Umbenannt in '$new'";
-                
+
                 // Falls Master-Rolle, Slaves informieren
                 if ($this->ReadPropertyInteger("OperationMode") === 1) {
                     $this->SyncSlaves();
@@ -837,7 +845,7 @@ public function GetConfigurationForm(): string
     // PRIVATE VERARBEITUNGSMETHODEN FÜR EXPLORER
     // =========================================================================
 
-/**
+    /**
      * Löscht ein Element (Ordner oder Record) an der aktuellen Position.
      */
     private function ProcessExplorerDelete(string $name): void
@@ -877,7 +885,7 @@ public function GetConfigurationForm(): string
         }
     }
 
-private function ProcessExplorerSave(string $ident, array $fieldList): void
+    private function ProcessExplorerSave(string $ident, array $fieldList): void
     {
         $vaultData = $this->_decryptVault();
         if ($vaultData === false) return;
@@ -926,7 +934,7 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
         return $result;
     }
 
- private function ProcessExplorerCreate(string $name, string $type): void
+    private function ProcessExplorerCreate(string $name, string $type): void
     {
         // 1. Basis-Validierung
         if ($name === "") {
@@ -982,7 +990,7 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
             }
         }
     }
-/**
+    /**
      * Prüft, ob ein Array als Ordner (Container) oder als Datensatz (Record) zu behandeln ist.
      */
     private function CheckIfFolder($value): bool
@@ -1014,22 +1022,33 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
         return false;
     }
 
-    private function GetNestedValue($array, $path) {
+    private function GetNestedValue($array, $path)
+    {
         $parts = explode('/', $path);
-        foreach ($parts as $part) { if (isset($array[$part])) $array = $array[$part]; else return null; }
+        foreach ($parts as $part) {
+            if (isset($array[$part])) $array = $array[$part];
+            else return null;
+        }
         return $array;
     }
-    private function HandleExplorerSave(array $inputList): void {
+    private function HandleExplorerSave(array $inputList): void
+    {
         $vaultData = $this->_decryptVault() ?: [];
         $selected = $this->GetSelected();
         $fullPath = ($this->GetNavPath() === "") ? $selected : $this->GetNavPath() . "/" . $selected;
 
         $newFields = [];
-        foreach ($inputList as $row) { if ($row['Key'] !== "") $newFields[(string)$row['Key']] = (string)$row['Value']; }
+        foreach ($inputList as $row) {
+            if ($row['Key'] !== "") $newFields[(string)$row['Key']] = (string)$row['Value'];
+        }
 
         // Navigiere im Array und setze Daten
-        $parts = explode('/', $fullPath); $temp = &$vaultData;
-        foreach ($parts as $part) { if (!isset($temp[$part]) || !is_array($temp[$part])) $temp[$part] = []; $temp = &$temp[$part]; }
+        $parts = explode('/', $fullPath);
+        $temp = &$vaultData;
+        foreach ($parts as $part) {
+            if (!isset($temp[$part]) || !is_array($temp[$part])) $temp[$part] = [];
+            $temp = &$temp[$part];
+        }
         $temp = $newFields;
 
         if ($this->_encryptAndSave($vaultData)) {
@@ -1039,7 +1058,8 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
     }
 
 
-    private function httpPostJson(string $url, string $payload, array $headers): array {
+    private function httpPostJson(string $url, string $payload, array $headers): array
+    {
         $ctx = stream_context_create([
             'http' => [
                 'method'        => 'POST',
@@ -1058,7 +1078,8 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
             'body'   => ($body === false) ? '' : (string)$body
         ];
     }
-    private function httpsPostJsonStrict(string $url, string $payload, array $headers): array {
+    private function httpsPostJsonStrict(string $url, string $payload, array $headers): array
+    {
         $parts = parse_url($url);
         if (!is_array($parts) || ($parts['scheme'] ?? '') !== 'https') {
             throw new Exception("Strict mode requires https:// URL");
@@ -1093,7 +1114,8 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
         ];
     }
 
-    private function httpsPostJsonPinned(string $url, string $payload, array $headers, string $expectedFingerprint): array {
+    private function httpsPostJsonPinned(string $url, string $payload, array $headers, string $expectedFingerprint): array
+    {
         $parts = parse_url($url);
         if (!is_array($parts) || ($parts['scheme'] ?? '') !== 'https') {
             throw new Exception("Pinned mode requires https:// URL");
@@ -1184,14 +1206,16 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
     }
 
 
-    private function normalizeFingerprint(string $fp): string {
-    $fp = strtolower($fp);
-    // erlaubt Eingaben mit ":" oder Leerzeichen – wir nehmen nur hex
-    $fp = preg_replace('/[^0-9a-f]/', '', $fp) ?? '';
-    return $fp;
-}
+    private function normalizeFingerprint(string $fp): string
+    {
+        $fp = strtolower($fp);
+        // erlaubt Eingaben mit ":" oder Leerzeichen – wir nehmen nur hex
+        $fp = preg_replace('/[^0-9a-f]/', '', $fp) ?? '';
+        return $fp;
+    }
 
-    private function certSha256Fingerprint($x509Cert): string {
+    private function certSha256Fingerprint($x509Cert): string
+    {
         // Export zu PEM
         $pem = '';
         if (!openssl_x509_export($x509Cert, $pem)) {
@@ -1206,7 +1230,7 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
         return hash('sha256', $der);
     }
 
-/**
+    /**
      * WEBHOOK DATA PROCESSING
      * This is called by IP-Symcon when data is posted to /hook/secrets_ID
      */
@@ -1238,10 +1262,11 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
         $hookPass = $this->getHookPass(); // from encrypted system file
 
         if ($hookUser !== "" && $hookPass !== "") {
-            if (!isset($_SERVER['PHP_AUTH_USER']) ||
+            if (
+                !isset($_SERVER['PHP_AUTH_USER']) ||
                 $_SERVER['PHP_AUTH_USER'] !== $hookUser ||
-                ($_SERVER['PHP_AUTH_PW'] ?? '') !== $hookPass)
-            {
+                ($_SERVER['PHP_AUTH_PW'] ?? '') !== $hookPass
+            ) {
                 header('WWW-Authenticate: Basic realm="SecretsManager"');
                 header('HTTP/1.0 401 Unauthorized');
                 echo 'Authentication Required';
@@ -1277,14 +1302,14 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
 
         echo "OK";
     }
- 
+
 
 
     // =========================================================================
     // INTERNAL CRYPTO HELPERS
     // =========================================================================
- 
- 
+
+
     private const SYSTEM_VAULT_FILENAME = 'system.vault';
 
     private function getSystemVaultPath(): string
@@ -1464,7 +1489,7 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
         return true;
     }
 
- 
+
     private function applySlaveUrlOptionsRecursive(array &$node, array $slaveOptions): void
     {
         // Node kann ein Element sein oder ein Container mit children/items
@@ -1567,13 +1592,15 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
 
 
 
-    private function _getFullPath(): string {
+    private function _getFullPath(): string
+    {
         $folder = $this->ReadPropertyString("KeyFolderPath");
         if ($folder === "") return "";
         return rtrim($folder, '/\\') . DIRECTORY_SEPARATOR . self::KEY_FILENAME;
     }
 
-    private function _encryptAndSave(array $dataArray): bool {
+    private function _encryptAndSave(array $dataArray): bool
+    {
         $keyHex = $this->_loadOrGenerateKey();
         if (!$keyHex) return false;
 
@@ -1603,31 +1630,39 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
     }
 
 
-    private function _decryptVault() {
+    private function _decryptVault()
+    {
         $vaultJson = $this->GetValue("Vault");
         if (!$vaultJson) return false;
 
         $meta = json_decode($vaultJson, true);
         $keyHex = $this->_readKey();
-        
+
         if (!$keyHex || !$meta) return false;
 
         $decrypted = openssl_decrypt(
-            $meta['data'], 
-            $meta['cipher'] ?? "aes-128-gcm", 
-            hex2bin($keyHex), 
-            0, 
-            hex2bin($meta['iv']), 
+            $meta['data'],
+            $meta['cipher'] ?? "aes-128-gcm",
+            hex2bin($keyHex),
+            0,
+            hex2bin($meta['iv']),
             hex2bin($meta['tag'])
         );
 
         return json_decode($decrypted, true);
     }
-// --- NEU: EXPLORER HELPER ---
-    private function GetNavPath(): string { return (string)$this->GetBuffer("CurrentPath"); }
-    private function SetNavPath(string $path): void { $this->SetBuffer("CurrentPath", $path); }
+    // --- NEU: EXPLORER HELPER ---
+    private function GetNavPath(): string
+    {
+        return (string)$this->GetBuffer("CurrentPath");
+    }
+    private function SetNavPath(string $path): void
+    {
+        $this->SetBuffer("CurrentPath", $path);
+    }
 
-    private function _loadOrGenerateKey() {
+    private function _loadOrGenerateKey()
+    {
         $path = $this->_getFullPath();
         if ($path === "") return false;
 
@@ -1640,25 +1675,26 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
         // Ein Schlüssel darf generiert werden, wenn wir Master (1) ODER Standalone (2) sind.
         $mode = $this->ReadPropertyInteger("OperationMode");
         if ($mode === 1 || $mode === 2) {
-            $newKey = bin2hex(random_bytes(16)); 
+            $newKey = bin2hex(random_bytes(16));
             if (file_put_contents($path, $newKey) === false) {
                 return false; // Verzeichnis eventuell nicht schreibbar
             }
             return $newKey;
         }
-        
+
         return false;
     }
 
-    private function _readKey() {
+    private function _readKey()
+    {
         return $this->_loadOrGenerateKey();
     }
 
-    private function _writeKey(string $hexKey): void {
+    private function _writeKey(string $hexKey): void
+    {
         $path = $this->_getFullPath();
         if ($path !== "") {
             file_put_contents($path, $hexKey);
         }
     }
 }
-?>
