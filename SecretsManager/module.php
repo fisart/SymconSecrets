@@ -42,7 +42,6 @@ class SecretsManager extends IPSModuleStrict {
      */
 
 
-
 public function GetConfigurationForm(): string
     {
         $json = json_decode(file_get_contents(__DIR__ . "/form.json"), true);
@@ -143,7 +142,7 @@ public function GetConfigurationForm(): string
             $vaultData = $this->_decryptVault() ?: [];
             $currentPath = (string)$this->GetBuffer("CurrentPath");
 
-            // Navigation zum aktuellen Zweig
+            // Navigation zum aktuellen Zweig im Array
             $displayData = $vaultData;
             if ($currentPath !== "") {
                 foreach (explode('/', $currentPath) as $part) {
@@ -159,10 +158,7 @@ public function GetConfigurationForm(): string
                 ksort($displayData);
                 foreach ($displayData as $key => $value) {
                     if ($key === "__folder") continue;
-                    
-                    // Folder-Erkennung: Array (leer oder befüllt) = Folder
-                    $isFolder = is_array($value) && ($this->CheckIfFolder($value) || empty($value));
-                    
+                    $isFolder = $this->CheckIfFolder($value);
                     $masterList[] = [
                         "Icon"  => $isFolder ? "📁" : "🔑",
                         "Ident" => (string)$key,
@@ -189,6 +185,7 @@ public function GetConfigurationForm(): string
                     ["caption" => "Typ", "name" => "Type", "width" => "100px"]
                 ],
                 "values" => $masterList,
+                // KORREKTUR: Pipe-Trick für stabile Navigation
                 "onClick" => "IPS_RequestAction(\$id, 'EXPL_HandleClick', \$MasterListUI['Ident'] . '|' . \$MasterListUI['Type']);",                
                 "form" => [
                     "\$item = isset(\$dynamicList) ? \$dynamicList : \$MasterListUI;",
@@ -204,11 +201,18 @@ public function GetConfigurationForm(): string
                     "        ],",
                     "        ['type' => 'Button', 'caption' => '💾 Speichern', 'onClick' => '\$D=[]; foreach(\$RecordFields as \$r){ \$D[]=\$r; } \$Payload = [\"Ident\" => \"' . \$item['Ident'] . '\", \"Data\" => \$D]; IPS_RequestAction(\$id, \"EXPL_SaveRecord\", json_encode(\$Payload));']",
                     "    ];",
-                    "} else { return [['type' => 'Label', 'caption' => 'Ordner k\u00f6nnen hier nicht editiert werden.']]; }"
+                    "} else {",
+                    "    return [",
+                    "        ['type' => 'Label', 'caption' => 'Ordner umbenennen: ' . \$item['Ident']],",
+                    "        ['type' => 'ValidationTextBox', 'name' => 'NewName', 'caption' => 'Neuer Name', 'value' => \$item['Ident']],",
+                    "        ['type' => 'Button', 'caption' => '💾 Umbenennen', 'onClick' => 'IPS_RequestAction(\$id, \"EXPL_RenameFolder\", json_encode([\"Old\" => \"' . \$item['Ident'] . '\", \"New\" => \$NewName]));']",
+                    "    ];",
+                    "}"
                 ]
             ];
 
-            $json['actions'][] = ["type" => "Button", "caption" => "🗑️ MARKIERTE ZEILE LÖSCHEN", "onClick" => "if(isset(\$MasterListUI)) { IPS_RequestAction(\$id, 'EXPL_DeleteItem', json_encode(\$MasterListUI)); } else { echo 'Bitte erst eine Zeile markieren!'; }"
+            // KORREKTUR: Vereinfachter Löschbefehl
+            $json['actions'][] = ["type" => "Button", "caption" => "🗑️ MARKIERTE ZEILE LÖSCHEN", "onClick" => "if(isset(\$MasterListUI)) { IPS_RequestAction(\$id, 'EXPL_DeleteItem', \$MasterListUI['Ident']); } else { echo 'Bitte erst eine Zeile markieren!'; }"
             ];
 
             $json['actions'][] = ["type" => "Label", "caption" => "➕ NEU AN DIESER POSITION:"];
@@ -686,7 +690,7 @@ public function GetConfigurationForm(): string
         if (strpos($Ident, 'EXPL_') === 0) {
             switch ($Ident) {
                 case "EXPL_HandleClick":
-                    // Wir trennen Name und Typ (z.B. "level 2|Folder")
+                    // Stabiler Navigation-Klick (Pipe-Trick)
                     $parts = explode('|', (string)$Value);
                     if (count($parts) < 2) return;
                     
@@ -697,24 +701,26 @@ public function GetConfigurationForm(): string
                         $current = (string)$this->GetBuffer("CurrentPath");
                         $newPath = ($current === "") ? $ident : $current . "/" . $ident;
                         $this->SetBuffer("CurrentPath", $newPath);
-                        // Wir setzen SelectedRecord zurück, damit kein altes Panel offen bleibt
-                        $this->SetBuffer("SelectedRecord", ""); 
                         $this->LogMessage("Navigation: Gehe in Ordner " . $newPath, KL_MESSAGE);
-                    } else {
-                        // Es ist ein Record -> Ident für das Popup-Formular setzen (falls nötig)
-                        // oder direkt auswählen
-                        $this->SetBuffer("SelectedRecord", $ident);
                     }
-                    $this->ReloadForm();
+                    // Records tun hier nichts mehr, da sie über das Zahnrad (form) öffnen
                     break;
+
                 case "EXPL_NavUp":
-                    $parts = explode('/', (string)$this->GetBuffer("CurrentPath")); array_pop($parts);
+                    $parts = explode('/', (string)$this->GetBuffer("CurrentPath")); 
+                    array_pop($parts);
                     $this->SetBuffer("CurrentPath", implode('/', $parts));
                     break;
 
                 case "EXPL_SaveRecord":
                     $payload = json_decode((string)$Value, true);
                     $this->ProcessExplorerSave($payload['Ident'], $payload['Data']);
+                    break;
+
+                case "EXPL_RenameFolder":
+                    // Fängt den neuen Umbenenn-Befehl aus dem Popup ab
+                    $payload = json_decode((string)$Value, true);
+                    $this->ProcessExplorerRename($payload['Old'], $payload['New']);
                     break;
 
                 case "EXPL_CreateFolder":
@@ -726,8 +732,8 @@ public function GetConfigurationForm(): string
                     break;
 
                 case "EXPL_DeleteItem":
-                    $row = json_decode((string)$Value, true);
-                    $this->ProcessExplorerDelete($row['Ident']);
+                    // Empfängt jetzt direkt den Namen (String) statt JSON
+                    $this->ProcessExplorerDelete((string)$Value);
                     break;
 
                 case "EXPL_ImportJson":
@@ -742,6 +748,61 @@ public function GetConfigurationForm(): string
             $this->ReloadForm();
             return;
         }
+  /**
+     * Benennt einen Ordner oder einen Record innerhalb der aktuellen Ebene um.
+     */
+    private function ProcessExplorerRename(string $old, string $new): void
+    {
+        // Validierung: Name darf nicht leer sein und muss sich unterscheiden
+        if ($new === "" || $old === $new) {
+            return;
+        }
+
+        $vaultData = $this->_decryptVault();
+        if ($vaultData === false) {
+            return;
+        }
+
+        $currentPath = (string)$this->GetBuffer("CurrentPath");
+        $temp = &$vaultData;
+
+        // 1. Zum aktuellen Pfad navigieren
+        if ($currentPath !== "") {
+            $parts = explode('/', $currentPath);
+            foreach ($parts as $part) {
+                if (isset($temp[$part]) && is_array($temp[$part])) {
+                    $temp = &$temp[$part];
+                }
+            }
+        }
+
+        // 2. Umbenennen-Logik
+        if (isset($temp[$old])) {
+            // Prüfen, ob der neue Name bereits existiert (um Überschreiben zu verhindern)
+            if (isset($temp[$new])) {
+                echo "❌ Fehler: Der Name '$new' existiert bereits an dieser Position.";
+                return;
+            }
+
+            // Neuen Key mit altem Inhalt erstellen und alten Key löschen
+            $temp[$new] = $temp[$old];
+            unset($temp[$old]);
+
+            // 3. Verschlüsselt speichern
+            if ($this->_encryptAndSave($vaultData)) {
+                $this->LogMessage("Explorer: '$old' wurde in '$new' umbenannt.", KL_MESSAGE);
+                echo "✅ Umbenannt in '$new'";
+                
+                // Falls Master-Rolle, Slaves informieren
+                if ($this->ReadPropertyInteger("OperationMode") === 1) {
+                    $this->SyncSlaves();
+                }
+            }
+        } else {
+            $this->LogMessage("Explorer Fehler: Zu benennendes Element '$old' nicht gefunden.", KL_WARNING);
+        }
+    }      
+        // Falls du das Modul später erweiterst, hier weitere Standard-Actions...
     }
         // Andere Standard-Aktionen von IP-Symcon (z.B. SEC_UpdateUI) falls nötig durchreichen
         // parent::RequestAction($Ident, $Value);
@@ -751,27 +812,43 @@ public function GetConfigurationForm(): string
     // PRIVATE VERARBEITUNGSMETHODEN FÜR EXPLORER
     // =========================================================================
 
+/**
+     * Löscht ein Element (Ordner oder Record) an der aktuellen Position.
+     */
     private function ProcessExplorerDelete(string $name): void
     {
         $vaultData = $this->_decryptVault();
-        if ($vaultData === false) return;
+        if ($vaultData === false) {
+            return;
+        }
 
         $currentPath = (string)$this->GetBuffer("CurrentPath");
         $temp = &$vaultData;
 
+        // 1. Navigation zum aktuellen Pfad
         if ($currentPath !== "") {
-            foreach (explode('/', $currentPath) as $part) {
+            $parts = explode('/', $currentPath);
+            foreach ($parts as $part) {
                 if (isset($temp[$part]) && is_array($temp[$part])) {
                     $temp = &$temp[$part];
                 }
             }
         }
 
+        // 2. Löschvorgang
         if (isset($temp[$name])) {
             unset($temp[$name]);
-            $this->_encryptAndSave($vaultData);
-            //$this->SetBuffer("SelectedRecord", ""); 
-            $this->LogMessage("Explorer: '" . $name . "' gelöscht.", KL_MESSAGE);
+
+            // 3. Verschlüsselt speichern
+            if ($this->_encryptAndSave($vaultData)) {
+                $this->LogMessage("Explorer: '" . $name . "' an Position '$currentPath' gelöscht.", KL_MESSAGE);
+                echo "🗑️ '" . $name . "' wurde gelöscht.";
+
+                // Falls Master-Rolle, Slaves synchronisieren
+                if ($this->ReadPropertyInteger("OperationMode") === 1) {
+                    $this->SyncSlaves();
+                }
+            }
         }
     }
 
@@ -860,17 +937,35 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
     $this->ReloadForm();
 }
 
-private function CheckIfFolder($value): bool {
-        if (!is_array($value)) return false;
-        // Ein leeres Array ist immer ein Folder
-        if (empty($value)) return true;
-        // Wenn es das technische Folder-Flag hat
-        if (isset($value['__folder'])) return true;
-        // Wenn es ein assoziatives Array ist, das keine Records (User/Pass) enthält
-        // sondern weitere Arrays, ist es ein Folder.
-        foreach ($value as $v) {
-            if (is_array($v)) return true;
+/**
+     * Prüft, ob ein Array als Ordner (Container) oder als Datensatz (Record) zu behandeln ist.
+     */
+    private function CheckIfFolder($value): bool
+    {
+        // Kein Array -> definitiv kein Ordner
+        if (!is_array($value)) {
+            return false;
         }
+
+        // Ein leeres Array ist immer ein Ordner (neuer oder geleerter Container)
+        if (empty($value)) {
+            return true;
+        }
+
+        // Die explizite Markierung für leere Ordner, die wir beim Erstellen setzen
+        if (isset($value['__folder'])) {
+            return true;
+        }
+
+        // Strukturprüfung: Wenn das Array mindestens ein weiteres Array enthält,
+        // ist es ein Ordner. Enthält es nur Strings (User, PW...), ist es ein Record.
+        foreach ($value as $v) {
+            if (is_array($v)) {
+                return true;
+            }
+        }
+
+        // Nur flache Werte gefunden -> es ist ein Datensatz (Record)
         return false;
     }
 
