@@ -101,7 +101,11 @@ public function GetConfigurationForm(): string
                     $element['visible'] = $isSlave;
                 }
 
-                if (in_array($name, ['LabelHookAuth', 'HookUser', 'HookPassInput', 'BtnSaveHookPass'], true)) {
+                if (in_array($name, ['LabelHookAuth', 'HookUser'], true)) {
+                    $element['visible'] = $isSlave;
+                }
+
+                if (in_array($name, ['HookPassInput', 'BtnSaveHookPass'], true)) {
                     $element['visible'] = $isSlave;
                 }
 
@@ -158,7 +162,9 @@ public function GetConfigurationForm(): string
                 ksort($displayData);
                 foreach ($displayData as $key => $value) {
                     if ($key === "__folder") continue;
+                    
                     $isFolder = $this->CheckIfFolder($value);
+                    
                     $masterList[] = [
                         "Icon"  => $isFolder ? "📁" : "🔑",
                         "Ident" => (string)$key,
@@ -167,6 +173,7 @@ public function GetConfigurationForm(): string
                 }
             }
 
+            // UI Elemente anhängen
             $json['actions'][] = ["type" => "Label", "caption" => "________________________________________________________________________________________________"];
             $json['actions'][] = ["type" => "Label", "caption" => "📂 TRESOR-EXPLORER", "bold" => true];
             $json['actions'][] = ["type" => "Label", "caption" => "📍 Position: root" . ($currentPath !== "" ? " / " . str_replace("/", " / ", $currentPath) : "")];
@@ -185,8 +192,7 @@ public function GetConfigurationForm(): string
                     ["caption" => "Typ", "name" => "Type", "width" => "100px"]
                 ],
                 "values" => $masterList,
-                // KORREKTUR: Pipe-Trick für stabile Navigation
-                "onClick" => "IPS_RequestAction(\$id, 'EXPL_HandleClick', json_encode(\$MasterListUI));",
+                // onClick auf der Liste wurde entfernt, da unzuverlässig im actions-Bereich
                 "form" => [
                     "\$item = isset(\$dynamicList) ? \$dynamicList : \$MasterListUI;",
                     "if (\$item['Type'] == 'Record') {",
@@ -211,8 +217,17 @@ public function GetConfigurationForm(): string
                 ]
             ];
 
-            // KORREKTUR: Vereinfachter Löschbefehl
-            $json['actions'][] = ["type" => "Button", "caption" => "🗑️ MARKIERTE ZEILE LÖSCHEN", "onClick" => "if(isset(\$MasterListUI)) { IPS_RequestAction(\$id, 'EXPL_DeleteItem', \$MasterListUI['Ident']); } else { echo 'Bitte erst eine Zeile markieren!'; }"
+            // Navigation und Aktion erfolgt jetzt stabil über diesen Button
+            $json['actions'][] = [
+                "type" => "Button",
+                "caption" => "➡️ ÖFFNEN / EDITIEREN",
+                "onClick" => "if(isset(\$MasterListUI)) { IPS_RequestAction(\$id, 'EXPL_HandleClick', json_encode(\$MasterListUI)); } else { echo 'Bitte erst eine Zeile markieren!'; }"
+            ];
+
+            $json['actions'][] = [
+                "type" => "Button",
+                "caption" => "🗑️ MARKIERTE ZEILE LÖSCHEN",
+                "onClick" => "if(isset(\$MasterListUI)) { IPS_RequestAction(\$id, 'EXPL_DeleteItem', \$MasterListUI['Ident']); } else { echo 'Bitte erst eine Zeile markieren!'; }"
             ];
 
             $json['actions'][] = ["type" => "Label", "caption" => "➕ NEU AN DIESER POSITION:"];
@@ -228,7 +243,6 @@ public function GetConfigurationForm(): string
 
         return json_encode($json);
     }
-    
 
     public function SaveAuthToken(string $token): void
     {
@@ -708,14 +722,11 @@ public function GetConfigurationForm(): string
                         $newPath = ($current === "") ? $ident : $current . "/" . $ident;
                         
                         $this->SetBuffer("CurrentPath", $newPath);
-                        $this->SetBuffer("SelectedRecord", ""); 
-
+                        
                         // LOG: Erfolgsmeldung Navigation
                         $this->LogMessage("DEBUG: Navigation ERFOLGREICH. Neuer Pfad: " . $newPath, KL_MESSAGE);
-                    } else {
-                        $this->LogMessage("DEBUG: Record gewählt: " . $ident, KL_MESSAGE);
-                        $this->SetBuffer("SelectedRecord", $ident);
                     }
+                    // Hinweis: Records werden jetzt über das Zahnrad (form) editiert
                     break;
 
                 case "EXPL_NavUp":
@@ -723,7 +734,6 @@ public function GetConfigurationForm(): string
                     $parts = explode('/', (string)$this->GetBuffer("CurrentPath")); 
                     array_pop($parts);
                     $this->SetBuffer("CurrentPath", implode('/', $parts));
-                    $this->SetBuffer("SelectedRecord", "");
                     break;
 
                 case "EXPL_SaveRecord":
@@ -732,6 +742,7 @@ public function GetConfigurationForm(): string
                     break;
 
                 case "EXPL_RenameFolder":
+                    // Verarbeitet die Umbenennung aus dem neuen Popup-Formular
                     $payload = json_decode((string)$Value, true);
                     $this->ProcessExplorerRename($payload['Old'], $payload['New']);
                     break;
@@ -745,6 +756,7 @@ public function GetConfigurationForm(): string
                     break;
 
                 case "EXPL_DeleteItem":
+                    // Empfängt jetzt direkt den Namen (String)
                     $this->ProcessExplorerDelete((string)$Value);
                     break;
 
@@ -753,7 +765,6 @@ public function GetConfigurationForm(): string
                     if (is_array($data)) {
                         $this->_encryptAndSave($data);
                         $this->SetBuffer("CurrentPath", ""); 
-                        $this->SetBuffer("SelectedRecord", "");
                         echo "✅ Import erfolgreich!";
                     }
                     break;
@@ -761,6 +772,8 @@ public function GetConfigurationForm(): string
             $this->ReloadForm();
             return;
         }
+        
+        // Falls du das Modul später erweiterst, hier Platz für weitere Standard-Actions...
     }
   /**
      * Benennt einen Ordner oder einen Record innerhalb der aktuellen Ebene um.
