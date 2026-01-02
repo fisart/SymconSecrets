@@ -748,6 +748,7 @@ public function GetConfigurationForm(): string
             $this->ReloadForm();
             return;
         }
+    }
   /**
      * Benennt einen Ordner oder einen Record innerhalb der aktuellen Ebene um.
      */
