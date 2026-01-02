@@ -70,12 +70,11 @@ public function GetConfigurationForm(): string
             if (isset($node['elements']) && is_array($node['elements'])) { foreach ($node['elements'] as &$child) { $applySlaveOptions($child); } }
         };
 
-        // ... [Bestehende Sichtbarkeiten in elements/actions bleiben identisch] ...
         if (isset($json['elements']) && is_array($json['elements'])) {
             foreach ($json['elements'] as &$element) {
                 $applySlaveOptions($element);
                 $name = $element['name'] ?? '';
-                if ($name === 'HookInfo') { $element['caption'] = "WebHook URL: /hook/secrets_" . $this->InstanceID; $element['visible'] = $isSlave; }
+                if ($name === 'HookInfo') { $element['caption'] = "WebHook URL für diesen Slave: /hook/secrets_" . $this->InstanceID; $element['visible'] = $isSlave; }
                 if (in_array($name, ['LabelHookAuth', 'HookUser', 'HookPassInput', 'BtnSaveHookPass'], true)) { $element['visible'] = $isSlave; }
                 if (in_array($name, ['LabelSyncToken', 'AuthTokenInput', 'BtnGenToken', 'BtnShowToken', 'BtnSaveAuthToken'], true)) { $element['visible'] = $isSyncRole; }
                 if (in_array($name, ['SlaveURLs', 'PanelSlaveCreds'], true)) { $element['visible'] = $isMaster; }
@@ -92,7 +91,7 @@ public function GetConfigurationForm(): string
             }
         }
 
-        // --- NEUER EXPLORER OHNE "SELECTED RECORD" LOGIK ---
+        // --- GRAFISCHER EXPLORER INTEGRATION ---
         if ($isEditorRole) {
             $vaultData = $this->_decryptVault() ?: [];
             $currentPath = (string)$this->GetBuffer("CurrentPath");
@@ -136,23 +135,24 @@ public function GetConfigurationForm(): string
                     ["caption" => "Typ", "name" => "Type", "width" => "100px"]
                 ],
                 "values" => $masterList,
-                "onClick" => "if(\$MasterListUI['Type'] == 'Folder') { IPS_RequestAction(\$id, 'EXPL_HandleClick', json_encode(\$MasterListUI)); }",
+                "onClick" => "IPS_RequestAction(\$id, 'EXPL_HandleClick', json_encode(\$MasterListUI));",
                 
-                // HIER DAS NEUE DYNAMISCHE POPUP-FORMULAR
+                // KORREKTUR: Dynamisches Formular mit sicherem Variablen-Zugriff
                 "form" => [
-                    "if (\$dynamicList['Type'] == 'Record') {",
+                    "\$item = isset(\$dynamicList) ? \$dynamicList : \$MasterListUI;",
+                    "if (\$item['Type'] == 'Record') {",
                     "    return [",
-                    "        ['type' => 'Label', 'caption' => 'Eintrag bearbeiten: ' . \$dynamicList['Ident']],",
+                    "        ['type' => 'Label', 'caption' => 'Eintrag bearbeiten: ' . \$item['Ident']],",
                     "        ['type' => 'List', 'name' => 'RecordFields', 'rowCount' => 5, 'add' => true, 'delete' => true,",
                     "         'columns' => [",
                     "             ['caption' => 'Feld', 'name' => 'Key', 'width' => '150px', 'add' => '', 'edit' => ['type' => 'ValidationTextBox']],",
                     "             ['caption' => 'Wert', 'name' => 'Value', 'width' => 'auto', 'add' => '', 'edit' => ['type' => 'ValidationTextBox']]",
                     "         ],",
-                    "         'values' => \$this->GetExplorerFields(\$dynamicList['Ident'])",
+                    "         'values' => \$this->GetExplorerFields(\$item['Ident'])",
                     "        ],",
-                    "        ['type' => 'Button', 'caption' => '💾 Speichern', 'onClick' => '\$D=[]; foreach(\$RecordFields as \$r){ \$D[]=\$r; } \$Payload = [\"Ident\" => \$dynamicList[\"Ident\"], \"Data\" => \$D]; IPS_RequestAction(\$id, \"EXPL_SaveRecord\", json_encode(\$Payload));']",
+                    "        ['type' => 'Button', 'caption' => '💾 Speichern', 'onClick' => '\$D=[]; foreach(\$RecordFields as \$r){ \$D[]=\$r; } \$Payload = [\"Ident\" => \$item[\"Ident\"], \"Data\" => \$D]; IPS_RequestAction(\$id, \"EXPL_SaveRecord\", json_encode(\$Payload));']",
                     "    ];",
-                    "} else { return [['type' => 'Label', 'caption' => 'Ordner können nur umbenannt oder gelöscht werden.']]; }"
+                    "} else { return [['type' => 'Label', 'caption' => 'Ordner k\u00f6nnen hier nicht editiert werden.']]; }"
                 ]
             ];
 
@@ -695,11 +695,13 @@ public function GetConfigurationForm(): string
         if (strpos($Ident, 'EXPL_') === 0) {
             switch ($Ident) {
                 case "EXPL_HandleClick":
-                    $row = json_decode((string)$Value, true);
-                    $current = (string)$this->GetBuffer("CurrentPath");
-                    $this->SetBuffer("CurrentPath", ($current === "") ? $row['Ident'] : $current . "/" . $row['Ident']);
-                    break;
-
+                                $row = json_decode((string)$Value, true);
+                                if (isset($row['Type']) && $row['Type'] === "Folder") {
+                                    $current = (string)$this->GetBuffer("CurrentPath");
+                                    $this->SetNavPath(($current === "") ? $row['Ident'] : $current . "/" . $row['Ident']);
+                                }
+                                // Bei Records machen wir hier nichts, da diese über das Zahnrad (form) editiert werden
+                                break;
                 case "EXPL_NavUp":
                     $parts = explode('/', (string)$this->GetBuffer("CurrentPath")); array_pop($parts);
                     $this->SetBuffer("CurrentPath", implode('/', $parts));
