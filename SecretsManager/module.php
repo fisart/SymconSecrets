@@ -189,8 +189,7 @@ public function GetConfigurationForm(): string
                     ["caption" => "Typ", "name" => "Type", "width" => "100px"]
                 ],
                 "values" => $masterList,
-                "onClick" => "if(\$MasterListUI['Type'] == 'Folder') { IPS_RequestAction(\$id, 'EXPL_HandleClick', json_encode(\$MasterListUI)); }",
-                
+                "onClick" => "IPS_RequestAction(\$id, 'EXPL_HandleClick', \$MasterListUI['Ident'] . '|' . \$MasterListUI['Type']);",                
                 "form" => [
                     "\$item = isset(\$dynamicList) ? \$dynamicList : \$MasterListUI;",
                     "if (\$item['Type'] == 'Record') {",
@@ -687,13 +686,27 @@ public function GetConfigurationForm(): string
         if (strpos($Ident, 'EXPL_') === 0) {
             switch ($Ident) {
                 case "EXPL_HandleClick":
-                                $row = json_decode((string)$Value, true);
-                                if (isset($row['Type']) && $row['Type'] === "Folder") {
-                                    $current = (string)$this->GetBuffer("CurrentPath");
-                                    $this->SetNavPath(($current === "") ? $row['Ident'] : $current . "/" . $row['Ident']);
-                                }
-                                // Bei Records machen wir hier nichts, da diese über das Zahnrad (form) editiert werden
-                                break;
+                    // Wir trennen Name und Typ (z.B. "level 2|Folder")
+                    $parts = explode('|', (string)$Value);
+                    if (count($parts) < 2) return;
+                    
+                    $ident = $parts[0];
+                    $type  = $parts[1];
+
+                    if ($type === "Folder") {
+                        $current = (string)$this->GetBuffer("CurrentPath");
+                        $newPath = ($current === "") ? $ident : $current . "/" . $ident;
+                        $this->SetBuffer("CurrentPath", $newPath);
+                        // Wir setzen SelectedRecord zurück, damit kein altes Panel offen bleibt
+                        $this->SetBuffer("SelectedRecord", ""); 
+                        $this->LogMessage("Navigation: Gehe in Ordner " . $newPath, KL_MESSAGE);
+                    } else {
+                        // Es ist ein Record -> Ident für das Popup-Formular setzen (falls nötig)
+                        // oder direkt auswählen
+                        $this->SetBuffer("SelectedRecord", $ident);
+                    }
+                    $this->ReloadForm();
+                    break;
                 case "EXPL_NavUp":
                     $parts = explode('/', (string)$this->GetBuffer("CurrentPath")); array_pop($parts);
                     $this->SetBuffer("CurrentPath", implode('/', $parts));
@@ -812,30 +825,40 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
     }
 
  private function ProcessExplorerCreate(string $name, string $type): void
-    {
-        if ($name === "") return;
-        $vaultData = $this->_decryptVault() ?: [];
-        $currentPath = (string)$this->GetBuffer("CurrentPath");
+{
+    if ($name === "") return;
+    $vaultData = $this->_decryptVault() ?: [];
+    $currentPath = (string)$this->GetBuffer("CurrentPath");
 
-        $temp = &$vaultData;
-        if ($currentPath !== "") {
-            // Explode mit Filter, um leere Pfad-Fragmente zu vermeiden
-            $parts = array_filter(explode('/', $currentPath));
-            foreach ($parts as $part) {
-                if (!isset($temp[$part]) || !is_array($temp[$part])) {
-                    $temp[$part] = [];
-                }
-                $temp = &$temp[$part];
+    // 1. Navigiere zum aktuellen Pfad (wo wir gerade im Explorer sind)
+    $temp = &$vaultData;
+    if ($currentPath !== "") {
+        $parts = array_filter(explode('/', $currentPath));
+        foreach ($parts as $part) {
+            // Wir erzwingen, dass jeder Teil des Pfades ein Array ist
+            if (!isset($temp[$part]) || !is_array($temp[$part])) {
+                $temp[$part] = [];
             }
+            $temp = &$temp[$part];
         }
-
-        if ($type === 'Folder') {
-            $temp[$name] = ["__folder" => true];
-        } else {
-            $temp[$name] = ["User" => "", "PW" => ""];
-        }
-        $this->_encryptAndSave($vaultData);
     }
+
+    // 2. Erstelle das neue Element im aktuellen Ordner
+    if ($type === 'Folder') {
+        // Falls der Ordner schon existiert, überschreiben wir ihn nicht
+        if (!isset($temp[$name])) {
+            $temp[$name] = ["__folder" => true];
+        }
+        $this->LogMessage("Explorer: Unterordner '$name' erstellt unter '$currentPath'", KL_MESSAGE);
+    } else {
+        $temp[$name] = ["User" => "", "Pass" => ""];
+        $this->SetBuffer("SelectedRecord", $name);
+    }
+
+    // 3. Alles verschlüsselt speichern
+    $this->_encryptAndSave($vaultData);
+    $this->ReloadForm();
+}
 
 private function CheckIfFolder($value): bool {
         if (!is_array($value)) return false;
