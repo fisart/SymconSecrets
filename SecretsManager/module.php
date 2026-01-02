@@ -186,7 +186,7 @@ public function GetConfigurationForm(): string
                 ],
                 "values" => $masterList,
                 // KORREKTUR: Pipe-Trick für stabile Navigation
-                "onClick" => "IPS_RequestAction(\$id, 'EXPL_HandleClick', \$MasterListUI['Ident'] . '|' . \$MasterListUI['Type']);",                
+                "onClick" => "IPS_RequestAction(\$id, 'EXPL_HandleClick', \$MasterListUI['Ident']);",
                 "form" => [
                     "\$item = isset(\$dynamicList) ? \$dynamicList : \$MasterListUI;",
                     "if (\$item['Type'] == 'Record') {",
@@ -690,22 +690,35 @@ public function GetConfigurationForm(): string
         if (strpos($Ident, 'EXPL_') === 0) {
             switch ($Ident) {
                 case "EXPL_HandleClick":
-                    // Stabiler Navigation-Klick (Pipe-Trick)
-                    $parts = explode('|', (string)$Value);
-                    if (count($parts) < 2) return;
+                    $ident = (string)$Value;
+                    if ($ident === "") return;
+
+                    // 1. Daten laden, um zu prüfen, was angeklickt wurde
+                    $vaultData = $this->_decryptVault() ?: [];
+                    $currentPath = (string)$this->GetBuffer("CurrentPath");
                     
-                    $ident = $parts[0];
-                    $type  = $parts[1];
-
-                    if ($type === "Folder") {
-                        $current = (string)$this->GetBuffer("CurrentPath");
-                        $newPath = ($current === "") ? $ident : $current . "/" . $ident;
-                        $this->SetBuffer("CurrentPath", $newPath);
-                        $this->LogMessage("Navigation: Gehe in Ordner " . $newPath, KL_MESSAGE);
+                    // Zum aktuellen Level navigieren
+                    $temp = $vaultData;
+                    if ($currentPath !== "") {
+                        foreach (explode('/', $currentPath) as $part) {
+                            if (isset($temp[$part])) $temp = $temp[$part];
+                        }
                     }
-                    // Records tun hier nichts mehr, da sie über das Zahnrad (form) öffnen
-                    break;
 
+                    // 2. Prüfen: Ist das angeklickte Element ein Ordner?
+                    if (isset($temp[$ident]) && $this->CheckIfFolder($temp[$ident])) {
+                        // NAVIGATION: In den Ordner gehen
+                        $newPath = ($currentPath === "") ? $ident : $currentPath . "/" . $ident;
+                        $this->SetBuffer("CurrentPath", $newPath);
+                        $this->LogMessage("Explorer: Navigiere in " . $newPath, KL_MESSAGE);
+                        $this->ReloadForm();
+                    } else {
+                        // INFO: Es ist ein Record. 
+                        // Hier passiert beim Klick auf die Zeile nichts, 
+                        // da Records über das Zahnrad (Edit-Symbol) geöffnet werden.
+                        $this->LogMessage("Explorer: Record '" . $ident . "' ausgewählt (Edit via Zahnrad).", KL_MESSAGE);
+                    }
+                    break;
                 case "EXPL_NavUp":
                     $parts = explode('/', (string)$this->GetBuffer("CurrentPath")); 
                     array_pop($parts);
