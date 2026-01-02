@@ -56,67 +56,113 @@ public function GetConfigurationForm(): string
         $isEditorRole = ($isMaster || $isStandalone);
         $isSyncRole   = ($isMaster || $isSlave);
 
-        $isUnlocked = false; 
-
-        // --- Slave-Optionen Logik (unverändert) ---
+        // Build slave URL options with label (Server — URL)
         $slaveOptions = [];
         $slaves = json_decode($this->ReadPropertyString("SlaveURLs"), true);
         if (is_array($slaves)) {
             foreach ($slaves as $s) {
-                $u = trim((string)($s['Url'] ?? '')); if ($u === '') continue;
+                $u = trim((string)($s['Url'] ?? ''));
+                if ($u === '') continue;
+
                 $label = trim((string)($s['Server'] ?? ''));
                 $cap = ($label !== '') ? ($label . " — " . $u) : $u;
+
                 $slaveOptions[] = ['caption' => $cap, 'value' => $u];
             }
         }
-        if (count($slaveOptions) === 0) { $slaveOptions[] = ['caption' => '(no slaves configured)', 'value' => '']; }
+        if (count($slaveOptions) === 0) {
+            $slaveOptions[] = ['caption' => '(no slaves configured)', 'value' => ''];
+        }
 
+        // Helper to apply options inside nested "items"
         $applySlaveOptions = function (&$node) use (&$applySlaveOptions, $slaveOptions) {
             if (!is_array($node)) return;
-            if (($node['name'] ?? '') === 'SlaveCredUrl') { $node['options'] = $slaveOptions; }
-            if (isset($node['items']) && is_array($node['items'])) { foreach ($node['items'] as &$child) { $applySlaveOptions($child); } }
-            if (isset($node['elements']) && is_array($node['elements'])) { foreach ($node['elements'] as &$child) { $applySlaveOptions($child); } }
+            if (($node['name'] ?? '') === 'SlaveCredUrl') {
+                $node['options'] = $slaveOptions;
+            }
+            if (isset($node['items']) && is_array($node['items'])) {
+                foreach ($node['items'] as &$child) {
+                    $applySlaveOptions($child);
+                }
+            }
+            if (isset($node['elements']) && is_array($node['elements'])) {
+                foreach ($node['elements'] as &$child) {
+                    $applySlaveOptions($child);
+                }
+            }
         };
 
         if (isset($json['elements']) && is_array($json['elements'])) {
             foreach ($json['elements'] as &$element) {
                 $applySlaveOptions($element);
                 $name = $element['name'] ?? '';
-                if ($name === 'HookInfo') { $element['caption'] = "WebHook URL für diesen Slave: /hook/secrets_" . $this->InstanceID; $element['visible'] = $isSlave; }
-                if (in_array($name, ['LabelHookAuth', 'HookUser', 'HookPassInput', 'BtnSaveHookPass'], true)) { $element['visible'] = $isSlave; }
-                if (in_array($name, ['LabelSyncToken', 'AuthTokenInput', 'BtnGenToken', 'BtnShowToken', 'BtnSaveAuthToken'], true)) { $element['visible'] = $isSyncRole; }
-                if (in_array($name, ['SlaveURLs', 'PanelSlaveCreds'], true)) { $element['visible'] = $isMaster; }
-                if (in_array($name, ['BtnLoad', 'InputJson', 'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning', 'LabelSeparator', 'LabelMasterHead'], true)) { $element['visible'] = false; }
-                if ($name === 'AllowKeyTransport') { $element['visible'] = $isSlave; }
+
+                if ($name === 'HookInfo') {
+                    $element['caption'] = "WebHook URL für diesen Slave: /hook/secrets_" . $this->InstanceID;
+                    $element['visible'] = $isSlave;
+                }
+
+                if (in_array($name, ['LabelHookAuth', 'HookUser', 'HookPassInput', 'BtnSaveHookPass'], true)) {
+                    $element['visible'] = $isSlave;
+                }
+
+                // --- ANPASSUNG: Sync Token Sektion (Verstecken in Standalone) ---
+                if (in_array($name, ['LabelSyncToken', 'AuthTokenInput', 'BtnGenToken', 'BtnShowToken', 'BtnSaveAuthToken'], true)) {
+                    $element['visible'] = $isSyncRole;
+                }
+
+                if (in_array($name, ['SlaveURLs', 'PanelSlaveCreds'], true)) {
+                    $element['visible'] = $isMaster;
+                }
+
+                // --- ANPASSUNG: Alten Editor komplett verstecken ---
+                if (in_array($name, ['BtnLoad', 'InputJson', 'BtnEncrypt', 'BtnClear', 'LabelSecurityWarning', 'LabelSeparator', 'LabelMasterHead'], true)) {
+                    $element['visible'] = false;
+                }
+
+                if ($name === 'AllowKeyTransport') {
+                    $element['visible'] = $isSlave;
+                }
             }
         }
 
         if (isset($json['actions']) && is_array($json['actions'])) {
             foreach ($json['actions'] as &$action) {
                 $an = $action['name'] ?? '';
-                if ($an === 'BtnSync') $action['visible'] = $isMaster;
-                if ($an === 'BtnRotateKey') $action['visible'] = ($isMaster || $isStandalone);
+                if ($an === 'BtnSync') {
+                    $action['visible'] = $isMaster;
+                }
+                if ($an === 'BtnRotateKey') {
+                    $action['visible'] = ($isMaster || $isStandalone);
+                }
             }
         }
 
-        // --- EXPLORER INTEGRATION MIT "DYNAMIC FORM" FIX ---
+        // --- START GRAFISCHER EXPLORER INTEGRATION ---
         if ($isEditorRole) {
             $vaultData = $this->_decryptVault() ?: [];
             $currentPath = (string)$this->GetBuffer("CurrentPath");
 
+            // Navigation zum aktuellen Zweig
             $displayData = $vaultData;
             if ($currentPath !== "") {
                 foreach (explode('/', $currentPath) as $part) {
-                    if (isset($displayData[$part]) && is_array($displayData[$part])) $displayData = $displayData[$part];
+                    if ($part !== "" && isset($displayData[$part]) && is_array($displayData[$part])) {
+                        $displayData = $displayData[$part];
+                    }
                 }
             }
 
+            // Master-Liste für aktuelle Ebene aufbereiten
             $masterList = [];
             if (is_array($displayData)) {
                 ksort($displayData);
                 foreach ($displayData as $key => $value) {
                     if ($key === "__folder") continue;
-                    $isFolder = $this->CheckIfFolder($value);
+                    
+                    // Folder-Erkennung: Array (leer oder befüllt) = Folder
+                    $isFolder = is_array($value) && ($this->CheckIfFolder($value) || empty($value));
+                    
                     $masterList[] = [
                         "Icon"  => $isFolder ? "📁" : "🔑",
                         "Ident" => (string)$key,
@@ -126,11 +172,11 @@ public function GetConfigurationForm(): string
             }
 
             $json['actions'][] = ["type" => "Label", "caption" => "________________________________________________________________________________________________"];
-            $json['actions'][] = ["type" => "Label", "caption" => "📂 GRAFISCHER TRESOR-EXPLORER", "bold" => true];
+            $json['actions'][] = ["type" => "Label", "caption" => "📂 TRESOR-EXPLORER", "bold" => true];
             $json['actions'][] = ["type" => "Label", "caption" => "📍 Position: root" . ($currentPath !== "" ? " / " . str_replace("/", " / ", $currentPath) : "")];
 
             if ($currentPath !== "") {
-                $json['actions'][] = ["type" => "Button", "caption" => "⬅️ ZURÜCK", "onClick" => "IPS_RequestAction(\$id, 'EXPL_NavUp', '');"];
+                $json['actions'][] = ["type" => "Button", "caption" => "⬅️ ZURÜCK / ORDNER SCHLIESSEN", "onClick" => "IPS_RequestAction(\$id, 'EXPL_NavUp', '');"];
             }
 
             $json['actions'][] = [
@@ -145,7 +191,6 @@ public function GetConfigurationForm(): string
                 "values" => $masterList,
                 "onClick" => "if(\$MasterListUI['Type'] == 'Folder') { IPS_RequestAction(\$id, 'EXPL_HandleClick', json_encode(\$MasterListUI)); }",
                 
-                // DER FIX: Wir verketten den Ident-Wert direkt in den onClick-String
                 "form" => [
                     "\$item = isset(\$dynamicList) ? \$dynamicList : \$MasterListUI;",
                     "if (\$item['Type'] == 'Record') {",
@@ -164,10 +209,12 @@ public function GetConfigurationForm(): string
                 ]
             ];
 
-            $json['actions'][] = ["type" => "Button", "caption" => "🗑️ MARKIERTE ZEILE LÖSCHEN", "onClick" => "if(isset(\$MasterListUI)) { IPS_RequestAction(\$id, 'EXPL_DeleteItem', json_encode(\$MasterListUI)); }"];
-            $json['actions'][] = ["type" => "Label", "caption" => "➕ NEU:"];
-            $json['actions'][] = ["type" => "ValidationTextBox", "name" => "NewItemName", "caption" => "Name"];
-            $json['actions'][] = ["type" => "Button", "caption" => "📁 + Ordner", "onClick" => "IPS_RequestAction(\$id, 'EXPL_CreateFolder', \$NewItemName);"];
+            $json['actions'][] = ["type" => "Button", "caption" => "🗑️ MARKIERTE ZEILE LÖSCHEN", "onClick" => "if(isset(\$MasterListUI)) { IPS_RequestAction(\$id, 'EXPL_DeleteItem', json_encode(\$MasterListUI)); } else { echo 'Bitte erst eine Zeile markieren!'; }"
+            ];
+
+            $json['actions'][] = ["type" => "Label", "caption" => "➕ NEU AN DIESER POSITION:"];
+            $json['actions'][] = ["type" => "ValidationTextBox", "name" => "NewItemName", "caption" => "Name für Element"];
+            $json['actions'][] = ["type" => "Button", "caption" => "📁 + Unterordner", "onClick" => "IPS_RequestAction(\$id, 'EXPL_CreateFolder', \$NewItemName);"];
             $json['actions'][] = ["type" => "Button", "caption" => "🔑 + Record", "onClick" => "IPS_RequestAction(\$id, 'EXPL_CreateRecord', \$NewItemName);"];
 
             $json['actions'][] = ["type" => "Label", "caption" => "________________________________________________________________________________________________"];
@@ -178,7 +225,6 @@ public function GetConfigurationForm(): string
 
         return json_encode($json);
     }
-
     
 
     public function SaveAuthToken(string $token): void
@@ -765,7 +811,7 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
         return $result;
     }
 
-    private function ProcessExplorerCreate(string $name, string $type): void
+ private function ProcessExplorerCreate(string $name, string $type): void
     {
         if ($name === "") return;
         $vaultData = $this->_decryptVault() ?: [];
@@ -773,8 +819,12 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
 
         $temp = &$vaultData;
         if ($currentPath !== "") {
-            foreach (explode('/', $currentPath) as $part) {
-                if (!isset($temp[$part])) $temp[$part] = [];
+            // Explode mit Filter, um leere Pfad-Fragmente zu vermeiden
+            $parts = array_filter(explode('/', $currentPath));
+            foreach ($parts as $part) {
+                if (!isset($temp[$part]) || !is_array($temp[$part])) {
+                    $temp[$part] = [];
+                }
                 $temp = &$temp[$part];
             }
         }
@@ -783,15 +833,21 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
             $temp[$name] = ["__folder" => true];
         } else {
             $temp[$name] = ["User" => "", "PW" => ""];
-            //$this->SetBuffer("SelectedRecord", $name);
         }
         $this->_encryptAndSave($vaultData);
     }
 
-    private function CheckIfFolder($value): bool {
+private function CheckIfFolder($value): bool {
         if (!is_array($value)) return false;
+        // Ein leeres Array ist immer ein Folder
+        if (empty($value)) return true;
+        // Wenn es das technische Folder-Flag hat
         if (isset($value['__folder'])) return true;
-        foreach ($value as $v) { if (is_array($v)) return true; }
+        // Wenn es ein assoziatives Array ist, das keine Records (User/Pass) enthält
+        // sondern weitere Arrays, ist es ein Folder.
+        foreach ($value as $v) {
+            if (is_array($v)) return true;
+        }
         return false;
     }
 
