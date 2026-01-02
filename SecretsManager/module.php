@@ -1493,5 +1493,5 @@ private function ProcessExplorerSave(string $ident, array $fieldList): void
             file_put_contents($path, $hexKey);
         }
     }
-}
+
 ?>
