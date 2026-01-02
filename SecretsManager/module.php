@@ -186,7 +186,7 @@ public function GetConfigurationForm(): string
                 ],
                 "values" => $masterList,
                 // KORREKTUR: Pipe-Trick für stabile Navigation
-                "onClick" => "IPS_RequestAction(\$id, 'EXPL_HandleClick', \$MasterListUI['Ident']);",
+                "onClick" => "IPS_RequestAction(\$id, 'EXPL_HandleClick', json_encode(\$MasterListUI));",
                 "form" => [
                     "\$item = isset(\$dynamicList) ? \$dynamicList : \$MasterListUI;",
                     "if (\$item['Type'] == 'Record') {",
@@ -687,42 +687,43 @@ public function GetConfigurationForm(): string
      */
  public function RequestAction($Ident, $Value): void
     {
+        // DEBUG: Zeige JEDEN Aufruf sofort im Meldungsfenster
+        $this->LogMessage("DEBUG: RequestAction Ident: " . $Ident . " | Value: " . (is_string($Value) ? $Value : "Object"), KL_MESSAGE);
+
         if (strpos($Ident, 'EXPL_') === 0) {
             switch ($Ident) {
                 case "EXPL_HandleClick":
-                    $ident = (string)$Value;
-                    if ($ident === "") return;
+                    // LOG: Rohdaten prüfen
+                    $this->LogMessage("DEBUG: Rohdaten vom Browser: " . (string)$Value, KL_MESSAGE);
 
-                    // 1. Daten laden, um zu prüfen, was angeklickt wurde
-                    $vaultData = $this->_decryptVault() ?: [];
-                    $currentPath = (string)$this->GetBuffer("CurrentPath");
-                    
-                    // Zum aktuellen Level navigieren
-                    $temp = $vaultData;
-                    if ($currentPath !== "") {
-                        foreach (explode('/', $currentPath) as $part) {
-                            if (isset($temp[$part])) $temp = $temp[$part];
-                        }
-                    }
+                    $row = json_decode((string)$Value, true);
+                    $ident = $row['Ident'] ?? 'FEHLT';
+                    $type = $row['Type'] ?? 'FEHLT';
 
-                    // 2. Prüfen: Ist das angeklickte Element ein Ordner?
-                    if (isset($temp[$ident]) && $this->CheckIfFolder($temp[$ident])) {
-                        // NAVIGATION: In den Ordner gehen
-                        $newPath = ($currentPath === "") ? $ident : $currentPath . "/" . $ident;
+                    // LOG: Erhaltene Werte nach Dekodierung
+                    $this->LogMessage("DEBUG: Klick auf Ident: " . $ident . " | Typ: " . $type, KL_MESSAGE);
+
+                    if ($type === "Folder") {
+                        $current = (string)$this->GetBuffer("CurrentPath");
+                        $newPath = ($current === "") ? $ident : $current . "/" . $ident;
+                        
                         $this->SetBuffer("CurrentPath", $newPath);
-                        $this->LogMessage("Explorer: Navigiere in " . $newPath, KL_MESSAGE);
-                        $this->ReloadForm();
+                        $this->SetBuffer("SelectedRecord", ""); 
+
+                        // LOG: Erfolgsmeldung Navigation
+                        $this->LogMessage("DEBUG: Navigation ERFOLGREICH. Neuer Pfad: " . $newPath, KL_MESSAGE);
                     } else {
-                        // INFO: Es ist ein Record. 
-                        // Hier passiert beim Klick auf die Zeile nichts, 
-                        // da Records über das Zahnrad (Edit-Symbol) geöffnet werden.
-                        $this->LogMessage("Explorer: Record '" . $ident . "' ausgewählt (Edit via Zahnrad).", KL_MESSAGE);
+                        $this->LogMessage("DEBUG: Record gewählt: " . $ident, KL_MESSAGE);
+                        $this->SetBuffer("SelectedRecord", $ident);
                     }
                     break;
+
                 case "EXPL_NavUp":
+                    $this->LogMessage("DEBUG: Navigation EBENE HOCH", KL_MESSAGE);
                     $parts = explode('/', (string)$this->GetBuffer("CurrentPath")); 
                     array_pop($parts);
                     $this->SetBuffer("CurrentPath", implode('/', $parts));
+                    $this->SetBuffer("SelectedRecord", "");
                     break;
 
                 case "EXPL_SaveRecord":
@@ -731,7 +732,6 @@ public function GetConfigurationForm(): string
                     break;
 
                 case "EXPL_RenameFolder":
-                    // Fängt den neuen Umbenenn-Befehl aus dem Popup ab
                     $payload = json_decode((string)$Value, true);
                     $this->ProcessExplorerRename($payload['Old'], $payload['New']);
                     break;
@@ -745,7 +745,6 @@ public function GetConfigurationForm(): string
                     break;
 
                 case "EXPL_DeleteItem":
-                    // Empfängt jetzt direkt den Namen (String) statt JSON
                     $this->ProcessExplorerDelete((string)$Value);
                     break;
 
@@ -754,6 +753,7 @@ public function GetConfigurationForm(): string
                     if (is_array($data)) {
                         $this->_encryptAndSave($data);
                         $this->SetBuffer("CurrentPath", ""); 
+                        $this->SetBuffer("SelectedRecord", "");
                         echo "✅ Import erfolgreich!";
                     }
                     break;
