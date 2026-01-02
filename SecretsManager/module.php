@@ -209,7 +209,7 @@ public function GetConfigurationForm(): string
                     "             ['caption' => 'Feld', 'name' => 'Key', 'width' => '150px', 'add' => '', 'edit' => ['type' => 'ValidationTextBox']],",
                     "             ['caption' => 'Wert', 'name' => 'Value', 'width' => 'auto', 'add' => '', 'edit' => ['type' => 'ValidationTextBox']]",
                     "         ],",
-                    "         'values' => AVT_GetExplorerFields(\$id, \$item['Ident'])",
+                    "         'values' => SEC_GetExplorerFields(\$id, \$item['Ident'])",
                     "        ],",
                     "        ['type' => 'Button', 'caption' => '💾 Speichern', 'onClick' => '\$D=[]; foreach(\$RecordFields as \$r){ \$D[]=\$r; } \$Payload = [\"Ident\" => \$item[\"Ident\"], \"Data\" => \$D]; IPS_RequestAction(\$id, \"EXPL_SaveRecord\", json_encode(\$Payload));']",
                     "    ];",
