@@ -803,7 +803,7 @@ public function GetConfigurationForm(): string
         }
     }      
         // Falls du das Modul später erweiterst, hier weitere Standard-Actions...
-    }
+    
         // Andere Standard-Aktionen von IP-Symcon (z.B. SEC_UpdateUI) falls nötig durchreichen
         // parent::RequestAction($Ident, $Value);
     
