@@ -1633,21 +1633,26 @@ class SecretsManager extends IPSModuleStrict
     private function _decryptVault()
     {
         $vaultJson = $this->GetValue("Vault");
-        if (!$vaultJson) return false;
+        if (!$vaultJson || $vaultJson === "") return false;
 
         $meta = json_decode($vaultJson, true);
         $keyHex = $this->_readKey();
 
-        if (!$keyHex || !$meta) return false;
+        if (!$keyHex || !$meta || !isset($meta['data'])) return false;
 
         $decrypted = openssl_decrypt(
-            $meta['data'],
+            (string)$meta['data'],
             $meta['cipher'] ?? "aes-128-gcm",
             hex2bin($keyHex),
             0,
-            hex2bin($meta['iv']),
-            hex2bin($meta['tag'])
+            hex2bin((string)$meta['iv']),
+            hex2bin((string)$meta['tag'])
         );
+
+        // --- KORREKTUR: Erst prüfen, ob Entschlüsselung erfolgreich war ---
+        if ($decrypted === false) {
+            return false;
+        }
 
         return json_decode($decrypted, true);
     }
