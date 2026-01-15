@@ -1,6 +1,4 @@
-Hier ist die aktualisierte Dokumentation in Deutsch und Englisch, angepasst an den neuen Funktionsstand inklusive des grafischen Tresor-Explorers und der optimierten Benutzeroberfläche.
-
-SymconSecrets – Dokumentation (aktueller Funktionsstand)
+Secrets – Dokumentation (aktueller Funktionsstand)
 1. Warum benötigt man dieses Modul in IP-Symcon?
 
 Standardmäßig speichert IP-Symcon Variableninhalte und Instanz-Konfigurationen im Klartext in der Datei settings.json. Daraus ergeben sich Sicherheitsrisiken bei Backups, unbefugtem Dateizugriff oder der Arbeit in verteilten Systemen.
