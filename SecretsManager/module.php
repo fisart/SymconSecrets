@@ -1005,6 +1005,11 @@ class SecretsManager extends IPSModuleStrict
             return true;
         }
 
+        // Check for the internal tag injected by _decryptVault
+        if (isset($value['__folder'])) {
+            return true;
+        }
+
         // Strukturprüfung: Wenn das Array mindestens ein weiteres Array enthält,
         // ist es ein Ordner. Enthält es nur Strings (User, PW...), ist es ein Record.
         foreach ($value as $v) {
