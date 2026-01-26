@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-// Version 5.2.1  
+// Version 5.2.2  
 class SecretsManager extends IPSModuleStrict
 {
 
@@ -164,18 +164,23 @@ class SecretsManager extends IPSModuleStrict
 
             // Master-Liste für aktuelle Ebene aufbereiten
             $masterList = [];
+            $folderProperties = [];
             if (is_array($displayData)) {
                 ksort($displayData);
                 foreach ($displayData as $key => $value) {
                     if ($key === "__folder") continue;
 
-                    $isFolder = $this->CheckIfFolder($value);
-
-                    $masterList[] = [
-                        "Icon"  => $isFolder ? "📁" : "🔑",
-                        "Ident" => (string)$key,
-                        "Type"  => $isFolder ? "Folder" : "Record"
-                    ];
+                    if (!is_array($value)) {
+                        // Hybrid Logic: Extract flat fields
+                        $folderProperties[] = ["Key" => (string)$key, "Value" => (string)$value];
+                    } else {
+                        $isFolder = $this->CheckIfFolder($value);
+                        $masterList[] = [
+                            "Icon"  => $isFolder ? "📁" : "🔑",
+                            "Ident" => (string)$key,
+                            "Type"  => $isFolder ? "Folder" : "Record"
+                        ];
+                    }
                 }
             }
 
@@ -183,6 +188,24 @@ class SecretsManager extends IPSModuleStrict
             $json['actions'][] = ["type" => "Label", "caption" => "________________________________________________________________________________________________"];
             $json['actions'][] = ["type" => "Label", "caption" => "📂 TRESOR-EXPLORER", "bold" => true];
             $json['actions'][] = ["type" => "Label", "caption" => "📍 Position: root" . ($currentPath !== "" ? " / " . str_replace("/", " / ", $currentPath) : "")];
+
+            // --- HYBRID SECTION: Folder Properties ---
+            if (count($folderProperties) > 0 || $currentPath !== "") {
+                $json['actions'][] = ["type" => "Label", "caption" => "🔑 FELDER DIESES ORDNER:", "italic" => true];
+                $json['actions'][] = [
+                    "type" => "List",
+                    "name" => "FolderPropsUI",
+                    "rowCount" => 4,
+                    "add" => true,
+                    "delete" => true,
+                    "columns" => [
+                        ["caption" => "Feld", "name" => "Key", "width" => "150px", "edit" => ["type" => "ValidationTextBox"]],
+                        ["caption" => "Wert", "name" => "Value", "width" => "auto", "edit" => ["type" => "ValidationTextBox"]]
+                    ],
+                    "values" => $folderProperties
+                ];
+                $json['actions'][] = ["type" => "Button", "caption" => "💾 Ordner-Felder speichern", "onClick" => '$D=[]; foreach($FolderPropsUI as $r){ $D[]=$r; } $Payload = ["Ident" => "", "Data" => $D]; IPS_RequestAction($id, "EXPL_SaveRecord", json_encode($Payload));'];
+            }
 
             if ($currentPath !== "") {
                 $json['actions'][] = ["type" => "Button", "caption" => "⬅️ ZURÜCK / ORDNER SCHLIESSEN", "onClick" => "IPS_RequestAction(\$id, 'EXPL_NavUp', '');"];
@@ -247,6 +270,8 @@ class SecretsManager extends IPSModuleStrict
 
         return json_encode($json);
     }
+
+
     public function SaveAuthToken(string $token): void
     {
         $token = trim((string)$token);
@@ -889,7 +914,9 @@ class SecretsManager extends IPSModuleStrict
         $vaultData = $this->_decryptVault();
         if ($vaultData === false) return;
 
-        $fullPath = ($this->GetBuffer("CurrentPath") === "") ? $ident : $this->GetBuffer("CurrentPath") . "/" . $ident;
+        // Path calculation: Handle empty ident for current level (Hybrid)
+        $currentPath = (string)$this->GetBuffer("CurrentPath");
+        $fullPath = ($ident === "") ? $currentPath : (($currentPath === "") ? $ident : $currentPath . "/" . $ident);
 
         $newFields = [];
         foreach ($fieldList as $row) {
@@ -898,16 +925,26 @@ class SecretsManager extends IPSModuleStrict
             }
         }
 
-        $parts = explode('/', $fullPath);
+        $parts = array_filter(explode('/', $fullPath));
         $temp = &$vaultData;
         foreach ($parts as $part) {
             if (!isset($temp[$part]) || !is_array($temp[$part])) $temp[$part] = [];
             $temp = &$temp[$part];
         }
-        $temp = $newFields;
+
+        // --- HYBRID MERGE LOGIC ---
+        // Preserve sub-folders (arrays) and internal flags, replace only flat values
+        foreach ($temp as $key => $value) {
+            if ($key !== "__folder" && !is_array($value)) {
+                unset($temp[$key]);
+            }
+        }
+        foreach ($newFields as $k => $v) {
+            $temp[$k] = $v;
+        }
 
         if ($this->_encryptAndSave($vaultData)) {
-            echo "✅ Eintrag '$ident' aktualisiert!";
+            echo ($ident === "") ? "✅ Ordner-Felder aktualisiert!" : "✅ Eintrag '$ident' aktualisiert!";
             if ($this->ReadPropertyInteger("OperationMode") === 1) $this->SyncSlaves();
         }
     }
