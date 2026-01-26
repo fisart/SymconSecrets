@@ -911,8 +911,7 @@ class SecretsManager extends IPSModuleStrict
 
     private function ProcessExplorerSave(string $ident, array $fieldList): void
     {
-        $vaultData = $this->_decryptVault();
-        if ($vaultData === false) return;
+        $vaultData = $this->_decryptVault() ?: [];
 
         // Path calculation: Handle empty ident for current level (Hybrid)
         $currentPath = (string)$this->GetBuffer("CurrentPath");
@@ -925,7 +924,7 @@ class SecretsManager extends IPSModuleStrict
             }
         }
 
-        $parts = array_filter(explode('/', $fullPath));
+        $parts = array_filter(explode('/', $fullPath), 'strlen');
         $temp = &$vaultData;
         foreach ($parts as $part) {
             if (!isset($temp[$part]) || !is_array($temp[$part])) $temp[$part] = [];
