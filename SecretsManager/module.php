@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-
+// Version 5.2.0  
 class SecretsManager extends IPSModuleStrict
 {
 
@@ -973,7 +973,7 @@ class SecretsManager extends IPSModuleStrict
         // 5. Erstelle das neue Element
         if ($type === 'Folder') {
             // Ordner mit technischem Flag anlegen
-            $temp[$name] = ["__folder" => true];
+            $temp[$name] = [];
             $this->LogMessage("Explorer: Unterordner '$name' erstellt in Pfad '$currentPath'.", KL_MESSAGE);
         } else {
             // Neuer Datensatz mit Standardfeldern
@@ -1002,11 +1002,6 @@ class SecretsManager extends IPSModuleStrict
 
         // Ein leeres Array ist immer ein Ordner (neuer oder geleerter Container)
         if (empty($value)) {
-            return true;
-        }
-
-        // Die explizite Markierung für leere Ordner, die wir beim Erstellen setzen
-        if (isset($value['__folder'])) {
             return true;
         }
 
@@ -1605,7 +1600,7 @@ class SecretsManager extends IPSModuleStrict
         if (!$keyHex) return false;
 
         $newKeyBin = hex2bin($keyHex);
-        $plain = json_encode($dataArray);
+        $plain = str_replace(['"__folder":true,', ',"__folder":true', '"__folder":true'], '', json_encode($dataArray));
 
         $cipher = "aes-128-gcm";
         $iv = random_bytes(openssl_cipher_iv_length($cipher));
@@ -1654,8 +1649,30 @@ class SecretsManager extends IPSModuleStrict
             return false;
         }
 
-        return json_decode($decrypted, true);
+        $data = json_decode($decrypted, true);
+
+        // --- NORMALIZATION: Inject internal folder flags for UI logic ---
+        if (is_array($data)) {
+            $normalize = function (&$item) use (&$normalize) {
+                if (!is_array($item)) return;
+                $isFolder = false;
+                foreach ($item as $k => &$v) {
+                    if (is_array($v)) {
+                        $isFolder = true;
+                        $normalize($v);
+                    }
+                }
+                if ($isFolder || empty($item)) {
+                    $item['__folder'] = true;
+                }
+            };
+            $normalize($data);
+        }
+
+        return $data;
     }
+
+
     // --- NEU: EXPLORER HELPER ---
     private function GetNavPath(): string
     {
