@@ -199,8 +199,8 @@ class SecretsManager extends IPSModuleStrict
                     "add" => true,
                     "delete" => true,
                     "columns" => [
-                        ["caption" => "Feld", "name" => "Key", "width" => "150px", "edit" => ["type" => "ValidationTextBox"]],
-                        ["caption" => "Wert", "name" => "Value", "width" => "auto", "edit" => ["type" => "ValidationTextBox"]]
+                        ["caption" => "Feld", "name" => "Key", "width" => "150px", "add" => "", "edit" => ["type" => "ValidationTextBox"]],
+                        ["caption" => "Wert", "name" => "Value", "width" => "auto", "add" => "", "edit" => ["type" => "ValidationTextBox"]]
                     ],
                     "values" => $folderProperties
                 ];
@@ -228,8 +228,8 @@ class SecretsManager extends IPSModuleStrict
                     "        ['type' => 'Label', 'caption' => 'Eintrag bearbeiten: ' . \$item['Ident']],",
                     "        ['type' => 'List', 'name' => 'RecordFields', 'rowCount' => 5, 'add' => true, 'delete' => true,",
                     "         'columns' => [",
-                    ["caption" => "Feld", "name" => "Key", "width" => "150px", "add" => "", "edit" => ["type" => "ValidationTextBox"]],
-                    ["caption" => "Wert", "name" => "Value", "width" => "auto", "add" => "", "edit" => ["type" => "ValidationTextBox"]],
+                    "             ['caption' => 'Feld', 'name' => 'Key', 'width' => '150px', 'add' => '', 'edit' => ['type' => 'ValidationTextBox']],",
+                    "             ['caption' => 'Wert', 'name' => 'Value', 'width' => 'auto', 'add' => '', 'edit' => ['type' => 'ValidationTextBox']]",
                     "         ],",
                     "         'values' => SEC_GetExplorerFields(\$id, \$item['Ident'])",
                     "        ],",
