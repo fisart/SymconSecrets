@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-// Version 5.2.0  
+// Version 5.2.1  
 class SecretsManager extends IPSModuleStrict
 {
 
@@ -452,7 +452,7 @@ class SecretsManager extends IPSModuleStrict
                 return;
             }
         } else {
-            $json = json_encode($cache, JSON_PRETTY_PRINT);
+            $json = str_replace(['"__folder": true,', ',"__folder": true', '"__folder": true'], '', json_encode($cache, JSON_PRETTY_PRINT));
         }
 
         // WICHTIG: Wir schreiben nicht in eine Property, sondern schicken 
@@ -539,8 +539,7 @@ class SecretsManager extends IPSModuleStrict
 
         // option 1: interne Keys ausblenden
         $keys = array_values(array_filter($keys, function ($k) {
-            $k = (string)$k;
-            return (strpos($k, "__") !== 0);
+            return (strpos((string)$k, "__") !== 0);
         }));
 
         return json_encode($keys);
@@ -566,7 +565,7 @@ class SecretsManager extends IPSModuleStrict
         }
 
         $val = $vault[$ident];
-        return (is_array($val) || is_object($val)) ? (json_encode($val) ?: "") : (string)$val;
+        return (is_array($val) || is_object($val)) ? (str_replace(['"__folder":true,', ',"__folder":true', '"__folder":true'], '', json_encode($val)) ?: "") : (string)$val;
     }
 
 
