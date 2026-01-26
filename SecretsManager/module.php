@@ -793,9 +793,12 @@ class SecretsManager extends IPSModuleStrict
                 case "EXPL_ImportJson":
                     $data = json_decode((string)$Value, true);
                     if (is_array($data)) {
-                        $this->_encryptAndSave($data);
+                        // Use the hybrid-safe saving method to ensure structure is recognized
                         $this->SetBuffer("CurrentPath", "");
+                        $this->_encryptAndSave($data);
                         echo "✅ Import erfolgreich!";
+                    } else {
+                        echo "❌ Fehler: Ungültiges JSON-Format.";
                     }
                     break;
             }
