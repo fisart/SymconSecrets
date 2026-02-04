@@ -1,118 +1,104 @@
-Secrets – Dokumentation (aktueller Funktionsstand)
+# 🔐 SymconSecrets - Professionelle Dokumentation
 
-1. Warum benötigt man dieses Modul in IP-Symcon?
-Standardmäßig speichert IP-Symcon Variableninhalte und Instanz-Konfigurationen im Klartext in der Datei settings.json. Daraus ergeben sich Sicherheitsrisiken bei Backups, unbefugtem Dateizugriff oder der Arbeit in verteilten Systemen.
+## 1. Sicherheitsarchitektur & Bedrohungsmodell
 
-2. Wie werden diese Probleme beseitigt?
-SymconSecrets folgt einem „Zero-Knowledge“-Prinzip:
-- Verschlüsselung (AES-128-GCM): Alle Geheimnisse liegen in Symcon nur verschlüsselt vor (Vault).
-- Schlüssel-Isolation: Der master.key liegt außerhalb von Symcon im OS-Dateisystem.
-- Grafischer Tresor-Explorer: Ein interaktiver Editor ermöglicht die Verwaltung komplexer Strukturen (Ordner & Datensätze), ohne Klartext-Properties zu nutzen.
-- NEU: Zero-Convention Import: Das Modul erkennt Ordnerstrukturen automatisch anhand der JSON-Hierarchie. Manuelle technische Flags (wie __folder) sind nicht mehr erforderlich.
+SymconSecrets wurde entwickelt, um sensible Anmeldedaten gegen gängige Angriffsvektoren in Smart-Home-Umgebungen zu schützen.
 
-3. Funktionsweise
-3.1 Der Tresor (Vault) und Explorer
-Der Tresor wird als verschlüsselter JSON-Blob gespeichert. Der Explorer erlaubt eine intuitive Navigation:
-- Ordner (📁): Gruppieren von Zusammenhängen (z.B. Standorte, Gerätetypen).
-- Datensätze (🔑): Enthalten die eigentlichen Felder (User, PW, IP, URL, etc.).
-- Hybrid-Strukturen: Ein Element kann gleichzeitig ein Ordner sein (Unterelemente enthalten) und eigene Felder besitzen (z.B. globale Zugangsdaten für diesen Standort).
-- Navigation: Per Klick auf Zeilen „hineinzoomen“ und per „ZURÜCK“-Button navigieren.
-
-3.2 Stateless UI / RAM-Buffer
-Die Navigation (aktueller Pfad) und die Auswahl im Editor werden ausschließlich in flüchtigen RAM-Buffern gehalten. Sobald die Konsole geschlossen wird, hinterlässt die Navigation keine Spuren in der settings.json.
-
-3.3 Synchronisation & Modi
-- Master (Sender): Verwaltet den Tresor und pusht ihn an Slaves.
-- Slave (Receiver): Empfängt Updates über einen geschützten WebHook.
-- Standalone: Lokaler Tresor ohne Netzwerk-Funktionen. Hinweis: Im Standalone-Modus werden alle Synchronisations-Optionen (Token, Slaves) automatisch ausgeblendet.
-
-4. Konfiguration
-Schritt A: Basis-Setup (Alle Modi)
-1. Instanz erstellen und System Role wählen.
-2. KeyFolderPath setzen (z.B. /var/lib/symcon_keys/).
-3. Auf „Übernehmen“ klicken, um den master.key zu initialisieren.
-
-Schritt B: Tresor befüllen (Explorer)
-1. Den Bereich 📂 TRESOR-EXPLORER in den Actions nutzen.
-2. Über „➕ NEU“ Ordner oder Datensätze anlegen.
-3. Hybrid-Editierung: Befinden Sie sich in einem Ordner mit eigenen Werten, erscheint oben der Bereich „🔑 FELDER DIESES ORDNER“. Hier können felder direkt für diese Ebene gespeichert werden.
-4. Datensatz-Editierung: Zum Bearbeiten auf ein Unterelement (🔑) klicken → der Editor öffnet sich in einem Popup.
-5. JSON-Import: Komplexe Arrays können ohne Sonderzeichen direkt als JSON-String eingelesen werden. Das Modul analysiert die Struktur automatisch.
-
-Schritt C: Synchronisation (Nur Master)
-1. Sync Token generieren und speichern.
-2. Slaves in der Liste anlegen (URL, TLS-Modus, User).
-3. Slave-Passwörter im Bereich „Store per-Slave Basic-Auth Passwords“ hinterlegen.
-
-5. PHP API (Nutzung in Skripten)
-$id = 12345;
-$pw = SEC_GetSecret($id, "Spotify");
-$ip = SEC_GetSecret($id, "RASPI/Heartbeat/IP");
-$keys = json_decode(SEC_GetKeys($id), true);
-
---------------------------------------------------------------------------------
-
-SymconSecrets – Documentation (Current State)
-
-1. Why do you need this module?
-By default, IP-Symcon stores configurations in plaintext. SymconSecrets ensures sensitive data remains encrypted, mitigating risks from unauthorized access or unsafe backups.
-
-2. Solutions Provided
-- AES-128-GCM Encryption: Secrets are stored as an encrypted "Vault".
-- Key Isolation: The master.key is stored on the OS file system, isolated from Symcon.
-- Graphical Vault Explorer: A stateless, interactive editor for managing complex hierarchies.
-- NEW: Zero-Convention Import: The module automatically detects folder structures based on JSON hierarchy. No technical metadata (like __folder) is required for imports.
-
-3. How it Works
-3.1 Vault Explorer
-The vault is a nested JSON structure:
-- Folders (📁): For logical grouping.
-- Records (🔑): Containers for actual data fields (User, PW, etc.).
-- Hybrid Nodes: A node can act as both a folder (containing sub-items) and a record (containing its own fields, e.g., site-specific credentials).
-- Navigation: Click rows to drill down; use "BACK" to move up.
-
-3.2 Stateless UI
-Navigation states are stored in volatile RAM. No trace of your vault browsing is left in settings.json.
-
-3.3 Roles
-- Master: Full management and distribution.
-- Slave: Receives updates via encrypted WebHook.
-- Standalone: Isolated local vault.
-
-4. Configuration
-Step A: Initial Setup
-1. Create instance and select role.
-2. Set KeyFolderPath and click "Apply".
-
-Step B: Managing Secrets
-1. Use the 📂 TRESOR-EXPLORER in Actions.
-2. Create items via "➕ NEW".
-3. Hybrid Editing: If the current folder contains data fields, a "🔑 FOLDER FIELDS" section appears at the top for direct editing.
-4. Record Editing: Click a record (🔑) to open the detail editor popup.
-5. JSON Import: Paste standard JSON arrays directly. The module automatically performs structural analysis to identify folders and records.
-
-Step C: Sync (Master only)
-1. Generate Sync Token.
-2. Add Slaves and store credentials in the encrypted expansion panel.
-
-5. PHP API
-$id = 12345;
-$pw = SEC_GetSecret($id, "Spotify");
-$ip = SEC_GetSecret($id, "RASPI/Heartbeat/IP");
-$keys = json_decode(SEC_GetKeys($id), true);
-
-Note: The interactive Explorer replaces the old "Unlock & Load" workflow for enhanced security. Hybrid structures allow for high flexibility in organizing distributed systems.
-```
+*   **Verschlüsselungsalgorithmus:** Industriestandard **AES-128-GCM** (Galois/Counter Mode). Dies bietet sowohl **Vertraulichkeit** als auch **Authentizität** (stellt sicher, dass die Daten nicht manipuliert wurden).
+*   **Hardware-Schlüssel-Isolation:** Der Verschlüsselungsschlüssel (`master.key`) wird als physische Datei auf dem Host-Betriebssystem gespeichert. Durch die Platzierung auf einem USB-Stick oder in einem geschützten Systemverzeichnis stellen Sie sicher, dass eine gestohlene `settings.json` oder ein Cloud-Backup ohne den physischen Schlüssel wertlos ist.
+*   **Stateless Operation (Zustandslosigkeit):** Im Gegensatz zu Standardmodulen werden Geheimnisse niemals in den Instanzeigenschaften gespeichert. Sie existieren während der Konfigurationsphase nur im RAM, was ein versehentliches Durchsickern in Logdateien oder den Festplatten-Cache verhindert.
+*   **Speicherhygiene:** Entschlüsselte Daten werden in einem RAM-Puffer vorgehalten und gelöscht, sobald die Konsole geschlossen oder die Schaltfläche „Abbrechen / RAM leeren“ geklickt wird.
 
 ---
 
-### Comparison & Line-count Sanity Check
+## 2. Fortgeschrittene Tresor-Logik
 
-| Section | Original Lines | Updated Lines | Change |
-| :--- | :---: | :---: | :--- |
-| **German Text** | ~65 | ~75 | **+10** |
-| **English Text** | ~60 | ~70 | **+10** |
+### 📂 Hybride Strukturanalyse
+Das Modul nutzt eine **Zero-Convention-Erkennung**. Sie müssen Ordner nicht manuell kennzeichnen.
+*   **Implizite Ordner:** Jeder Knoten, der verschachtelte Objekte enthält, wird automatisch als Ordner gerendert.
+*   **Blattknoten (Datensätze):** Knoten, die nur Schlüssel-Wert-Paare (Strings/Zahlen) enthalten, werden als Geheimnisse behandelt.
+*   **Hybride Kapazität:** Ein Ordner kann eigene Metadaten enthalten (z. B. `Standort: "Keller"`), während er gleichzeitig als Container für Unterordner fungiert. Dies ermöglicht eine hochgradig semantische Datenorganisation.
 
-**Reason for increase:**
-The increase is strictly due to adding the "Hybrid" and "Zero-Convention" explanations into sections 2, 3.1, and 4 (Step B) of both languages. This ensures users understand they no longer need special syntax for imports and can manage fields at the folder level.
+### 📥 Zero-Convention Import
+Sie können jedes Standard-JSON-Array aus einer anderen Anwendung kopieren und in das Feld **JSON IMPORT** einfügen. Das Modul wird:
+1.  Die Struktur rekursiv scannen.
+2.  Icons (📁/🔑) basierend auf der Form der Daten zuweisen.
+3.  Die gesamte Hierarchie verschlüsselt in den Tresor übernehmen.
 
+---
+
+## 3. Synchronisation & Konnektivität
+
+### Master -> Slave Push-Protokoll
+Das Master-System initiiert eine sichere POST-Anfrage an den WebHook des Slaves.
+*   **Payload-Verschlüsselung:** Der gesamte Tresor und der Master-Schlüssel werden in einem einzigen verschlüsselten Paket übertragen.
+*   **Sync-Token (Shared Secret):** Der Zugriff wird durch ein zufälliges 32-Byte-Token geschützt.
+*   **TLS-Transportsicherheit:**
+    *   **Strict Mode:** Erfordert gültige, von einer CA signierte Zertifikate (Standard für Remote-Sync).
+    *   **Pinned Mode:** Für lokale IP-Verbindungen. Sie geben den SHA-256-Fingerabdruck des Zertifikats an, und der Master validiert ihn, selbst wenn er selbstsigniert ist.
+    *   **HTTP (Legacy):** Nur für nicht-sensible Daten erlaubt; die Synchronisation des Master-Schlüssels ist in diesem Modus blockiert.
+
+---
+
+## 4. Konfiguration & Workflow
+
+### Schritt-für-Schritt-Einrichtung
+1.  **Identität:** Legen Sie die **Systemrolle** fest.
+    *   *Master:* Steuert die „Single Source of Truth“.
+    *   *Slave:* Spiegelt den Master; lokale Bearbeitungen werden beim nächsten Sync überschrieben.
+2.  **Infrastruktur:** Pfad für den **master.key** setzen. Stellen Sie sicher, dass der Symcon-Dienst Lese-/Schreibrechte für dieses Verzeichnis hat.
+3.  **Authentifizierung:** Generieren Sie ein **Sync-Token** auf dem Master und kopieren Sie es auf den Slave.
+4.  **Security Guard:** (Nur Slave) Setzen Sie **AllowKeyTransport** auf `true`, um die initiale Schlüsselübertragung vom Master zu erlauben.
+
+---
+
+## 5. PHP-API Referenz
+
+### SEC_GetSecret(int $InstanceID, string $Path)
+Der Pfad unterstützt die Slash-Notation für tief verschachtelte Abfragen.
+```php
+// Gibt den Passwort-String zurück
+$pass = SEC_GetSecret(12345, "Standorte/Berlin/Buero/AdminPass");
+
+// Gibt ein JSON-kodiertes Array für einen hybriden Knoten zurück
+$data = SEC_GetSecret(12345, "Standorte/Berlin"); 
+```
+
+### SEC_GetKeys(int $InstanceID)
+Gibt alle Identifikatoren der aktuellen Ebene als JSON-kodiertes Array zurück.
+
+---
+---
+
+# 🔐 SymconSecrets - Professional Documentation (English)
+
+## 1. Security Architecture & Threat Model
+*   **Encryption:** **AES-128-GCM** (Galois/Counter Mode) for confidentiality and authenticity.
+*   **Hardware Key Isolation:** `master.key` is stored on the host OS, isolated from Symcon backups.
+*   **Stateless Operation:** Secrets exist only in volatile RAM during configuration.
+*   **Memory Hygiene:** RAM buffers are cleared upon closing the console or manual wipe.
+
+## 2. Advanced Vault Logic
+*   **Hybrid Structural Analysis:** Automatic Folder vs. Record detection.
+*   **Zero-Convention Import:** Standard JSON arrays are recursively scanned and encrypted without needing metadata keys (like `__folder`).
+*   **Hybrid Capacity:** Nodes can simultaneously hold flat data fields and nested sub-folders.
+
+## 3. Synchronization & Connectivity
+*   **Master -> Slave Push:** Secure POST requests to Slave WebHooks.
+*   **Sync Token:** Guarded by 32-byte shared secrets.
+*   **TLS Transport Security:**
+    *   **Strict Mode:** CA-signed certificate validation.
+    *   **Pinned Mode:** SHA-256 fingerprint validation for self-signed certificates.
+    *   **HTTP:** Restricted mode; Master Key transport is disabled.
+
+## 4. Configuration & Workflow
+*   **Roles:** Master (Source), Slave (Mirror), Standalone (Isolated).
+*   **Explorer:** Use "Folder Fields" for node-level data and the Detail-View (⚙️) for leaf records.
+*   **Atomic Saves:** Encryption only occurs when "Save" is explicitly triggered.
+
+## 5. PHP API Reference
+```php
+$id = 12345;
+$pw = SEC_GetSecret($id, "Locations/London/Office/Wifi");
+$keys = json_decode(SEC_GetKeys($id), true);
+```
