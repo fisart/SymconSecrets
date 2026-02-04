@@ -1,104 +1,116 @@
-# 🔐 SymconSecrets - Professionelle Dokumentation
+# 🔐 SymconSecrets - Dokumentation (V 2.5)
 
-## 1. Sicherheitsarchitektur & Bedrohungsmodell
+## 1. Das Problem & Die Lösung
+Standardmäßig speichert IP-Symcon alle Konfigurationen und Variablen im Klartext in der `settings.json`. Dies führt zu Sicherheitsrisiken bei Backups und unbefugtem Dateizugriff. 
 
-SymconSecrets wurde entwickelt, um sensible Anmeldedaten gegen gängige Angriffsvektoren in Smart-Home-Umgebungen zu schützen.
-
-*   **Verschlüsselungsalgorithmus:** Industriestandard **AES-128-GCM** (Galois/Counter Mode). Dies bietet sowohl **Vertraulichkeit** als auch **Authentizität** (stellt sicher, dass die Daten nicht manipuliert wurden).
-*   **Hardware-Schlüssel-Isolation:** Der Verschlüsselungsschlüssel (`master.key`) wird als physische Datei auf dem Host-Betriebssystem gespeichert. Durch die Platzierung auf einem USB-Stick oder in einem geschützten Systemverzeichnis stellen Sie sicher, dass eine gestohlene `settings.json` oder ein Cloud-Backup ohne den physischen Schlüssel wertlos ist.
-*   **Stateless Operation (Zustandslosigkeit):** Im Gegensatz zu Standardmodulen werden Geheimnisse niemals in den Instanzeigenschaften gespeichert. Sie existieren während der Konfigurationsphase nur im RAM, was ein versehentliches Durchsickern in Logdateien oder den Festplatten-Cache verhindert.
-*   **Speicherhygiene:** Entschlüsselte Daten werden in einem RAM-Puffer vorgehalten und gelöscht, sobald die Konsole geschlossen oder die Schaltfläche „Abbrechen / RAM leeren“ geklickt wird.
-
----
-
-## 2. Fortgeschrittene Tresor-Logik
-
-### 📂 Hybride Strukturanalyse
-Das Modul nutzt eine **Zero-Convention-Erkennung**. Sie müssen Ordner nicht manuell kennzeichnen.
-*   **Implizite Ordner:** Jeder Knoten, der verschachtelte Objekte enthält, wird automatisch als Ordner gerendert.
-*   **Blattknoten (Datensätze):** Knoten, die nur Schlüssel-Wert-Paare (Strings/Zahlen) enthalten, werden als Geheimnisse behandelt.
-*   **Hybride Kapazität:** Ein Ordner kann eigene Metadaten enthalten (z. B. `Standort: "Keller"`), während er gleichzeitig als Container für Unterordner fungiert. Dies ermöglicht eine hochgradig semantische Datenorganisation.
-
-### 📥 Zero-Convention Import
-Sie können jedes Standard-JSON-Array aus einer anderen Anwendung kopieren und in das Feld **JSON IMPORT** einfügen. Das Modul wird:
-1.  Die Struktur rekursiv scannen.
-2.  Icons (📁/🔑) basierend auf der Form der Daten zuweisen.
-3.  Die gesamte Hierarchie verschlüsselt in den Tresor übernehmen.
+**SymconSecrets** löst dies durch ein „Zero-Knowledge“-Prinzip:
+*   **Verschlüsselung (AES-128-GCM):** Alle Daten liegen nur verschlüsselt vor.
+*   **Hardware-Schlüssel-Isolation:** Der `master.key` liegt außerhalb von Symcon auf dem Betriebssystem.
+*   **Stateless UI:** Navigation und Bearbeitung finden nur im flüchtigen RAM statt.
+*   **Zero-Convention Import:** Automatische Erkennung von Ordnern ohne technische Metadaten.
 
 ---
 
-## 3. Synchronisation & Konnektivität
-
-### Master -> Slave Push-Protokoll
-Das Master-System initiiert eine sichere POST-Anfrage an den WebHook des Slaves.
-*   **Payload-Verschlüsselung:** Der gesamte Tresor und der Master-Schlüssel werden in einem einzigen verschlüsselten Paket übertragen.
-*   **Sync-Token (Shared Secret):** Der Zugriff wird durch ein zufälliges 32-Byte-Token geschützt.
-*   **TLS-Transportsicherheit:**
-    *   **Strict Mode:** Erfordert gültige, von einer CA signierte Zertifikate (Standard für Remote-Sync).
-    *   **Pinned Mode:** Für lokale IP-Verbindungen. Sie geben den SHA-256-Fingerabdruck des Zertifikats an, und der Master validiert ihn, selbst wenn er selbstsigniert ist.
-    *   **HTTP (Legacy):** Nur für nicht-sensible Daten erlaubt; die Synchronisation des Master-Schlüssels ist in diesem Modus blockiert.
+## 2. Systemrollen (Operation Modes)
+*   **Master (Sender):** Die zentrale Instanz ("Single Source of Truth"). Hier werden Daten verwaltet und an Slaves verteilt.
+*   **Slave (Receiver):** Empfängt verschlüsselte Updates. Lokale Änderungen werden beim nächsten Sync überschrieben.
+*   **Standalone:** Isolierter lokaler Tresor ohne Netzwerkfunktionen.
 
 ---
 
-## 4. Konfiguration & Workflow
+## 3. Konfigurations-Leitfaden (Das Formular)
 
-### Schritt-für-Schritt-Einrichtung
-1.  **Identität:** Legen Sie die **Systemrolle** fest.
-    *   *Master:* Steuert die „Single Source of Truth“.
-    *   *Slave:* Spiegelt den Master; lokale Bearbeitungen werden beim nächsten Sync überschrieben.
-2.  **Infrastruktur:** Pfad für den **master.key** setzen. Stellen Sie sicher, dass der Symcon-Dienst Lese-/Schreibrechte für dieses Verzeichnis hat.
-3.  **Authentifizierung:** Generieren Sie ein **Sync-Token** auf dem Master und kopieren Sie es auf den Slave.
-4.  **Security Guard:** (Nur Slave) Setzen Sie **AllowKeyTransport** auf `true`, um die initiale Schlüsselübertragung vom Master zu erlauben.
+### 3.1 Sicherheitskonfiguration
+*   **System Role:** Auswahl der Rolle (Master/Slave/Standalone).
+*   **Directory Path:** Absoluter Pfad zum Verzeichnis des `master.key` (z. B. `/var/lib/symcon_keys/`).
+*   **Check Directory Permissions:** Validiert, ob der Symcon-Dienst Lese- und Schreibrechte hat. Dies ist für die automatische Schlüsselerstellung zwingend.
+
+### 3.2 Synchronisation (Nur Master)
+*   **Sync Token (Shared Secret):** Der "Hausschlüssel" für die Kommunikation.
+    1.  **Generate Random Token:** Erzeugt ein sicheres 32-Byte Token.
+    2.  **Show/Copy Token:** Zeigt das Token zum Kopieren für die Slave-Instanz an.
+    3.  **Save Token (Encrypted):** Speichert das Token verschlüsselt in der `system.vault` Datei. **Wichtig:** Ohne Speicherung ist kein Sync möglich.
+*   **Slave WebHooks (Tabelle):**
+    *   **Server (Label):** Anzeigename (z. B. "Standort A").
+    *   **URL:** Ziel-WebHook des Slaves (`https://[IP]/hook/secrets_[ID]`).
+    *   **TLS Mode:** *Strict* (CA-validiert) oder *Pinned* (validiert via SHA-256 Fingerprint, ideal für selbstsignierte Zertifikate).
+    *   **Key Provisioning:** Legt fest, ob der `master.key` aktiv mitgesendet wird.
+*   **Basic-Auth Passwords:** Im ausklappbaren Bereich werden Passwörter für die Slave-WebHooks verschlüsselt hinterlegt.
+
+### 3.3 Actions & Wartung
+*   **Manually Sync to Slaves:** Sofortiger Push-Vorgang an alle Slaves.
+*   **Rotate Encryption Key:** Erzeugt einen neuen Master-Key und verschlüsselt den gesamten Tresor sowie alle System-Geheimnisse neu.
+
+---
+
+## 4. Tresor-Explorer (Bedienung)
+
+### 4.1 Navigation & Hybride Strukturen
+Das Modul erkennt automatisch die Struktur:
+*   **Ordner (📁):** Knoten mit Unterelementen.
+*   **Datensätze (🔑):** Knoten mit reinen Datenfeldern (User, PW, etc.).
+*   **Hybrid-Modus:** Ein Ordner kann eigene Felder besitzen (z. B. Standort-Infos) **und** Unterordner enthalten. Diese Felder erscheinen oben unter „🔑 FELDER DIESES ORDNER“.
+*   **⚙️ / 🗑️:** Symbole zum Öffnen des Detail-Editors oder zum Löschen.
+
+### 4.2 Erstellung & Import
+*   **NEU AN DIESER POSITION:** Name eingeben und Typ wählen. Schrägstriche (/) sind im Namen verboten.
+*   **JSON IMPORT:** Erlaubt das Einlesen beliebiger JSON-Arrays. Die Struktur wird automatisch analysiert und "hydriert".
 
 ---
 
-## 5. PHP-API Referenz
-
-### SEC_GetSecret(int $InstanceID, string $Path)
-Der Pfad unterstützt die Slash-Notation für tief verschachtelte Abfragen.
-```php
-// Gibt den Passwort-String zurück
-$pass = SEC_GetSecret(12345, "Standorte/Berlin/Buero/AdminPass");
-
-// Gibt ein JSON-kodiertes Array für einen hybriden Knoten zurück
-$data = SEC_GetSecret(12345, "Standorte/Berlin"); 
-```
-
-### SEC_GetKeys(int $InstanceID)
-Gibt alle Identifikatoren der aktuellen Ebene als JSON-kodiertes Array zurück.
-
----
----
-
-# 🔐 SymconSecrets - Professional Documentation (English)
-
-## 1. Security Architecture & Threat Model
-*   **Encryption:** **AES-128-GCM** (Galois/Counter Mode) for confidentiality and authenticity.
-*   **Hardware Key Isolation:** `master.key` is stored on the host OS, isolated from Symcon backups.
-*   **Stateless Operation:** Secrets exist only in volatile RAM during configuration.
-*   **Memory Hygiene:** RAM buffers are cleared upon closing the console or manual wipe.
-
-## 2. Advanced Vault Logic
-*   **Hybrid Structural Analysis:** Automatic Folder vs. Record detection.
-*   **Zero-Convention Import:** Standard JSON arrays are recursively scanned and encrypted without needing metadata keys (like `__folder`).
-*   **Hybrid Capacity:** Nodes can simultaneously hold flat data fields and nested sub-folders.
-
-## 3. Synchronization & Connectivity
-*   **Master -> Slave Push:** Secure POST requests to Slave WebHooks.
-*   **Sync Token:** Guarded by 32-byte shared secrets.
-*   **TLS Transport Security:**
-    *   **Strict Mode:** CA-signed certificate validation.
-    *   **Pinned Mode:** SHA-256 fingerprint validation for self-signed certificates.
-    *   **HTTP:** Restricted mode; Master Key transport is disabled.
-
-## 4. Configuration & Workflow
-*   **Roles:** Master (Source), Slave (Mirror), Standalone (Isolated).
-*   **Explorer:** Use "Folder Fields" for node-level data and the Detail-View (⚙️) for leaf records.
-*   **Atomic Saves:** Encryption only occurs when "Save" is explicitly triggered.
-
-## 5. PHP API Reference
+## 5. PHP API
 ```php
 $id = 12345;
-$pw = SEC_GetSecret($id, "Locations/London/Office/Wifi");
+// Secret via Pfad auslesen
+$pass = SEC_GetSecret($id, "Standorte/Berlin/MQTT_Pass");
+// Alle Schlüssel der aktuellen Ebene auflisten
+$keys = json_decode(SEC_GetKeys($id), true);
+```
+
+---
+---
+
+# 🔐 SymconSecrets - Documentation (V 2.5)
+
+## 1. The Core Concept
+IP-Symcon stores data in plaintext within `settings.json`. SymconSecrets mitigates this risk by ensuring sensitive data is only stored in encrypted form and handled in volatile memory.
+
+## 2. System Roles
+*   **Master:** Source of truth, manages and pushes data to Slaves.
+*   **Slave:** Mirror instance, receives updates via WebHook.
+*   **Standalone:** Isolated local vault with no network connectivity.
+
+## 3. Configuration Guide (The Form)
+
+### 3.1 Security Configuration
+*   **Directory Path:** Absolute OS path for the `master.key` (e.g., `/secrets`).
+*   **Check Directory Permissions:** Ensures Symcon has R/W access to initialize the key file.
+
+### 3.2 Synchronization (Master Only)
+*   **Sync Token:** Generate, Copy (to Slave), and **Save** (to encrypt it into the system vault).
+*   **Slave WebHooks:**
+    *   **TLS Mode:** Use *Strict* for CA certificates or *Pinned* for self-signed certificates (requires SHA-256 fingerprint).
+    *   **Key Provisioning:** Determines if the `master.key` is included in the sync payload.
+*   **Basic-Auth Passwords:** Securely link passwords to slave URLs via the expansion panel.
+
+### 3.3 Actions
+*   **Manually Sync:** Immediate push to all slaves.
+*   **Rotate Encryption Key:** Re-encrypts the entire vault and system data with a newly generated key.
+
+## 4. Vault Explorer Usage
+
+### 4.1 Hybrid Logic & Navigation
+*   **Zero-Convention Detection:** Folders are detected automatically based on JSON hierarchy.
+*   **Hybrid Nodes:** Folders can hold their own data fields (displayed at the top) while acting as a container for sub-items.
+*   **Navigation:** Use icons to drill down (📁/🔑) and the "BACK" button to navigate up.
+
+### 4.2 Creation & Import
+*   **NEW ITEM:** Enter a name (no slashes allowed) and select Folder or Record.
+*   **JSON IMPORT:** Paste standard JSON structures to overwrite and automatically hydrate the vault.
+
+## 5. PHP API
+```php
+$id = 12345;
+$pass = SEC_GetSecret($id, "Locations/London/Wifi_Pass");
 $keys = json_decode(SEC_GetKeys($id), true);
 ```
