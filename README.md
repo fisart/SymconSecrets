@@ -1,168 +1,146 @@
-Secrets – Dokumentation (aktueller Funktionsstand)
-1. Warum benötigt man dieses Modul in IP-Symcon?
+# 🔐 SymconSecrets - Dokumentation (V 2.5)
 
-Standardmäßig speichert IP-Symcon Variableninhalte und Instanz-Konfigurationen im Klartext in der Datei settings.json. Daraus ergeben sich Sicherheitsrisiken bei Backups, unbefugtem Dateizugriff oder der Arbeit in verteilten Systemen.
+## 1. Das Problem & Die Lösung
+Standardmäßig speichert IP-Symcon alle Konfigurationen und Variablen im Klartext in der `settings.json`. Dies führt zu erheblichen Sicherheitsrisiken bei Backups, unbefugtem Dateizugriff oder der Arbeit in verteilten Systemen.
 
-2. Wie werden diese Probleme beseitigt?
+**SymconSecrets** löst dies durch ein „Zero-Knowledge“-Prinzip und bietet signifikante Vorteile im Betrieb:
+*   **Verschlüsselung (AES-128-GCM):** Alle Daten liegen nur verschlüsselt vor (Authenticated Encryption). Der Klartext landet niemals auf der Festplatte.
+*   **Hardware-Schlüssel-Isolation:** Der `master.key` liegt außerhalb von Symcon auf dem Betriebssystem (z. B. auf einem USB-Stick oder einem geschützten Systemverzeichnis).
+*   **Stateless UI:** Navigation und Bearbeitung finden ausschließlich im flüchtigen Arbeitsspeicher (RAM) statt. Es verbleiben keine Spuren Ihres Browser-Verlaufs in der Konfiguration.
+*   **Zentralisierte Verwaltung:** Änderungen (z. B. Passwort-Updates) werden an einer einzigen Stelle (Master) vorgenommen und stehen durch die automatische Synchronisation **sofort systemweit** auf allen Slaves zur Verfügung. Dies eliminiert manuelle Pflegeaufwände und verhindert Inkonsistenzen in verteilten Umgebungen.
+*   **Zero-Convention Import:** Automatische Erkennung von Ordnern ohne technische Metadaten oder spezielle Syntax. Das Modul analysiert die Form Ihres JSONs eigenständig.
 
-SymconSecrets folgt einem „Zero-Knowledge“-Prinzip:
+---
 
-Verschlüsselung (AES-128-GCM): Alle Geheimnisse liegen in Symcon nur verschlüsselt vor (Vault).
+## 2. Systemrollen (Operation Modes)
+*   **Master (Sender):** Die zentrale Instanz ("Single Source of Truth"). Hier werden Daten verwaltet und sicher an Slaves verteilt.
+*   **Slave (Receiver):** Empfängt verschlüsselte Updates. Lokale Änderungen am Tresor sind nicht vorgesehen und werden beim nächsten Sync überschrieben.
+*   **Standalone:** Isolierter lokaler Tresor ohne Netzwerkfunktionen. Alle Synchronisations-Optionen werden automatisch ausgeblendet.
 
-Schlüssel-Isolation: Der master.key liegt außerhalb von Symcon im OS-Dateisystem.
+---
 
-Grafischer Tresor-Explorer: Ein interaktiver Editor im Actions-Bereich ermöglicht die Verwaltung komplexer Strukturen (Ordner & Datensätze), ohne Klartext-Properties zu nutzen (Disk-Clean).
+## 3. Konfigurations-Leitfaden (Formular-Referenz)
 
-Automatischer Cloud-Sync: Master-Systeme verteilen verschlüsselte Tresore sicher an Slaves.
+### 3.1 Sicherheitskonfiguration
+*   **System Role:** Auswahl der Rolle (Master/Slave/Standalone).
+*   **Directory Path:** Absoluter Pfad zum Verzeichnis des `master.key` (z. B. `/var/lib/symcon_keys/` oder `/secrets`).
+*   **Check Directory Permissions:** Validiert, ob der Symcon-Dienst Lese- und Schreibrechte im Zielverzeichnis hat. Dies ist für die automatische Schlüsselerstellung zwingend erforderlich.
 
-3. Funktionsweise
-3.1 Der Tresor (Vault) und Explorer
+### 3.2 Synchronisation (Nur Master)
+*   **Sync Token (Shared Secret):** Der "Hausschlüssel" für die Kommunikation zwischen Master und Slave.
+    1.  **Generate Random Token:** Erzeugt ein sicheres, zufälliges 32-Byte Token.
+    2.  **Show/Copy Token:** Zeigt das Token im Klartext an, um es in der Slave-Instanz zu hinterlegen.
+    3.  **Save Token (Encrypted):** Speichert das Token verschlüsselt in der Datei `system.vault`. **Wichtig:** Ohne diesen Schritt ist keine Synchronisation möglich.
+*   **Slave WebHooks (Tabelle):**
+    *   **Server (Label):** Anzeigename für Ihre Übersicht (z. B. "Ferienhaus").
+    *   **URL:** Ziel-WebHook des Slaves (Format: `https://[IP-oder-DNS]/hook/secrets_[ID]`).
+    *   **TLS Mode:** *Strict* (CA-validiert) oder *Pinned* (validiert via SHA-256 Fingerprint, ideal für selbstsignierte Zertifikate im lokalen Netzwerk).
+    *   **Key Provisioning:** Legt fest, ob der `master.key` bei jedem Sync mitgesendet wird (*Sync Payload*).
+*   **Basic-Auth Passwords:** Im ausklappbaren Bereich können Passwörter für die Slave-WebHooks verschlüsselt hinterlegt werden (integrierter Passwort-Manager für Slaves).
 
-Der Tresor wird als verschlüsselter JSON-Blob gespeichert. Der neue Tresor-Explorer erlaubt eine intuitive Navigation:
+### 3.3 Actions & Wartung
+*   **Manually Sync to Slaves:** Stößt sofort eine Übertragung an alle Slaves in der Liste an.
+*   **Rotate Encryption Key:** Erzeugt einen neuen Master-Key und verschlüsselt den gesamten Tresor sowie alle System-Geheimnisse mit dem neuen Schlüssel um.
 
-Ordner (📁): Gruppieren von Zusammenhängen (z.B. Standorte, Gerätetypen).
+---
 
-Datensätze (🔑): Enthalten die eigentlichen Felder (User, PW, IP, URL, etc.).
+## 4. Tresor-Explorer (Bedienung)
 
-Navigation: Per Klick auf Zeilen „hineinzoomen“ und per „ZURÜCK“-Button navigieren.
+### 4.1 Navigation & Hybride Strukturen
+Das Modul erkennt automatisch die Struktur Ihrer Daten:
+*   **Ordner (📁):** Knoten, die Unterelemente (Arrays) enthalten.
+*   **Datensätze (🔑):** Knoten mit reinen Datenfeldern (User, PW, etc.).
+*   **Hybrid-Modus:** Ein Ordner kann eigene Felder besitzen (z. B. Standort-Informationen) **und** gleichzeitig Unterordner enthalten. Diese Felder erscheinen oben unter dem Bereich „🔑 FELDER DIESES ORDNER“.
+*   **⚙️ / 🗑️:** Symbole zum Öffnen des Detail-Editors (Popup) oder zum Löschen eines Elements.
 
-3.2 Stateless UI / RAM-Buffer
+### 4.2 Erstellung & Import
+*   **NEU AN DIESER POSITION:** Name für das Element eingeben und Typ wählen. Schrägstriche (/) sind im Namen verboten.
+*   **JSON IMPORT:** Erlaubt das Einlesen beliebiger JSON-Arrays. Die Struktur wird automatisch analysiert und im Explorer korrekt "hydriert".
 
-Die Navigation (aktueller Pfad) und die Auswahl im Editor werden ausschließlich in flüchtigen RAM-Buffern gehalten. Sobald die Konsole geschlossen wird, hinterlässt die Navigation keine Spuren in der settings.json.
+---
 
-3.3 Synchronisation & Modi
+## 5. PHP API (Skript-Nutzung)
+```php
+$id = 59597; // Instanz-ID des SecretsManager
 
-Master (Sender): Verwaltet den Tresor und pusht ihn an Slaves.
+// 1. Ein Secret via Pfad auslesen
+$pass = SEC_GetSecret($id, "Standorte/Produktion/SPS_Passwort");
 
-Slave (Receiver): Empfängt Updates über einen geschützten WebHook.
-
-Standalone: Lokaler Tresor ohne Netzwerk-Funktionen. Hinweis: Im Standalone-Modus werden alle Synchronisations-Optionen (Token, Slaves) automatisch ausgeblendet.
-
-4. Konfiguration
-Schritt A: Basis-Setup (Alle Modi)
-
-Instanz erstellen und System Role wählen.
-
-KeyFolderPath setzen (z.B. /var/lib/symcon_keys/).
-
-Auf „Übernehmen“ klicken, um den master.key zu initialisieren.
-
-Schritt B: Tresor befüllen (Explorer)
-
-Den Bereich 📂 TRESOR-EXPLORER in den Actions nutzen.
-
-Über „➕ NEU“ Ordner oder Datensätze anlegen.
-
-Zum Bearbeiten auf ein Gerät (🔑) klicken → der Editor öffnet sich unten.
-
-Werte eintragen und „💾 Details speichern“ klicken.
-
-JSON-Import: Große Strukturen können über das Feld „JSON IMPORT“ direkt als String eingelesen werden. Dies setzt den Explorer automatisch auf „root“ zurück.
-
-Schritt C: Synchronisation (Nur Master)
-
-Sync Token generieren und verschlüsselt speichern.
-
-Slaves in der Liste anlegen (URL, TLS-Modus, User).
-
-Slave-Passwörter im Bereich „Store per-Slave Basic-Auth Passwords“ hinterlegen.
-
-5. PHP API (Nutzung in Skripten)
-code
-PHP
-download
-content_copy
-expand_less
-$id = 12345; // Instanz-ID
-
-// 1. Einfaches Secret auslesen (flache Struktur)
-$pw = SEC_GetSecret($id, "Spotify");
-
-// 2. Tief verschachteltes Secret auslesen (Pfad-Logik)
-$ip = SEC_GetSecret($id, "RASPI/Heartbeat/IP");
-
-// 3. Alle verfügbaren Namen auflisten
+// 2. Alle verfügbaren Schlüssel der aktuellen Ebene auflisten
 $keys = json_decode(SEC_GetKeys($id), true);
-SymconSecrets – Documentation (Current State)
-1. Why do you need this module?
+```
 
-By default, IP-Symcon stores configurations in plaintext within settings.json. SymconSecrets mitigates risks associated with unsafe backups and unauthorized access by ensuring sensitive data never touches the disk unencrypted.
+***
+***
 
-2. Solutions Provided
+# 🔐 SymconSecrets - Documentation (V 2.5)
 
-AES-128-GCM Encryption: Secrets are stored as an encrypted "Vault".
+## 1. The Core Problem & Solution
+By default, IP-Symcon stores all configurations and variables in plaintext within the `settings.json` file. This creates significant security risks for backups, unauthorized file access, or when working in distributed systems.
 
-Key Isolation: The master.key is stored on the OS file system, isolated from Symcon backups.
+**SymconSecrets** solves this via a "Zero-Knowledge" principle and provides significant operational advantages:
+*   **Encryption (AES-128-GCM):** All data is stored in encrypted form only (Authenticated Encryption). Plaintext never touches the disk.
+*   **Hardware Key Isolation:** The `master.key` is stored on the host OS, physically isolated from Symcon (e.g., on a USB stick or a protected system directory).
+*   **Stateless UI:** Navigation and editing happen exclusively in volatile memory (RAM). No trace of your browsing history remains in the configuration.
+*   **Centralized Management:** Updates (e.g., password changes) are made at a single point of truth (Master) and are **immediately available system-wide** across all linked Slaves through automatic synchronization. This eliminates manual maintenance and prevents inconsistencies in distributed environments.
+*   **Zero-Convention Import:** Automatic folder detection without technical metadata or special syntax. The module analyzes the shape of your JSON independently.
 
-Graphical Vault Explorer: A stateless, interactive editor in the Actions area for managing complex hierarchies (Disk-Clean).
+---
 
-Encrypted System Secrets: Tokens and passwords for internal module logic are stored in a separate system.vault.
+## 2. System Roles (Operation Modes)
+*   **Master (Sender):** The central instance ("Single Source of Truth"). Manages data and pushes it securely to Slaves.
+*   **Slave (Receiver):** Receives encrypted updates. Local edits to the vault are not intended and will be overwritten during the next sync.
+*   **Standalone:** Isolated local vault without network features. All synchronization options are automatically hidden.
 
-3. How it Works
-3.1 Vault Explorer
+---
 
-The vault is a nested JSON structure managed via the Explorer:
+## 3. Configuration Guide (Form Reference)
 
-Folders (📁): For logical grouping (e.g., Locations, Categories).
+### 3.1 Security Configuration
+*   **System Role:** Choose your role (Master/Slave/Standalone).
+*   **Directory Path:** Absolute path to the `master.key` directory (e.g., `/var/lib/symcon_keys/` or `/secrets`).
+*   **Check Directory Permissions:** Validates that the Symcon service has R/W access to the target directory. This is mandatory for automatic key generation.
 
-Records (🔑): Containers for actual data fields (User, PW, IP, etc.).
+### 3.2 Synchronization (Master Only)
+*   **Sync Token (Shared Secret):** The "house key" for communication between Master and Slave.
+    1.  **Generate Random Token:** Creates a secure, random 32-byte token.
+    2.  **Show/Copy Token:** Displays the token in plaintext for entry into the Slave instance.
+    3.  **Save Token (Encrypted):** Stores the token encrypted in the `system.vault` file. **Important:** Synchronization is not possible without this step.
+*   **Slave WebHooks (Table):**
+    *   **Server (Label):** Display name for your overview (e.g., "Holiday Home").
+    *   **URL:** The Slave's WebHook URL (Format: `https://[IP-or-DNS]/hook/secrets_[ID]`).
+    *   **TLS Mode:** *Strict* (CA-validated) or *Pinned* (validated via SHA-256 fingerprint, ideal for self-signed certificates in a local network).
+    *   **Key Provisioning:** Determines if the `master.key` is included in every sync (*Sync Payload*).
+*   **Basic-Auth Passwords:** Passwords for the Slave WebHooks can be stored encrypted in the expansion panel (integrated password manager for Slaves).
 
-Navigation: Click rows to drill down; use the "BACK" button to move up.
+### 3.3 Actions & Maintenance
+*   **Manually Sync to Slaves:** Triggers an immediate push to all slaves in the list.
+*   **Rotate Encryption Key:** Generates a new master key and re-encrypts the entire vault and all system secrets with the new key.
 
-3.2 Stateless UI
+---
 
-Navigation states (Current Path) are stored in volatile RAM buffers. No trace of your browsing history within the vault is left in the settings.json.
+## 4. Vault Explorer Usage
 
-3.3 Roles
+### 4.1 Navigation & Hybrid Structures
+The module automatically detects the structure of your data:
+*   **Folders (📁):** Nodes containing sub-elements (arrays).
+*   **Records (🔑):** Nodes containing only data fields (User, PW, etc.).
+*   **Hybrid Mode:** A folder can hold its own fields (e.g., location information) **and** simultaneously contain sub-folders. These fields appear at the top under the "🔑 FOLDER FIELDS" section.
+*   **⚙️ / 🗑️:** Icons to open the detail editor (popup) or delete an item.
 
-Master: Full management and distribution to slaves.
+### 4.2 Creation & Import
+*   **NEW AT THIS POSITION:** Enter a name for the element and select the type. Slashes (/) are forbidden in names.
+*   **JSON IMPORT:** Allows importing any standard JSON array. The structure is automatically analyzed and correctly "hydrated" in the Explorer.
 
-Slave: Receives updates via encrypted WebHook.
+---
 
-Standalone: Isolated local vault. Note: All sync-related settings (Tokens, Slave lists) are automatically hidden in Standalone mode.
+## 5. PHP API (Script Usage)
+```php
+$id = 59597; // Instance ID of the SecretsManager
 
-4. Configuration
-Step A: Initial Setup
+// 1. Retrieve a secret via path
+$pass = SEC_GetSecret($id, "Locations/Production/PLC_Password");
 
-Create instance and select System Role.
-
-Set KeyFolderPath and click "Apply" to generate the master.key.
-
-Step B: Managing Secrets
-
-Use the 📂 TRESOR-EXPLORER in the Actions section.
-
-Create items using the "➕ NEW" area.
-
-Click a record (🔑) to open the editor panel at the bottom.
-
-Enter values and click "💾 Save Details".
-
-JSON Import: Use the "JSON IMPORT" field to paste large structures. This automatically resets the Explorer to root.
-
-Step C: Sync (Master only)
-
-Generate and save a Sync Token.
-
-Add Slaves to the list.
-
-Store Slave credentials in the dedicated encrypted expansion panel.
-
-5. PHP API
-code
-PHP
-download
-content_copy
-expand_less
-$id = 12345;
-
-// 1. Access a simple secret
-$pw = SEC_GetSecret($id, "Spotify");
-
-// 2. Access a nested secret using path logic
-$ip = SEC_GetSecret($id, "RASPI/Heartbeat/IP");
-
-// 3. List all identifiers
+// 2. List all available keys at the current level
 $keys = json_decode(SEC_GetKeys($id), true);
-
-Note: The old "Unlock & Load" workflow has been replaced by the interactive Explorer for enhanced security and usability. All edits in the Detail-Panel must be saved explicitly via the "Save Details" button.
+```
