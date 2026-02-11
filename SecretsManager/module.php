@@ -1308,9 +1308,10 @@ class SecretsManager extends IPSModuleStrict
     {
         $mode = $this->ReadPropertyInteger("OperationMode");
         $isPortal = isset($_GET['portal']);
+        $isRegister = isset($_GET['register']);
 
-        // Slaves process Sync-POSTs. Any mode can access the Portal.
-        if ($mode !== 0 && !$isPortal) {
+        // Slaves process Sync-POSTs. Any mode can access the Portal or Registration.
+        if ($mode !== 0 && !$isPortal && !$isRegister) {
             header("HTTP/1.1 403 Forbidden");
             echo "Access Denied: This instance is not configured as a Slave.";
             $this->LogMessage("Unauthorized WebHook access attempt: Instance is not a Slave.", KL_WARNING);
