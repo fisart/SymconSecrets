@@ -1534,8 +1534,9 @@ class SecretsManager extends IPSModuleStrict
 
         $authenticated = false;
         foreach ($vaultData['__AUTH__'] as $device) {
+            if (!is_array($device)) continue;
             // Match the hardware Credential ID sent by the browser
-            if ($device['credentialId'] === $data['rawId']) {
+            if (isset($device['credentialId']) && $device['credentialId'] === $data['rawId']) {
                 // Verify that the signed challenge matches our issued challenge
                 $clientData = json_decode(base64_decode($data['response']['clientDataJSON']), true);
                 $receivedChallenge = bin2hex(base64_decode(strtr($clientData['challenge'], '-_', '+/')));
