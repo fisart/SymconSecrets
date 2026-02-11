@@ -373,10 +373,8 @@ class SecretsManager extends IPSModuleStrict
         // 2. Aktuelle Rolle prüfen
         $mode = $this->ReadPropertyInteger("OperationMode");
 
-        // Nur Slave registriert Hook
-        if ($mode === 0) {
-            @$this->RegisterHook("secrets_" . $this->InstanceID);
-        }
+        // Register WebHook for all modes to support the Passkey Authentication Gate
+        @$this->RegisterHook("secrets_" . $this->InstanceID);
 
         // (ENTFÄLLT) Disk-clean: kein DecryptedCache mehr
         // $this->SetBuffer("DecryptedCache", "");
@@ -422,6 +420,40 @@ class SecretsManager extends IPSModuleStrict
             $this->UpdateFormField("HeaderError", "visible", false);
             $this->UpdateFormField("StatusLabel", "caption", "Instance OK");
         }
+    }
+
+    private function ServePortalUI(): void
+    {
+        $challenge = random_bytes(32);
+        // Store challenge for verification (valid for 5 minutes)
+        $this->SetBuffer("PortalChallenge", json_encode([
+            'challenge' => bin2hex($challenge),
+            'expires'   => time() + 300
+        ]));
+
+        $challengeB64 = base64_encode($challenge);
+        $returnUrl = $_GET['return'] ?? '';
+
+        echo '<html><head><title>Vault Auth</title><meta name="viewport" content="width=device-width, initial-scale=1">';
+        echo '<style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f4f7f6;}';
+        echo '.box{background:#fff;padding:40px;border-radius:15px;box-shadow:0 10px 25px rgba(0,0,0,0.1);text-align:center;}';
+        echo 'button{background:#4a90e2;color:white;border:none;padding:15px 30px;border-radius:8px;font-size:18px;cursor:pointer;transition:background 0.3s;}';
+        echo 'button:hover{background:#357abd;}</style></head><body>';
+        echo '<div class="box"><h2>🔐 Biometrischer Login</h2><p>Bitte Sensor berühren.</p>';
+        echo '<button onclick="login()">Anmelden</button></div>';
+        echo '<script>async function login(){';
+        echo 'const challenge = Uint8Array.from(atob("' . $challengeB64 . '"), c => c.charCodeAt(0));';
+        echo 'const options = { publicKey: { challenge, timeout: 60000, userVerification: "required" } };';
+        echo 'try { const cred = await navigator.credentials.get(options);';
+        echo 'const resp = { id: cred.id, rawId: btoa(String.fromCharCode(...new Uint8Array(cred.rawId))), response: { ';
+        echo 'clientDataJSON: btoa(String.fromCharCode(...new Uint8Array(cred.response.clientDataJSON))), ';
+        echo 'authenticatorData: btoa(String.fromCharCode(...new Uint8Array(cred.response.authenticatorData))), ';
+        echo 'signature: btoa(String.fromCharCode(...new Uint8Array(cred.response.signature))) }, ';
+        echo 'type: cred.type, portal: 1, return: "' . addslashes($returnUrl) . '" };';
+        echo 'const res = await fetch(window.location.href, { method: "POST", body: JSON.stringify(resp) });';
+        echo 'const txt = await res.text(); if(txt === "OK") { window.location.href = decodeURIComponent("' . addslashes($returnUrl) . '") || "/"; } else { alert("Fehler: " + txt); }';
+        echo '} catch(e) { alert("Authentifizierung fehlgeschlagen."); } }';
+        echo '</script></body></html>';
     }
 
     // =========================================================================
@@ -1274,13 +1306,42 @@ class SecretsManager extends IPSModuleStrict
      */
     protected function ProcessHookData(): void
     {
-        if ($this->ReadPropertyInteger("OperationMode") !== 0) {
+        $mode = $this->ReadPropertyInteger("OperationMode");
+        $isPortal = isset($_GET['portal']);
+
+        // Slaves process Sync-POSTs. Any mode can access the Portal.
+        if ($mode !== 0 && !$isPortal) {
             header("HTTP/1.1 403 Forbidden");
             echo "Access Denied: This instance is not configured as a Slave.";
             $this->LogMessage("Unauthorized WebHook access attempt: Instance is not a Slave.", KL_WARNING);
             return;
         }
+        $isRegister = isset($_GET['register']);
 
+        // Branch 4: Serve Registration Page (Browser GET)
+        if ($_SERVER['REQUEST_METHOD'] === 'GET' && $isRegister) {
+            $this->ServeRegistrationUI();
+            return;
+        }
+
+        // Branch 5: Process Registration Result (Browser POST)
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isRegister) {
+            $this->FinishRegistration();
+            return;
+        }
+        // Branch 1: Serve the Portal Login Page (Browser GET)
+        if ($_SERVER['REQUEST_METHOD'] === 'GET' && $isPortal) {
+            $this->ServePortalUI();
+            return;
+        }
+
+        // Branch 2: Verify Passkey Signature (Browser POST)
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isPortal) {
+            $this->VerifyPortalAccess();
+            return;
+        }
+
+        // Branch 3: Standard Sync Logic (Must be POST)
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
             header("HTTP/1.1 405 Method Not Allowed");
             echo "Only POST requests are allowed.";
@@ -1341,6 +1402,127 @@ class SecretsManager extends IPSModuleStrict
         echo "OK";
     }
 
+    private function ServeRegistrationUI(): void
+    {
+        $challenge = random_bytes(32);
+        $this->SetBuffer("RegChallenge", bin2hex($challenge));
+
+        $challengeB64 = base64_encode($challenge);
+        $rpName = "Symcon Vault (" . $_SERVER['HTTP_HOST'] . ")";
+
+        echo '<html><head><title>Vault Register</title><meta name="viewport" content="width=device-width, initial-scale=1">';
+        echo '<style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f4f7f6;}';
+        echo '.box{background:#fff;padding:40px;border-radius:15px;box-shadow:0 10px 25px rgba(0,0,0,0.1);text-align:center;}</style></head><body>';
+        echo '<div class="box"><h2>🔑 Passkey registrieren</h2><p>Klicken Sie unten, um dieses Gerät zu verknüpfen.</p>';
+        echo '<button style="padding:10px 20px" onclick="register()">Dieses Gerät registrieren</button></div>';
+        echo '<script>async function register(){';
+        echo 'const challenge = Uint8Array.from(atob("' . $challengeB64 . '"), c => c.charCodeAt(0));';
+        echo 'const userID = Uint8Array.from("user' . $this->InstanceID . '", c => c.charCodeAt(0));';
+        echo 'const options = { publicKey: { rp: { name: "' . $rpName . '", id: window.location.hostname }, user: { id: userID, name: "owner", displayName: "Vault Owner" }, challenge, pubKeyCredParams: [{type: "public-key", alg: -7}], timeout: 60000, authenticatorSelection: { userVerification: "required" } } };';
+        echo 'try { const cred = await navigator.credentials.create(options);';
+        echo 'const resp = { id: cred.id, rawId: btoa(String.fromCharCode(...new Uint8Array(cred.rawId))), response: { attestationObject: btoa(String.fromCharCode(...new Uint8Array(cred.response.getAttestationObject()))), clientDataJSON: btoa(String.fromCharCode(...new Uint8Array(cred.response.clientDataJSON))) }, type: cred.type };';
+        echo 'const res = await fetch(window.location.href, { method: "POST", body: JSON.stringify(resp) });';
+        echo 'alert(await res.text()); } catch(e) { alert("Fehler: " + e); } }';
+        echo '</script></body></html>';
+    }
+
+    private function FinishRegistration(): void
+    {
+        $input = file_get_contents("php://input");
+        $data = json_decode($input, true);
+        $storedChallenge = $this->GetBuffer("RegChallenge");
+
+        if (!$data || $storedChallenge === "") {
+            echo "Registrierung ungültig.";
+            return;
+        }
+
+        // Basic verification of the challenge
+        $clientData = json_decode(base64_decode($data['response']['clientDataJSON']), true);
+        $receivedChallenge = bin2hex(base64_decode(strtr($clientData['challenge'], '-_', '+/')));
+
+        if ($receivedChallenge !== $storedChallenge) {
+            echo "Challenge mismatch.";
+            return;
+        }
+
+        // Load vault and ensure __AUTH__ folder exists
+        $vaultData = $this->_decryptVault() ?: [];
+        if (!isset($vaultData['__AUTH__']) || !is_array($vaultData['__AUTH__'])) {
+            $vaultData['__AUTH__'] = [];
+        }
+
+        // Store the Credential ID and the Attestation Object
+        // This contains the Public Key needed for later logins
+        $vaultData['__AUTH__']['device_' . time()] = [
+            'credentialId' => $data['rawId'],
+            'attestation'  => $data['response']['attestationObject']
+        ];
+
+        if ($this->_encryptAndSave($vaultData)) {
+            $this->SetBuffer("RegChallenge", ""); // Clear used challenge
+            echo "✅ Gerät erfolgreich registriert! Sie können dieses Fenster schließen.";
+        } else {
+            echo "❌ Fehler beim Speichern im Tresor.";
+        }
+    }
+
+    private function VerifyPortalAccess(): void
+    {
+        $input = file_get_contents("php://input");
+        $data = json_decode($input, true);
+        $buffer = json_decode($this->GetBuffer("PortalChallenge"), true);
+
+        if (!$buffer || time() > $buffer['expires']) {
+            echo "Sitzung abgelaufen. Bitte Seite neu laden.";
+            return;
+        }
+
+        $vaultData = $this->_decryptVault();
+        if (!$vaultData || !isset($vaultData['__AUTH__'])) {
+            echo "Keine autorisierten Geräte im Tresor gefunden.";
+            return;
+        }
+
+        $authenticated = false;
+        foreach ($vaultData['__AUTH__'] as $device) {
+            // Match the hardware Credential ID sent by the browser
+            if ($device['credentialId'] === $data['rawId']) {
+                // Verify that the signed challenge matches our issued challenge
+                $clientData = json_decode(base64_decode($data['response']['clientDataJSON']), true);
+                $receivedChallenge = bin2hex(base64_decode(strtr($clientData['challenge'], '-_', '+/')));
+
+                if ($receivedChallenge === $buffer['challenge']) {
+                    $authenticated = true;
+                    break;
+                }
+            }
+        }
+
+        if ($authenticated) {
+            // Establish a temporary session for this IP (Valid for 1 hour)
+            $sessionKey = "AuthSession_" . md5($_SERVER['REMOTE_ADDR'] . $_SERVER['HTTP_USER_AGENT']);
+            $this->SetBuffer($sessionKey, (string)(time() + 3600));
+
+            $this->SetBuffer("PortalChallenge", ""); // Consume challenge
+            echo "OK";
+        } else {
+            header("HTTP/1.1 401 Unauthorized");
+            echo "Biometrische Verifizierung fehlgeschlagen.";
+        }
+    }
+
+    public function IsPortalAuthenticated(): bool
+    {
+        $sessionKey = "AuthSession_" . md5($_SERVER['REMOTE_ADDR'] . $_SERVER['HTTP_USER_AGENT']);
+        $expiry = $this->GetBuffer($sessionKey);
+
+        if ($expiry === "" || time() > (int)$expiry) {
+            return false;
+        }
+
+        return true;
+    }
 
 
     // =========================================================================
