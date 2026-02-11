@@ -1420,7 +1420,7 @@ class SecretsManager extends IPSModuleStrict
         echo 'const userID = Uint8Array.from("user' . $this->InstanceID . '", c => c.charCodeAt(0));';
         echo 'const options = { publicKey: { rp: { name: "' . $rpName . '", id: window.location.hostname }, user: { id: userID, name: "owner", displayName: "Vault Owner" }, challenge, pubKeyCredParams: [{type: "public-key", alg: -7}], timeout: 60000, authenticatorSelection: { userVerification: "required" } } };';
         echo 'try { const cred = await navigator.credentials.create(options);';
-        echo 'const resp = { id: cred.id, rawId: btoa(String.fromCharCode(...new Uint8Array(cred.rawId))), response: { attestationObject: btoa(String.fromCharCode(...new Uint8Array(cred.response.getAttestationObject()))), clientDataJSON: btoa(String.fromCharCode(...new Uint8Array(cred.response.clientDataJSON))) }, type: cred.type };';
+        echo 'const resp = { id: cred.id, rawId: btoa(String.fromCharCode(...new Uint8Array(cred.rawId))), response: { attestationObject: btoa(String.fromCharCode(...new Uint8Array(cred.response.attestationObject))), clientDataJSON: btoa(String.fromCharCode(...new Uint8Array(cred.response.clientDataJSON))) }, type: cred.type };';
         echo 'const res = await fetch(window.location.href, { method: "POST", body: JSON.stringify(resp) });';
         echo 'alert(await res.text()); } catch(e) { alert("Fehler: " + e); } }';
         echo '</script></body></html>';
