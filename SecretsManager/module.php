@@ -97,7 +97,7 @@ class SecretsManager extends IPSModuleStrict
                 $applySlaveOptions($element);
                 $name = $element['name'] ?? '';
 
-if ($name === 'HookInfo') {
+                if ($name === 'HookInfo') {
                     $element['caption'] = "Portal/Sync WebHook URL: /hook/secrets_" . $this->InstanceID;
                     $element['visible'] = true;
                 }
@@ -360,7 +360,7 @@ if ($name === 'HookInfo') {
     }
 
 
-public function ApplyChanges(): void
+    public function ApplyChanges(): void
     {
         parent::ApplyChanges();
 
@@ -1426,7 +1426,7 @@ public function ApplyChanges(): void
         echo '</script></body></html>';
     }
 
-private function FinishRegistration(): void
+    private function FinishRegistration(): void
     {
         $input = file_get_contents("php://input");
         $data = json_decode($input, true);
@@ -1474,7 +1474,7 @@ private function FinishRegistration(): void
         } else {
             echo "❌ Fehler beim Speichern im Tresor.";
         }
-    }
+
         $input = file_get_contents("php://input");
         $data = json_decode($input, true);
         $storedChallenge = $this->GetBuffer("RegChallenge");
