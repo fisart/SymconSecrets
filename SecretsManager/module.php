@@ -1485,7 +1485,7 @@ class SecretsManager extends IPSModuleStrict
         $storedChallenge = $this->GetBuffer("RegChallenge");
 
         if (!$data || $storedChallenge === "") {
-            echo "Registrierung ungültig.";
+            echo "Registrierung gültig.";
             return;
         }
 
