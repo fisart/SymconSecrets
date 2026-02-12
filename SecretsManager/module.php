@@ -1410,7 +1410,7 @@ class SecretsManager extends IPSModuleStrict
     private function ServeRegistrationUI(): void
     {
         $challenge = random_bytes(32);
-        $this->SetBuffer("RegChallenge_" . $_SERVER['REMOTE_ADDR'], bin2hex($challenge));
+        $this->SetBuffer("RegChallenge", bin2hex($challenge));
 
         $challengeB64 = base64_encode($challenge);
         $rpName = "Symcon Vault (" . $_SERVER['HTTP_HOST'] . ")";
@@ -1437,8 +1437,15 @@ class SecretsManager extends IPSModuleStrict
         $data = json_decode($input, true);
         $storedChallenge = $this->GetBuffer("RegChallenge");
 
-        if (!$data || $storedChallenge === "") {
-            echo "Registrierung ungültig.";
+        if (!$data) {
+            $this->LogMessage("Passkey Reg: Keine Daten empfangen.", KL_ERROR);
+            echo "Fehler: Keine Daten.";
+            return;
+        }
+
+        if ($storedChallenge === "") {
+            $this->LogMessage("Passkey Reg: Sicherheits-Puffer leer.", KL_ERROR);
+            echo "Fehler: Puffer leer.";
             return;
         }
 
@@ -1446,24 +1453,12 @@ class SecretsManager extends IPSModuleStrict
         $receivedChallenge = bin2hex(base64_decode(strtr($clientData['challenge'], '-_', '+/')));
 
         if ($receivedChallenge !== $storedChallenge) {
-            echo "Challenge mismatch.";
+            $this->LogMessage("Passkey Reg: Challenge mismatch. Empfangen: $receivedChallenge, Erwartet: $storedChallenge", KL_ERROR);
+            echo "Fehler: Challenge mismatch.";
             return;
         }
 
-        // Wir nutzen hier direkt die Rohdaten ohne die UI-Normalisierung
-        $vaultJson = $this->GetValue("Vault");
-        $vaultData = [];
-        if ($vaultJson !== "") {
-            $meta = json_decode($vaultJson, true);
-            $keyHex = $this->_readKey();
-            if ($keyHex && $meta) {
-                $decrypted = openssl_decrypt($meta['data'], $meta['cipher'] ?? "aes-128-gcm", hex2bin($keyHex), 0, hex2bin($meta['iv']), hex2bin($meta['tag']));
-                if ($decrypted !== false) {
-                    $vaultData = json_decode($decrypted, true) ?: [];
-                }
-            }
-        }
-
+        $vaultData = $this->_decryptVault() ?: [];
         if (!isset($vaultData['__AUTH__']) || !is_array($vaultData['__AUTH__'])) {
             $vaultData['__AUTH__'] = [];
         }
@@ -1475,47 +1470,10 @@ class SecretsManager extends IPSModuleStrict
 
         if ($this->_encryptAndSave($vaultData)) {
             $this->SetBuffer("RegChallenge", "");
-            echo "✅ Gerät erfolgreich registriert! Sie können dieses Fenster schließen.";
+            $this->LogMessage("Passkey Reg: Gerät erfolgreich registriert.", KL_MESSAGE);
+            echo "✅ Gerät erfolgreich registriert!";
         } else {
-            echo "❌ Fehler beim Speichern im Tresor.";
-        }
-
-        $input = file_get_contents("php://input");
-        $data = json_decode($input, true);
-        $storedChallenge = $this->GetBuffer("RegChallenge");
-
-        if (!$data || $storedChallenge === "") {
-            echo "Registrierung ungültig.";
-            return;
-        }
-
-        // Basic verification of the challenge
-        $clientData = json_decode(base64_decode($data['response']['clientDataJSON']), true);
-        $receivedChallenge = bin2hex(base64_decode(strtr($clientData['challenge'], '-_', '+/')));
-
-        if ($receivedChallenge !== $storedChallenge) {
-            echo "Challenge mismatch.";
-            return;
-        }
-
-        // Load vault and ensure __AUTH__ folder exists
-        $vaultData = $this->_decryptVault() ?: [];
-        if (!isset($vaultData['__AUTH__']) || !is_array($vaultData['__AUTH__'])) {
-            $vaultData['__AUTH__'] = [];
-        }
-
-        // Store the Credential ID and the Attestation Object
-        // This contains the Public Key needed for later logins
-        $vaultData['__AUTH__']['device_' . time()] = [
-            'credentialId' => $data['rawId'],
-            'attestation'  => $data['response']['attestationObject']
-        ];
-
-        if ($this->_encryptAndSave($vaultData)) {
-            $this->SetBuffer("RegChallenge", ""); // Clear used challenge
-            echo "✅ Gerät erfolgreich registriert! Sie können dieses Fenster schließen.";
-        } else {
-            echo "❌ Fehler beim Speichern im Tresor.";
+            echo "❌ Fehler beim Speichern.";
         }
     }
 
