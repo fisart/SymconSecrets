@@ -1309,6 +1309,15 @@ class SecretsManager extends IPSModuleStrict
         $mode = $this->ReadPropertyInteger("OperationMode");
         $isPortal = isset($_GET['portal']);
         $isRegister = isset($_GET['register']);
+        if ($isRegister) {
+            $vaultData = $this->_decryptVault();
+            $regPass = (is_array($vaultData) && isset($vaultData['RegistrationPassword'])) ? $vaultData['RegistrationPassword'] : '';
+            if ($regPass === '' || ($_GET['pass'] ?? '') !== $regPass) {
+                header("HTTP/1.1 403 Forbidden");
+                echo "Access Denied: Invalid or missing Registration Password.";
+                return;
+            }
+        }
 
         // Slaves process Sync-POSTs. Any mode can access the Portal or Registration.
         if ($mode !== 0 && !$isPortal && !$isRegister) {
