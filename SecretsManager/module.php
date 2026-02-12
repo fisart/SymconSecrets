@@ -1309,16 +1309,20 @@ class SecretsManager extends IPSModuleStrict
         $mode = $this->ReadPropertyInteger("OperationMode");
         $isPortal = isset($_GET['portal']);
         $isRegister = isset($_GET['register']);
+
+        // --- SECURITY GATE: Registration Password Check ---
         if ($isRegister) {
             $vaultData = $this->_decryptVault();
-            $regPass = (is_array($vaultData) && isset($vaultData['RegistrationPassword'])) ? $vaultData['RegistrationPassword'] : '';
+            // Zugriff auf den Record "RegistrationPassword" und das Feld "PW"
+            $regPass = $vaultData['RegistrationPassword']['PW'] ?? '';
             if ($regPass === '' || ($_GET['pass'] ?? '') !== $regPass) {
                 header("HTTP/1.1 403 Forbidden");
-                echo "Access Denied: Invalid or missing Registration Password.";
+                echo "Access Denied: Invalid Registration Password.";
                 return;
             }
         }
 
+        // --- SECURITY GATE: Mode & Portal Access ---
         // Slaves process Sync-POSTs. Any mode can access the Portal or Registration.
         if ($mode !== 0 && !$isPortal && !$isRegister) {
             header("HTTP/1.1 403 Forbidden");
@@ -1326,32 +1330,32 @@ class SecretsManager extends IPSModuleStrict
             $this->LogMessage("Unauthorized WebHook access attempt: Instance is not a Slave.", KL_WARNING);
             return;
         }
-        $isRegister = isset($_GET['register']);
 
-        // Branch 4: Serve Registration Page (Browser GET)
+        // Branch 1: Serve Registration Page (Browser GET)
         if ($_SERVER['REQUEST_METHOD'] === 'GET' && $isRegister) {
             $this->ServeRegistrationUI();
             return;
         }
 
-        // Branch 5: Process Registration Result (Browser POST)
+        // Branch 2: Process Registration Result (Browser POST)
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isRegister) {
             $this->FinishRegistration();
             return;
         }
-        // Branch 1: Serve the Portal Login Page (Browser GET)
+
+        // Branch 3: Serve the Portal Login Page (Browser GET)
         if ($_SERVER['REQUEST_METHOD'] === 'GET' && $isPortal) {
             $this->ServePortalUI();
             return;
         }
 
-        // Branch 2: Verify Passkey Signature (Browser POST)
+        // Branch 4: Verify Passkey Signature (Browser POST)
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isPortal) {
             $this->VerifyPortalAccess();
             return;
         }
 
-        // Branch 3: Standard Sync Logic (Must be POST)
+        // Branch 5: Standard Sync Logic (Must be POST)
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
             header("HTTP/1.1 405 Method Not Allowed");
             echo "Only POST requests are allowed.";
@@ -1366,27 +1370,21 @@ class SecretsManager extends IPSModuleStrict
             return;
         }
 
-        // Optional Basic Auth: HookUser from property, HookPass from system.vault
+        // Optional Basic Auth Check
         $hookUser = trim($this->ReadPropertyString("HookUser"));
-        $hookPass = $this->getHookPass(); // from encrypted system file
+        $hookPass = $this->getHookPass();
 
         if ($hookUser !== "" && $hookPass !== "") {
-            if (
-                !isset($_SERVER['PHP_AUTH_USER']) ||
-                $_SERVER['PHP_AUTH_USER'] !== $hookUser ||
-                ($_SERVER['PHP_AUTH_PW'] ?? '') !== $hookPass
-            ) {
+            if (!isset($_SERVER['PHP_AUTH_USER']) || $_SERVER['PHP_AUTH_USER'] !== $hookUser || ($_SERVER['PHP_AUTH_PW'] ?? '') !== $hookPass) {
                 header('WWW-Authenticate: Basic realm="SecretsManager"');
                 header('HTTP/1.0 401 Unauthorized');
                 echo 'Authentication Required';
                 return;
             }
-        } elseif ($hookUser !== "" && $hookPass === "") {
-            // Misconfig warning: user set but pass missing -> BasicAuth effectively OFF
-            $this->LogMessage("Warning: HookUser set but HookPass missing in system file. BasicAuth not enforced.", KL_WARNING);
         }
 
-        $data = json_decode(file_get_contents("php://input"), true);
+        $input = file_get_contents("php://input");
+        $data = json_decode($input, true);
 
         if (!isset($data['auth']) || $data['auth'] !== $expectedToken) {
             header("HTTP/1.1 403 Forbidden");
@@ -1399,9 +1397,6 @@ class SecretsManager extends IPSModuleStrict
             $allow = $this->ReadPropertyBoolean("AllowKeyTransport");
             if ($allow) {
                 $this->_writeKey((string)$data['key']);
-                $this->LogMessage("Key received via sync and written (AllowKeyTransport=true).", KL_MESSAGE);
-            } else {
-                $this->LogMessage("Key received via sync but ignored (AllowKeyTransport=false).", KL_WARNING);
             }
         }
 
