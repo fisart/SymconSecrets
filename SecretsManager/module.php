@@ -1410,7 +1410,7 @@ class SecretsManager extends IPSModuleStrict
     private function ServeRegistrationUI(): void
     {
         $challenge = random_bytes(32);
-        $this->SetBuffer("RegChallenge", bin2hex($challenge));
+        $this->SetBuffer("RegChallenge_" . $_SERVER['REMOTE_ADDR'], bin2hex($challenge));
 
         $challengeB64 = base64_encode($challenge);
         $rpName = "Symcon Vault (" . $_SERVER['HTTP_HOST'] . ")";
@@ -1485,7 +1485,7 @@ class SecretsManager extends IPSModuleStrict
         $storedChallenge = $this->GetBuffer("RegChallenge");
 
         if (!$data || $storedChallenge === "") {
-            echo "Registrierung gültig.";
+            echo "Registrierung ungültig.";
             return;
         }
 
