@@ -1484,42 +1484,49 @@ class SecretsManager extends IPSModuleStrict
         $input = file_get_contents("php://input");
         $data = json_decode($input, true);
 
-        // --- KORREKTUR: SID auslesen und spezifischen Puffer laden ---
         $sid = $data['sid'] ?? '';
         $buffer = json_decode($this->GetBuffer("PortalChallenge_" . $sid), true);
 
         if (!$buffer || time() > $buffer['expires']) {
-            $this->LogMessage("Portal Auth: Challenge abgelaufen oder SID ungültig ($sid).", KL_ERROR);
+            $this->LogMessage("Portal Auth DEBUG: Puffer abgelaufen oder SID ungültig. SID: " . $sid, KL_ERROR);
             echo "Sitzung abgelaufen. Bitte Seite neu laden.";
             return;
         }
 
         $vaultData = $this->_decryptVault();
         if (!$vaultData || !isset($vaultData['__AUTH__'])) {
-            $this->LogMessage("Portal Auth: Keine __AUTH__ Daten im Tresor gefunden.", KL_ERROR);
+            $this->LogMessage("Portal Auth DEBUG: Keine __AUTH__ Daten im Tresor gefunden.", KL_ERROR);
             echo "Keine autorisierten Geräte im Tresor gefunden.";
             return;
         }
 
         $authenticated = false;
-        $receivedChallenge = "";
+        $browserId = $data['rawId'] ?? 'FEHLT';
+
+        // Log: Was sendet der Browser?
+        $this->LogMessage("Portal Auth DEBUG: Browser-ID: " . $browserId, KL_MESSAGE);
 
         foreach ($vaultData['__AUTH__'] as $deviceId => $device) {
             if (!is_array($device)) continue;
 
-            // 1. Prüfung der Credential ID
-            if (isset($device['credentialId']) && $device['credentialId'] === $data['rawId']) {
+            $storedId = $device['credentialId'] ?? 'FEHLT';
+            // Log: Was ist im Tresor gespeichert?
+            $this->LogMessage("Portal Auth DEBUG: Prüfe Tresor-Gerät ($deviceId) - ID: " . $storedId, KL_MESSAGE);
 
-                // 2. Prüfung der Challenge
+            if ($storedId === $browserId) {
+                $this->LogMessage("Portal Auth DEBUG: ID Treffer! Prüfe nun Challenge...", KL_MESSAGE);
+
                 $clientData = json_decode(base64_decode(strtr($data['response']['clientDataJSON'], '-_', '+/')), true);
                 $receivedChallenge = bin2hex(base64_decode(strtr($clientData['challenge'], '-_', '+/')));
+                $expectedChallenge = $buffer['challenge'];
 
-                if ($receivedChallenge === $buffer['challenge']) {
+                // Log: Challenge-Vergleich
+                $this->LogMessage("Portal Auth DEBUG: Challenge Empfangen: " . $receivedChallenge, KL_MESSAGE);
+                $this->LogMessage("Portal Auth DEBUG: Challenge Erwartet:  " . $expectedChallenge, KL_MESSAGE);
+
+                if ($receivedChallenge === $expectedChallenge) {
                     $authenticated = true;
-                    $this->LogMessage("Portal Auth: Erfolg für Gerät " . $deviceId, KL_MESSAGE);
                     break;
-                } else {
-                    $this->LogMessage("Portal Auth: Challenge mismatch. Empfangen: $receivedChallenge, Erwartet: " . $buffer['challenge'], KL_ERROR);
                 }
             }
         }
@@ -1527,11 +1534,10 @@ class SecretsManager extends IPSModuleStrict
         if ($authenticated) {
             $sessionKey = "AuthSession_" . md5($_SERVER['REMOTE_ADDR'] . $_SERVER['HTTP_USER_AGENT']);
             $this->SetBuffer($sessionKey, (string)(time() + 3600));
-            // --- KORREKTUR: Spezifischen Puffer leeren ---
             $this->SetBuffer("PortalChallenge_" . $sid, "");
             echo "OK";
         } else {
-            $this->LogMessage("Portal Auth: Verifizierung fehlgeschlagen (ID nicht gefunden oder Signatur ungültig).", KL_ERROR);
+            $this->LogMessage("Portal Auth DEBUG: Keine Übereinstimmung gefunden.", KL_ERROR);
             header("HTTP/1.1 401 Unauthorized");
             echo "Biometrische Verifizierung fehlgeschlagen.";
         }
