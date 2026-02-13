@@ -1483,10 +1483,13 @@ class SecretsManager extends IPSModuleStrict
     {
         $input = file_get_contents("php://input");
         $data = json_decode($input, true);
-        $buffer = json_decode($this->GetBuffer("PortalChallenge"), true);
+
+        // --- KORREKTUR: SID auslesen und spezifischen Puffer laden ---
+        $sid = $data['sid'] ?? '';
+        $buffer = json_decode($this->GetBuffer("PortalChallenge_" . $sid), true);
 
         if (!$buffer || time() > $buffer['expires']) {
-            $this->LogMessage("Portal Auth: Challenge abgelaufen oder nicht vorhanden.", KL_ERROR);
+            $this->LogMessage("Portal Auth: Challenge abgelaufen oder SID ungültig ($sid).", KL_ERROR);
             echo "Sitzung abgelaufen. Bitte Seite neu laden.";
             return;
         }
@@ -1524,7 +1527,8 @@ class SecretsManager extends IPSModuleStrict
         if ($authenticated) {
             $sessionKey = "AuthSession_" . md5($_SERVER['REMOTE_ADDR'] . $_SERVER['HTTP_USER_AGENT']);
             $this->SetBuffer($sessionKey, (string)(time() + 3600));
-            $this->SetBuffer("PortalChallenge", "");
+            // --- KORREKTUR: Spezifischen Puffer leeren ---
+            $this->SetBuffer("PortalChallenge_" . $sid, "");
             echo "OK";
         } else {
             $this->LogMessage("Portal Auth: Verifizierung fehlgeschlagen (ID nicht gefunden oder Signatur ungültig).", KL_ERROR);
