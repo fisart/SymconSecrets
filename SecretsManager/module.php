@@ -424,9 +424,11 @@ class SecretsManager extends IPSModuleStrict
 
     private function ServePortalUI(): void
     {
+        $sid = bin2hex(random_bytes(8));
         $challenge = random_bytes(32);
-        // Store challenge for verification (valid for 5 minutes)
-        $this->SetBuffer("PortalChallenge", json_encode([
+
+        // Eindeutigen Puffer für diese Session speichern
+        $this->SetBuffer("PortalChallenge_" . $sid, json_encode([
             'challenge' => bin2hex($challenge),
             'expires'   => time() + 300
         ]));
@@ -449,7 +451,7 @@ class SecretsManager extends IPSModuleStrict
         echo 'clientDataJSON: btoa(String.fromCharCode(...new Uint8Array(cred.response.clientDataJSON))), ';
         echo 'authenticatorData: btoa(String.fromCharCode(...new Uint8Array(cred.response.authenticatorData))), ';
         echo 'signature: btoa(String.fromCharCode(...new Uint8Array(cred.response.signature))) }, ';
-        echo 'type: cred.type, portal: 1, return: "' . addslashes($returnUrl) . '" };';
+        echo 'type: cred.type, portal: 1, sid: "' . $sid . '", return: "' . addslashes($returnUrl) . '" };';
         echo 'const res = await fetch(window.location.href, { method: "POST", body: JSON.stringify(resp) });';
         echo 'const txt = await res.text(); if(txt === "OK") { window.location.href = decodeURIComponent("' . addslashes($returnUrl) . '") || "/"; } else { alert("Fehler: " + txt); }';
         echo '} catch(e) { alert("Authentifizierung fehlgeschlagen."); } }';
