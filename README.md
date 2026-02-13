@@ -135,20 +135,6 @@ if (!SEC_IsPortalAuthenticated($instanceID)) {
 // Ab hier ist der Zugriff sicher
 echo "Willkommen! Ihr Zugriff wurde biometrisch verifiziert.";
 ```
-
-
-
-### Zeilen-Zählung & Sanity Check
-
-| Metrik | Vorherige Version | Neue detaillierte Version |
-| :--- | :--- | :--- |
-| **Zeilenanzahl** | ~572 Zeilen | ~710 Zeilen |
-| **Zunahme** | +138 Zeilen | Umfassende Anleitung für Passkeys inkl. Code-Beispielen und URLs. |
-
-**Begründung:** Die Zunahme resultiert aus der detaillierten Schritt-für-Schritt-Anleitung für die Registrierung und Nutzung der Passkeys sowie den PHP-Code-Beispielen für die Skript-Integration in beiden Sprachen.
-
-**Das Projekt Password Vault ist nun auf dem aktuellsten Stand.** Haben Sie weitere Anweisungen?
-
 English Summary (Updated)
 
 SymconSecrets is a secure credential manager for IP-Symcon that encrypts secrets using AES-128-GCM.
