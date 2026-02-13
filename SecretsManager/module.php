@@ -1484,40 +1484,48 @@ class SecretsManager extends IPSModuleStrict
         $buffer = json_decode($this->GetBuffer("PortalChallenge"), true);
 
         if (!$buffer || time() > $buffer['expires']) {
+            $this->LogMessage("Portal Auth: Challenge abgelaufen oder nicht vorhanden.", KL_ERROR);
             echo "Sitzung abgelaufen. Bitte Seite neu laden.";
             return;
         }
 
         $vaultData = $this->_decryptVault();
         if (!$vaultData || !isset($vaultData['__AUTH__'])) {
+            $this->LogMessage("Portal Auth: Keine __AUTH__ Daten im Tresor gefunden.", KL_ERROR);
             echo "Keine autorisierten Geräte im Tresor gefunden.";
             return;
         }
 
         $authenticated = false;
-        foreach ($vaultData['__AUTH__'] as $device) {
+        $receivedChallenge = "";
+
+        foreach ($vaultData['__AUTH__'] as $deviceId => $device) {
             if (!is_array($device)) continue;
-            // Match the hardware Credential ID sent by the browser
+
+            // 1. Prüfung der Credential ID
             if (isset($device['credentialId']) && $device['credentialId'] === $data['rawId']) {
-                // Verify that the signed challenge matches our issued challenge
-                $clientData = json_decode(base64_decode($data['response']['clientDataJSON']), true);
+
+                // 2. Prüfung der Challenge
+                $clientData = json_decode(base64_decode(strtr($data['response']['clientDataJSON'], '-_', '+/')), true);
                 $receivedChallenge = bin2hex(base64_decode(strtr($clientData['challenge'], '-_', '+/')));
 
                 if ($receivedChallenge === $buffer['challenge']) {
                     $authenticated = true;
+                    $this->LogMessage("Portal Auth: Erfolg für Gerät " . $deviceId, KL_MESSAGE);
                     break;
+                } else {
+                    $this->LogMessage("Portal Auth: Challenge mismatch. Empfangen: $receivedChallenge, Erwartet: " . $buffer['challenge'], KL_ERROR);
                 }
             }
         }
 
         if ($authenticated) {
-            // Establish a temporary session for this IP (Valid for 1 hour)
             $sessionKey = "AuthSession_" . md5($_SERVER['REMOTE_ADDR'] . $_SERVER['HTTP_USER_AGENT']);
             $this->SetBuffer($sessionKey, (string)(time() + 3600));
-
-            $this->SetBuffer("PortalChallenge", ""); // Consume challenge
+            $this->SetBuffer("PortalChallenge", "");
             echo "OK";
         } else {
+            $this->LogMessage("Portal Auth: Verifizierung fehlgeschlagen (ID nicht gefunden oder Signatur ungültig).", KL_ERROR);
             header("HTTP/1.1 401 Unauthorized");
             echo "Biometrische Verifizierung fehlgeschlagen.";
         }
