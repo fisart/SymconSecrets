@@ -1365,18 +1365,15 @@ class SecretsManager extends IPSModuleStrict
         $isRegister = isset($_GET['register']);
         $isAdmin = isset($_GET['admin']);
 
-        // --- ADMIN DASHBOARD GATE ---
+        // --- GATE 1: Admin Dashboard (Password or Passkey) ---
         if ($isAdmin) {
-            // 1. Prüfen, ob bereits biometrisch eingeloggt
             if ($this->IsPortalAuthenticated()) {
                 $this->ServeAdminDashboard();
                 return;
             }
-            // 2. Falls nicht, Passwort-Check für den Erstzugriff
             $vaultData = $this->_decryptVault();
             $adminPass = $vaultData['AdminPortal']['PW'] ?? '';
             if ($adminPass !== '' && ($_GET['pass'] ?? '') === $adminPass) {
-                // Sitzung starten (damit ab jetzt der Passkey reicht)
                 $sessionKey = "AuthSession_" . md5($_SERVER['REMOTE_ADDR'] . $_SERVER['HTTP_USER_AGENT']);
                 $this->SetBuffer($sessionKey, (string)(time() + 3600));
                 $this->ServeAdminDashboard();
@@ -1386,12 +1383,11 @@ class SecretsManager extends IPSModuleStrict
             echo "Access Denied: Admin authentication required.";
             return;
         }
-        // --- SECURITY GATE: Registration Password Check ---
+
+        // --- GATE 2: Registration Password Check ---
         if ($isRegister) {
             $vaultData = $this->_decryptVault();
-            // Zugriff auf den Record "RegistrationPassword" und das Feld "PW"
             $regPass = $vaultData['RegistrationPassword']['PW'] ?? '';
-            $this->LogMessage("DEBUG REG: Gefunden: '$regPass' | Erhalten: '" . ($_GET['pass'] ?? '') . "'", KL_MESSAGE);
             if ($regPass === '' || ($_GET['pass'] ?? '') !== $regPass) {
                 header("HTTP/1.1 403 Forbidden");
                 echo "Access Denied: Invalid Registration Password.";
@@ -1399,104 +1395,53 @@ class SecretsManager extends IPSModuleStrict
             }
         }
 
-        // --- SECURITY GATE: Mode & Portal Access ---
-        // Slaves process Sync-POSTs. Any mode can access the Portal or Registration.
+        // --- GATE 3: Mode & Standard Portal Access ---
         if ($mode !== 0 && !$isPortal && !$isRegister) {
             header("HTTP/1.1 403 Forbidden");
             echo "Access Denied: This instance is not configured as a Slave.";
-            $this->LogMessage("Unauthorized WebHook access attempt: Instance is not a Slave.", KL_WARNING);
             return;
         }
 
-        // Branch 1: Serve Registration Page (Browser GET)
+        // --- ROUTING ---
         if ($_SERVER['REQUEST_METHOD'] === 'GET' && $isRegister) {
             $this->ServeRegistrationUI();
             return;
         }
-
-        // Branch 2: Process Registration Result (Browser POST)
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isRegister) {
             $this->FinishRegistration();
             return;
         }
-
-        // Branch 3: Serve the Portal Login Page (Browser GET)
         if ($_SERVER['REQUEST_METHOD'] === 'GET' && $isPortal) {
             $this->ServePortalUI();
             return;
         }
-
-        // Branch 4: Verify Passkey Signature (Browser POST)
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isPortal) {
             $this->VerifyPortalAccess();
             return;
         }
 
-        // Branch 5: Standard Sync Logic (Must be POST)
-        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-            header("HTTP/1.1 405 Method Not Allowed");
-            echo "Only POST requests are allowed.";
-            return;
-        }
-
-        $expectedToken = $this->getAuthToken();
-        if ($expectedToken === "") {
-            header("HTTP/1.1 500 Internal Server Error");
-            echo "Slave not configured: missing auth token";
-            $this->LogMessage("WebHook Error: Slave has no AuthToken in encrypted system file.", KL_ERROR);
-            return;
-        }
-
-        // Optional Basic Auth Check
-        $hookUser = trim($this->ReadPropertyString("HookUser"));
-        $hookPass = $this->getHookPass();
-
-        if ($hookUser !== "" && $hookPass !== "") {
-            if (!isset($_SERVER['PHP_AUTH_USER']) || $_SERVER['PHP_AUTH_USER'] !== $hookUser || ($_SERVER['PHP_AUTH_PW'] ?? '') !== $hookPass) {
-                header('WWW-Authenticate: Basic realm="SecretsManager"');
-                header('HTTP/1.0 401 Unauthorized');
-                echo 'Authentication Required';
+        // Standard Sync Logic (Slave only)
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $input = file_get_contents("php://input");
+            $data = json_decode($input, true);
+            $expectedToken = $this->getAuthToken();
+            if (!isset($data['auth']) || $data['auth'] !== $expectedToken) {
+                header("HTTP/1.1 403 Forbidden");
+                echo "Invalid Sync Token";
                 return;
             }
-        }
-
-        $input = file_get_contents("php://input");
-        $data = json_decode($input, true);
-
-        if (!isset($data['auth']) || $data['auth'] !== $expectedToken) {
-            header("HTTP/1.1 403 Forbidden");
-            echo "Invalid Sync Token";
-            $this->LogMessage("WebHook Error: Received an invalid or missing Sync Token.", KL_ERROR);
-            return;
-        }
-
-        if (isset($data['key'])) {
-            $allow = $this->ReadPropertyBoolean("AllowKeyTransport");
-            if ($allow) {
-                $this->_writeKey((string)$data['key']);
+            // Merging logic here...
+            if (isset($data['vault'])) {
+                $currentVault = $this->_decryptVault() ?: [];
+                $this->SetValue("Vault", (string)$data['vault']);
+                $masterVault = $this->_decryptVault() ?: [];
+                if (isset($currentVault['__AUTH__']) && is_array($currentVault['__AUTH__'])) {
+                    $masterVault['__AUTH__'] = array_merge($masterVault['__AUTH__'] ?? [], $currentVault['__AUTH__']);
+                }
+                $this->_encryptAndSave($masterVault);
             }
+            echo "OK";
         }
-
-        if (isset($data['vault'])) {
-            // --- NEU: SICHERES MERGING FÜR PASSKEYS ---
-            // 1. Lokalen Ist-Zustand laden (enthält die für diesen Slave gültigen Keys)
-            $currentVault = $this->_decryptVault() ?: [];
-
-            // 2. Master-Inhalt temporär anwenden um ihn zu entschlüsseln
-            $this->SetValue("Vault", (string)$data['vault']);
-            $masterVault = $this->_decryptVault() ?: [];
-
-            // 3. __AUTH__ Ordner zusammenführen (lokale Keys bleiben erhalten)
-            if (isset($currentVault['__AUTH__']) && is_array($currentVault['__AUTH__'])) {
-                $masterVault['__AUTH__'] = array_merge($masterVault['__AUTH__'] ?? [], $currentVault['__AUTH__']);
-            }
-
-            // 4. Finalen, kombinierten Tresor verschlüsselt speichern
-            $this->_encryptAndSave($masterVault);
-            $this->LogMessage("Portal Sync: Tresor vom Master aktualisiert, lokale Passkeys erhalten.", KL_MESSAGE);
-        }
-
-        echo "OK";
     }
 
     private function ServeRegistrationUI(): void
