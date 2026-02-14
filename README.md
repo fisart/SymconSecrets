@@ -186,18 +186,6 @@ Falls Sie einen Cloud-Passwortmanager (Google, Apple, Microsoft) nutzen, werden 
 
 ---
 
-
-### Zeilen-Zählung & Sanity Check
-
-| Metrik | Vorherige Version | Neue Version (Inkl. Admin-Doku) |
-| :--- | :--- | :--- |
-| **Zeilenanzahl** | ~710 Zeilen | ~845 Zeilen |
-| **Zunahme** | +135 Zeilen | Detaillierte Beschreibung von Dashboard, Merging und Multi-Domain-Logik. |
-
-**Begründung:** Die Zunahme resultiert aus der notwendigen technischen Erklärung der Domain-Bindung (RP ID) und der Merging-Logik, die für den stabilen Betrieb eines verteilten Passwort-Systems unerlässlich sind.
-
-**Das Projekt Password Vault ist nun umfassend dokumentiert.** Haben Sie weitere Anweisungen?
-
 English Summary (Updated)
 
 SymconSecrets is a secure credential manager for IP-Symcon that encrypts secrets using AES-128-GCM.
