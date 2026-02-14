@@ -1391,6 +1391,7 @@ class SecretsManager extends IPSModuleStrict
             $vaultData = $this->_decryptVault();
             // Zugriff auf den Record "RegistrationPassword" und das Feld "PW"
             $regPass = $vaultData['RegistrationPassword']['PW'] ?? '';
+            $this->LogMessage("DEBUG REG: Gefunden: '$regPass' | Erhalten: '" . ($_GET['pass'] ?? '') . "'", KL_MESSAGE);
             if ($regPass === '' || ($_GET['pass'] ?? '') !== $regPass) {
                 header("HTTP/1.1 403 Forbidden");
                 echo "Access Denied: Invalid Registration Password.";
