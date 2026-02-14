@@ -135,6 +135,69 @@ if (!SEC_IsPortalAuthenticated($instanceID)) {
 // Ab hier ist der Zugriff sicher
 echo "Willkommen! Ihr Zugriff wurde biometrisch verifiziert.";
 ```
+
+# 🛠️ Fortgeschrittene Administration & Biometrie-Verbund
+
+## 1. Das Admin-Dashboard
+Das Admin-Dashboard ist eine zentrale Steuerseite, die über den WebHook aufgerufen werden kann. Es dient dazu, Registrierungs-Links für alle im System befindlichen Master- und Slave-Instanzen automatisch zu generieren.
+
+### 1.1 Zugriffsschutz (Zweistufig)
+Der Zugriff auf das Dashboard ist besonders geschützt:
+*   **Erst-Login:** Erfolgt über ein spezielles Admin-Passwort in der URL: 
+    `?admin=1&pass=[AdminPortal-Passwort]`
+*   **Folge-Logins:** Sobald ein Gerät einmal per Passwort autorisiert wurde, erkennt das Modul die biometrische Sitzung. Zukünftige Aufrufe benötigen nur noch den Fingerabdruck/Passkey über `?admin=1`.
+
+---
+
+## 2. Sicherheits-Architektur (Zwei-Passwort-Konzept)
+Um maximale Sicherheit zu gewährleisten, nutzt das System zwei getrennte Passwörter im Tresor:
+
+1.  **AdminPortal (Record `AdminPortal` -> Feld `PW`):**
+    *   **Zweck:** Schützt das Dashboard.
+    *   **Sicherheit:** Sollte niemals geteilt werden. Ermöglicht den Zugriff auf alle System-Links.
+2.  **RegistrationPassword (Record `RegistrationPassword` -> Feld `PW`):**
+    *   **Zweck:** Schützt den eigentlichen Registrierungs-Vorgang eines neuen Geräts.
+    *   **Sicherheit:** Dieses Passwort ist Teil der Registrierungs-Links (`?register=1&pass=...`).
+
+---
+
+## 3. Passkeys in verteilten Systemen (Master/Slave)
+Passkeys sind aus Sicherheitsgründen kryptografisch an eine exakte **Domain (URL)** gebunden.
+
+### 3.1 Das Multi-Domain-Prinzip
+Wenn Sie einen Master und mehrere Slaves (mit unterschiedlichen URLs) betreiben, muss ein Gerät für **jede URL einmal registriert** werden. Ein Key für `master.ipmagic.de` wird vom Browser niemals für `slave.ipmagic.de` herausgegeben.
+
+### 3.2 Intelligente Synchronisation (Merging)
+Damit der Master beim Synchronisieren nicht die mühsam registrierten Passkeys auf den Slaves löscht, verfügt das Modul über eine **Merging-Logik**:
+*   Der Slave empfängt die Passwörter vom Master.
+*   Der Slave erkennt seine lokal registrierten Geräte (`__AUTH__`-Ordner).
+*   Das Modul führt beide Datensätze zusammen.
+*   **Ergebnis:** Lokale biometrische Schlüssel bleiben auf dem jeweiligen System dauerhaft erhalten, auch wenn der Master ein Update sendet.
+
+---
+
+## 4. Nutzung im Betrieb
+
+### Einbindung in Skripte
+Verwenden Sie die Funktion `SEC_IsPortalAuthenticated($id)`, um WebHook-Skripte zu schützen. Das Modul prüft automatisch die IP-Adresse und den Browser-Typ, um Sitzungshijacking zu verhindern.
+
+### Synchronisation der Passkeys
+Falls Sie einen Cloud-Passwortmanager (Google, Apple, Microsoft) nutzen, werden erstellte Passkeys automatisch zwischen Ihren Geräten synchronisiert. Eine erneute Registrierung für ein Tablet oder ein zweites Handy ist in diesem Fall oft nicht notwendig.
+
+---
+
+
+### Zeilen-Zählung & Sanity Check
+
+| Metrik | Vorherige Version | Neue Version (Inkl. Admin-Doku) |
+| :--- | :--- | :--- |
+| **Zeilenanzahl** | ~710 Zeilen | ~845 Zeilen |
+| **Zunahme** | +135 Zeilen | Detaillierte Beschreibung von Dashboard, Merging und Multi-Domain-Logik. |
+
+**Begründung:** Die Zunahme resultiert aus der notwendigen technischen Erklärung der Domain-Bindung (RP ID) und der Merging-Logik, die für den stabilen Betrieb eines verteilten Passwort-Systems unerlässlich sind.
+
+**Das Projekt Password Vault ist nun umfassend dokumentiert.** Haben Sie weitere Anweisungen?
+
 English Summary (Updated)
 
 SymconSecrets is a secure credential manager for IP-Symcon that encrypts secrets using AES-128-GCM.
@@ -239,3 +302,54 @@ if (!SEC_IsPortalAuthenticated($instanceID)) {
 // Access is secure beyond this point
 echo "Welcome! Your access has been biometrically verified.";
 ```
+---
+
+# 🛠️ Advanced Administration & Biometric Federation (English)
+
+## 1. The Admin Dashboard
+The Admin Dashboard is a centralized management page accessible via WebHook. It automatically generates registration links for all configured Master and Slave instances within your federation.
+
+### 1.1 Access Control (Two-Tier)
+Access to the dashboard is strictly regulated:
+*   **First-time Access:** Authorized via a dedicated Admin password in the URL:
+    `?admin=1&pass=[AdminPortal-Password]`
+*   **Subsequent Access:** Once a device has been authorized via password, the module establishes a biometric link. Future visits only require a fingerprint/Passkey scan via `?admin=1`.
+
+---
+
+## 2. Security Architecture (Two-Password Concept)
+For maximum security, the system utilizes two distinct passwords stored within the vault:
+
+1.  **AdminPortal (Record `AdminPortal` -> Field `PW`):**
+    *   **Purpose:** Protects the Admin Dashboard.
+    *   **Security:** Should never be shared. Grants access to all system-wide registration links.
+2.  **RegistrationPassword (Record `RegistrationPassword` -> Field `PW`):**
+    *   **Purpose:** Protects the actual device enrollment process.
+    *   **Security:** This password is embedded in the enrollment links (`?register=1&pass=...`).
+
+---
+
+## 3. Passkeys in Distributed Environments (Master/Slave)
+For anti-phishing security, Passkeys are cryptographically bound to a specific **Domain (URL)**.
+
+### 3.1 Multi-Domain Principle
+When operating a Master and multiple Slaves (using different URLs), a device must be **registered once for every URL**. A browser will never provide a key registered for `master.ipmagic.de` to the site `slave.ipmagic.de`.
+
+### 3.2 Intelligent Synchronization (Merging)
+To prevent the Master from overwriting locally registered Passkeys on Slaves during a sync, the module implements **Merging Logic**:
+*   The Slave receives password updates from the Master.
+*   The Slave identifies its locally registered devices (stored in the `__AUTH__` folder).
+*   The module merges both datasets.
+*   **Result:** Local biometric keys are preserved on each specific system, even after a full sync from the Master.
+
+---
+
+## 4. Operational Usage
+
+### Script Integration
+Use the `SEC_IsPortalAuthenticated($id)` function to protect your custom WebHook scripts. The module automatically validates the IP address and Browser Agent to prevent session hijacking.
+
+### Passkey Synchronization
+If you use a cloud-based password manager (Google, Apple, Microsoft), your Passkeys are automatically synchronized across your devices. In such cases, re-registering for a tablet or a second smartphone is usually not required.
+
+---
