@@ -1302,6 +1302,58 @@ class SecretsManager extends IPSModuleStrict
         return hash('sha256', $der);
     }
 
+    private function ServeAdminDashboard(): void
+    {
+        $vault = $this->_decryptVault();
+        if ($vault === false) {
+            echo "Fehler: Tresor konnte nicht entschlüsselt werden.";
+            return;
+        }
+
+        // 1. Das globale Registrierungspasswort holen
+        $regPass = $vault['RegistrationPassword']['PW'] ?? '';
+        if ($regPass === '') {
+            echo "Fehler: 'RegistrationPassword' -> 'PW' nicht im Tresor gefunden.";
+            return;
+        }
+
+        echo '<html><head><title>Admin Dashboard</title><meta name="viewport" content="width=device-width, initial-scale=1">';
+        echo '<style>body{font-family:sans-serif;background:#f4f7f6;padding:20px;color:#333;}';
+        echo '.box{background:#fff;padding:25px;border-radius:12px;box-shadow:0 5px 20px rgba(0,0,0,0.1);max-width:900px;margin:auto;}';
+        echo 'h1{border-bottom:2px solid #eee;padding-bottom:10px;color:#2c3e50;}';
+        echo 'table{width:100%;border-collapse:collapse;margin-top:20px;} th,td{padding:12px;border-bottom:1px solid #eee;text-align:left;}';
+        echo 'th{background:#f8f9fa;color:#666;font-size:13px;text-transform:uppercase;}';
+        echo '.link-cell{word-break:break-all;font-family:monospace;font-size:13px;background:#f9f9f9;padding:8px;border-radius:4px;display:block;}';
+        echo 'a{color:#4a90e2;text-decoration:none;} a:hover{text-decoration:underline;}</style></head><body>';
+
+        echo '<div class="box"><h1>🛠️ Admin Dashboard</h1>';
+        echo '<p>Hier finden Sie die Registrierungs-Links für alle konfigurierten Systeme:</p>';
+        echo '<table><tr><th>Systemname</th><th>Registrierungs-URL (für neues Gerät)</th></tr>';
+
+        // 2. Durch den Tresor iterieren und Systeme finden
+        foreach ($vault as $name => $data) {
+            // Technische Ordner und Config-Records überspringen
+            if (!is_array($data) || strpos($name, '__') === 0 || in_array($name, ['RegistrationPassword', 'AdminPortal'])) {
+                continue;
+            }
+
+            // Prüfen, ob es ein System-Record ist (hat URL und SecretsID)
+            if (isset($data['URL']) && isset($data['SecretsID'])) {
+                $domain = rtrim($data['URL'], '/');
+                $targetID = $data['SecretsID'];
+                $url = "https://$domain/hook/secrets_$targetID?register=1&pass=" . urlencode($regPass);
+
+                echo '<tr><td><strong>' . htmlspecialchars($name) . '</strong></td>';
+                echo '<td><a href="' . $url . '" target="_blank" class="link-cell">' . htmlspecialchars($url) . '</a></td></tr>';
+            }
+        }
+
+        echo '</table>';
+        echo '<br><p style="color:#e74c3c;font-size:12px;">⚠️ <strong>Sicherheitshinweis:</strong> Diese Links enthalten das Registrierungs-Passwort im Klartext. Versenden Sie diese nur über sichere Kanäle.</p>';
+        echo '</div></body></html>';
+    }
+
+
     /**
      * WEBHOOK DATA PROCESSING
      * This is called by IP-Symcon when data is posted to /hook/secrets_ID
@@ -1311,7 +1363,29 @@ class SecretsManager extends IPSModuleStrict
         $mode = $this->ReadPropertyInteger("OperationMode");
         $isPortal = isset($_GET['portal']);
         $isRegister = isset($_GET['register']);
+        $isAdmin = isset($_GET['admin']);
 
+        // --- ADMIN DASHBOARD GATE ---
+        if ($isAdmin) {
+            // 1. Prüfen, ob bereits biometrisch eingeloggt
+            if ($this->IsPortalAuthenticated()) {
+                $this->ServeAdminDashboard();
+                return;
+            }
+            // 2. Falls nicht, Passwort-Check für den Erstzugriff
+            $vaultData = $this->_decryptVault();
+            $adminPass = $vaultData['AdminPortal']['PW'] ?? '';
+            if ($adminPass !== '' && ($_GET['pass'] ?? '') === $adminPass) {
+                // Sitzung starten (damit ab jetzt der Passkey reicht)
+                $sessionKey = "AuthSession_" . md5($_SERVER['REMOTE_ADDR'] . $_SERVER['HTTP_USER_AGENT']);
+                $this->SetBuffer($sessionKey, (string)(time() + 3600));
+                $this->ServeAdminDashboard();
+                return;
+            }
+            header("HTTP/1.1 403 Forbidden");
+            echo "Access Denied: Admin authentication required.";
+            return;
+        }
         // --- SECURITY GATE: Registration Password Check ---
         if ($isRegister) {
             $vaultData = $this->_decryptVault();
