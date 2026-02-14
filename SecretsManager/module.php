@@ -1403,7 +1403,22 @@ class SecretsManager extends IPSModuleStrict
         }
 
         if (isset($data['vault'])) {
+            // --- NEU: SICHERES MERGING FÜR PASSKEYS ---
+            // 1. Lokalen Ist-Zustand laden (enthält die für diesen Slave gültigen Keys)
+            $currentVault = $this->_decryptVault() ?: [];
+
+            // 2. Master-Inhalt temporär anwenden um ihn zu entschlüsseln
             $this->SetValue("Vault", (string)$data['vault']);
+            $masterVault = $this->_decryptVault() ?: [];
+
+            // 3. __AUTH__ Ordner zusammenführen (lokale Keys bleiben erhalten)
+            if (isset($currentVault['__AUTH__']) && is_array($currentVault['__AUTH__'])) {
+                $masterVault['__AUTH__'] = array_merge($masterVault['__AUTH__'] ?? [], $currentVault['__AUTH__']);
+            }
+
+            // 4. Finalen, kombinierten Tresor verschlüsselt speichern
+            $this->_encryptAndSave($masterVault);
+            $this->LogMessage("Portal Sync: Tresor vom Master aktualisiert, lokale Passkeys erhalten.", KL_MESSAGE);
         }
 
         echo "OK";
