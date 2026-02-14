@@ -1327,40 +1327,27 @@ class SecretsManager extends IPSModuleStrict
         echo '.tag{font-size:10px;padding:2px 6px;border-radius:10px;background:#eee;color:#777;margin-left:8px;vertical-align:middle;}</style></head><body>';
 
         echo '<div class="box"><h1>🛠️ Admin Dashboard</h1>';
-        echo '<p>Registrierungs-Links für alle Systeme:</p>';
+        echo '<p>Registrierungs-Links für Ihre konfigurierten Systeme:</p>';
         echo '<table><tr><th>Systemquelle / Name</th><th>Registrierungs-URL (für Passkey)</th></tr>';
 
-        // --- 1. LOKALES SYSTEM ---
+        // --- 1. LOKALES SYSTEM (Automatisch ermittelt) ---
         $localDomain = $_SERVER['HTTP_HOST'];
         $localUrl = "https://$localDomain/hook/secrets_" . $this->InstanceID . "?register=1&pass=" . urlencode($regPass);
         echo '<tr><td><strong>LOKAL</strong><span class="tag">Dieser Server</span></td>';
-        echo '<td><a href="' . $localUrl . '" target="_blank" class="link-cell">' . htmlspecialchars($localUrl) . '</a></td></tr>';
+        echo '<td><a href="' . $localUrl . '" target="_blank" class="link-cell">' . htmlspecialchars($localUrl) . "</a></td></tr>";
 
-        // --- 2. REMOTE SLAVES (Aus Modul-Eigenschaften) ---
+        // --- 2. REMOTE SLAVES (Aus der Slave-Liste) ---
         $slaves = json_decode($this->ReadPropertyString("SlaveURLs"), true) ?: [];
         foreach ($slaves as $slave) {
             $url = trim($slave['Url'] ?? '');
             if ($url !== '') {
                 $name = $slave['Server'] ?? 'Unbekannter Slave';
-                // Falls die URL Parameter hat, mit & anhängen, sonst mit ?
+                // Parameter-Handling (? oder &)
                 $sep = (strpos($url, '?') === false) ? '?' : '&';
                 $fullUrl = $url . $sep . "register=1&pass=" . urlencode($regPass);
-                echo '<tr><td><strong>' . htmlspecialchars($name) . '</strong><span class="tag">Slave Liste</span></td>';
-                echo '<td><a href="' . $fullUrl . '" target="_blank" class="link-cell">' . htmlspecialchars($fullUrl) . '</a></td></tr>';
-            }
-        }
 
-        // --- 3. SYSTEME AUS DEM VAULT (Explorer-Records) ---
-        foreach ($vault as $name => $data) {
-            if (!is_array($data) || strpos($name, '__') === 0 || in_array($name, ['RegistrationPassword', 'AdminPortal'])) {
-                continue;
-            }
-            if (isset($data['URL']) && isset($data['SecretsID'])) {
-                $domain = rtrim($data['URL'], '/');
-                $targetID = $data['SecretsID'];
-                $url = "https://$domain/hook/secrets_$targetID?register=1&pass=" . urlencode($regPass);
-                echo '<tr><td><strong>' . htmlspecialchars($name) . '</strong><span class="tag">Vault Record</span></td>';
-                echo '<td><a href="' . $url . '" target="_blank" class="link-cell">' . htmlspecialchars($url) . '</a></td></tr>';
+                echo '<tr><td><strong>' . htmlspecialchars($name) . '</strong><span class="tag">Slave Liste</span></td>';
+                echo '<td><a href="' . $fullUrl . '" target="_blank" class="link-cell">' . htmlspecialchars($fullUrl) . "</a></td></tr>";
             }
         }
 
