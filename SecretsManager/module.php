@@ -1310,7 +1310,6 @@ class SecretsManager extends IPSModuleStrict
             return;
         }
 
-        // 1. Das globale Registrierungspasswort holen
         $regPass = $vault['RegistrationPassword']['PW'] ?? '';
         if ($regPass === '') {
             echo "Fehler: 'RegistrationPassword' -> 'PW' nicht im Tresor gefunden.";
@@ -1319,37 +1318,54 @@ class SecretsManager extends IPSModuleStrict
 
         echo '<html><head><title>Admin Dashboard</title><meta name="viewport" content="width=device-width, initial-scale=1">';
         echo '<style>body{font-family:sans-serif;background:#f4f7f6;padding:20px;color:#333;}';
-        echo '.box{background:#fff;padding:25px;border-radius:12px;box-shadow:0 5px 20px rgba(0,0,0,0.1);max-width:900px;margin:auto;}';
+        echo '.box{background:#fff;padding:25px;border-radius:12px;box-shadow:0 5px 20px rgba(0,0,0,0.1);max-width:1000px;margin:auto;}';
         echo 'h1{border-bottom:2px solid #eee;padding-bottom:10px;color:#2c3e50;}';
         echo 'table{width:100%;border-collapse:collapse;margin-top:20px;} th,td{padding:12px;border-bottom:1px solid #eee;text-align:left;}';
         echo 'th{background:#f8f9fa;color:#666;font-size:13px;text-transform:uppercase;}';
-        echo '.link-cell{word-break:break-all;font-family:monospace;font-size:13px;background:#f9f9f9;padding:8px;border-radius:4px;display:block;}';
-        echo 'a{color:#4a90e2;text-decoration:none;} a:hover{text-decoration:underline;}</style></head><body>';
+        echo '.link-cell{word-break:break-all;font-family:monospace;font-size:12px;background:#f9f9f9;padding:8px;border-radius:4px;display:block;}';
+        echo 'a{color:#4a90e2;text-decoration:none;} a:hover{text-decoration:underline;}';
+        echo '.tag{font-size:10px;padding:2px 6px;border-radius:10px;background:#eee;color:#777;margin-left:8px;vertical-align:middle;}</style></head><body>';
 
         echo '<div class="box"><h1>🛠️ Admin Dashboard</h1>';
-        echo '<p>Hier finden Sie die Registrierungs-Links für alle konfigurierten Systeme:</p>';
-        echo '<table><tr><th>Systemname</th><th>Registrierungs-URL (für neues Gerät)</th></tr>';
+        echo '<p>Registrierungs-Links für alle Systeme:</p>';
+        echo '<table><tr><th>Systemquelle / Name</th><th>Registrierungs-URL (für Passkey)</th></tr>';
 
-        // 2. Durch den Tresor iterieren und Systeme finden
+        // --- 1. LOKALES SYSTEM ---
+        $localDomain = $_SERVER['HTTP_HOST'];
+        $localUrl = "https://$localDomain/hook/secrets_" . $this->InstanceID . "?register=1&pass=" . urlencode($regPass);
+        echo '<tr><td><strong>LOKAL</strong><span class="tag">Dieser Server</span></td>';
+        echo '<td><a href="' . $localUrl . '" target="_blank" class="link-cell">' . htmlspecialchars($localUrl) . '</a></td></tr>';
+
+        // --- 2. REMOTE SLAVES (Aus Modul-Eigenschaften) ---
+        $slaves = json_decode($this->ReadPropertyString("SlaveURLs"), true) ?: [];
+        foreach ($slaves as $slave) {
+            $url = trim($slave['Url'] ?? '');
+            if ($url !== '') {
+                $name = $slave['Server'] ?? 'Unbekannter Slave';
+                // Falls die URL Parameter hat, mit & anhängen, sonst mit ?
+                $sep = (strpos($url, '?') === false) ? '?' : '&';
+                $fullUrl = $url . $sep . "register=1&pass=" . urlencode($regPass);
+                echo '<tr><td><strong>' . htmlspecialchars($name) . '</strong><span class="tag">Slave Liste</span></td>';
+                echo '<td><a href="' . $fullUrl . '" target="_blank" class="link-cell">' . htmlspecialchars($fullUrl) . '</a></td></tr>';
+            }
+        }
+
+        // --- 3. SYSTEME AUS DEM VAULT (Explorer-Records) ---
         foreach ($vault as $name => $data) {
-            // Technische Ordner und Config-Records überspringen
             if (!is_array($data) || strpos($name, '__') === 0 || in_array($name, ['RegistrationPassword', 'AdminPortal'])) {
                 continue;
             }
-
-            // Prüfen, ob es ein System-Record ist (hat URL und SecretsID)
             if (isset($data['URL']) && isset($data['SecretsID'])) {
                 $domain = rtrim($data['URL'], '/');
                 $targetID = $data['SecretsID'];
                 $url = "https://$domain/hook/secrets_$targetID?register=1&pass=" . urlencode($regPass);
-
-                echo '<tr><td><strong>' . htmlspecialchars($name) . '</strong></td>';
+                echo '<tr><td><strong>' . htmlspecialchars($name) . '</strong><span class="tag">Vault Record</span></td>';
                 echo '<td><a href="' . $url . '" target="_blank" class="link-cell">' . htmlspecialchars($url) . '</a></td></tr>';
             }
         }
 
         echo '</table>';
-        echo '<br><p style="color:#e74c3c;font-size:12px;">⚠️ <strong>Sicherheitshinweis:</strong> Diese Links enthalten das Registrierungs-Passwort im Klartext. Versenden Sie diese nur über sichere Kanäle.</p>';
+        echo '<br><p style="color:#e74c3c;font-size:12px;">⚠️ <strong>Sicherheitshinweis:</strong> Diese Links enthalten das Registrierungs-Passwort. Nur autorisierten Personen zugänglich machen.</p>';
         echo '</div></body></html>';
     }
 
