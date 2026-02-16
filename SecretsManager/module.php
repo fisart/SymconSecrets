@@ -1583,6 +1583,11 @@ class SecretsManager extends IPSModuleStrict
 
     public function IsPortalAuthenticated(): bool
     {
+        // Prüfen, ob wir in einem Web-Kontext sind (verhindert Warnungen im Hintergrund)
+        if (!isset($_SERVER['REMOTE_ADDR']) || !isset($_SERVER['HTTP_USER_AGENT'])) {
+            return false;
+        }
+
         $sessionKey = "AuthSession_" . md5($_SERVER['REMOTE_ADDR'] . $_SERVER['HTTP_USER_AGENT']);
         $expiry = $this->GetBuffer($sessionKey);
 
