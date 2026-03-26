@@ -1378,7 +1378,7 @@ class SecretsManager extends IPSModuleStrict
             $adminPass = $vaultData['AdminPortal']['PW'] ?? '';
             if ($adminPass !== '' && ($_GET['pass'] ?? '') === $adminPass) {
                 $sessionKey = "AuthSession_" . md5($_SERVER['REMOTE_ADDR'] . $_SERVER['HTTP_USER_AGENT']);
-                $this->SetBuffer($sessionKey, (string)(time() + 3600));
+                $this->SetBuffer($sessionKey, (string)(time() + 259200));
                 $this->ServeAdminDashboard();
                 return;
             }
@@ -1571,7 +1571,7 @@ class SecretsManager extends IPSModuleStrict
 
         if ($authenticated) {
             $sessionKey = "AuthSession_" . md5($_SERVER['REMOTE_ADDR'] . $_SERVER['HTTP_USER_AGENT']);
-            $this->SetBuffer($sessionKey, (string)(time() + 3600));
+            $this->SetBuffer($sessionKey, (string)(time() + 259200));
             $this->SetBuffer("PortalChallenge_" . $sid, "");
             echo "OK";
         } else {
