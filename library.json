@@ -3,10 +3,10 @@
     "author": "Artur Fischer",
     "name": "Secrets Manager",
     "url": "https://github.com/fisart/SymconSecrets",
-    "version": "3.0.0",
+    "version": "6.1.0",
     "build": 0,
     "date": 0,
     "compatibility": {
-        "version": "6.0"
+        "version": "5.0"
     }
 }

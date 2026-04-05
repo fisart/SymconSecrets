@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-// Version 5.2.2  
+// Version 6.1.0  
 class SecretsManager extends IPSModuleStrict
 {
 
@@ -628,6 +628,59 @@ class SecretsManager extends IPSModuleStrict
     }
 
 
+    public function SetRecordFields(string $path, array $fields): bool
+    {
+        if ($this->GetStatus() !== 102) {
+            $this->LogMessage("SetRecordFields aborted: instance is not active.", KL_ERROR);
+            return false;
+        }
+
+        $mode = $this->ReadPropertyInteger("OperationMode");
+        if ($mode === 0) {
+            $this->LogMessage("SetRecordFields aborted: write access is not allowed in Slave mode.", KL_ERROR);
+            return false;
+        }
+
+        $normalizedPath = $this->NormalizeVaultPath($path);
+        if ($normalizedPath === null) {
+            $this->LogMessage("SetRecordFields aborted: invalid path '" . $path . "'.", KL_ERROR);
+            return false;
+        }
+
+        $normalizedFields = $this->NormalizeRecordFields($fields);
+        if ($normalizedFields === null) {
+            $this->LogMessage("SetRecordFields aborted: invalid fields for path '" . $normalizedPath . "'.", KL_ERROR);
+            return false;
+        }
+
+        $vaultData = $this->_decryptVault();
+        if ($vaultData === false) {
+            if ($this->GetValue("Vault") === "") {
+                $vaultData = [];
+            } else {
+                $this->LogMessage("SetRecordFields aborted: vault decryption failed.", KL_ERROR);
+                return false;
+            }
+        }
+
+        if (!$this->WriteRecordFieldsToVault($vaultData, $normalizedPath, $normalizedFields)) {
+            $this->LogMessage("SetRecordFields aborted: could not write fields to vault path '" . $normalizedPath . "'.", KL_ERROR);
+            return false;
+        }
+
+        if (!$this->_encryptAndSave($vaultData)) {
+            $this->LogMessage("SetRecordFields aborted: encrypted save failed for path '" . $normalizedPath . "'.", KL_ERROR);
+            return false;
+        }
+
+        if ($mode === 1) {
+            $this->SyncSlaves();
+        }
+
+        $this->LogMessage("SetRecordFields successful for path '" . $normalizedPath . "'.", KL_MESSAGE);
+        return true;
+    }
+
     // =========================================================================
     // SYNCHRONIZATION (Master -> Slave)
     // =========================================================================
@@ -983,6 +1036,95 @@ class SecretsManager extends IPSModuleStrict
             echo ($ident === "") ? "✅ Ordner-Felder aktualisiert!" : "✅ Eintrag '$ident' aktualisiert!";
             if ($this->ReadPropertyInteger("OperationMode") === 1) $this->SyncSlaves();
         }
+    }
+
+    private function NormalizeVaultPath(string $path): ?string
+    {
+        $path = trim($path);
+
+        if ($path === '') {
+            return null;
+        }
+
+        if ($path[0] === '/' || substr($path, -1) === '/') {
+            return null;
+        }
+
+        $parts = explode('/', $path);
+        $normalized = [];
+
+        foreach ($parts as $part) {
+            $part = trim($part);
+
+            if ($part === '' || strpos($part, '/') !== false) {
+                return null;
+            }
+
+            $normalized[] = $part;
+        }
+
+        return implode('/', $normalized);
+    }
+
+    private function NormalizeRecordFields(array $fields): ?array
+    {
+        $normalized = [];
+
+        foreach ($fields as $key => $value) {
+            if (!is_string($key) && !is_int($key)) {
+                return null;
+            }
+
+            $fieldName = trim((string)$key);
+            if ($fieldName === '') {
+                return null;
+            }
+
+            if ($fieldName === '__folder' || strpos($fieldName, '__') === 0) {
+                return null;
+            }
+
+            if (is_array($value) || is_object($value)) {
+                return null;
+            }
+
+            $normalized[$fieldName] = (string)$value;
+        }
+
+        return $normalized;
+    }
+
+    private function WriteRecordFieldsToVault(array &$vaultData, string $path, array $fields): bool
+    {
+        $parts = array_filter(explode('/', $path), 'strlen');
+        if (count($parts) === 0) {
+            return false;
+        }
+
+        $temp = &$vaultData;
+        foreach ($parts as $part) {
+            if (!isset($temp[$part])) {
+                $temp[$part] = [];
+            }
+
+            if (!is_array($temp[$part])) {
+                $temp[$part] = [];
+            }
+
+            $temp = &$temp[$part];
+        }
+
+        foreach ($temp as $key => $value) {
+            if ($key !== "__folder" && !is_array($value)) {
+                unset($temp[$key]);
+            }
+        }
+
+        foreach ($fields as $key => $value) {
+            $temp[$key] = $value;
+        }
+
+        return true;
     }
 
     /**
