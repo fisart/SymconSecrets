@@ -269,37 +269,36 @@ class SecretsManager extends IPSModuleStrict
             $json['actions'][] = ["type" => "Label", "caption" => "📥 JSON IMPORT", "bold" => true];
             $json['actions'][] = ["type" => "ValidationTextBox", "name" => "ImportInput", "caption" => "JSON String"];
             $json['actions'][] = ["type" => "Button", "caption" => "Importieren", "onClick" => "IPS_RequestAction(\$id, 'EXPL_ImportJson', \$ImportInput);"];
-            $json['actions'][] = ["type" => "Label", "caption" => "________________________________________________________________________________________________"];
-            $json['actions'][] = ["type" => "Label", "caption" => "💾 LOCAL SECRETS BACKUP / RESTORE", "bold" => true];
-            $json['actions'][] = ["type" => "Label", "caption" => "Exportiert und importiert nur lokale Daten dieses Systems (__AUTH__ und __LOCAL__)."];
-
-            $json['actions'][] = [
-                "type" => "Button",
-                "caption" => "📤 Export Local Secrets",
-                "onClick" => "\$json = SEC_ExportLocalSecrets(\$id); IPS_RequestAction(\$id, 'LOCALUI_SetExportJson', \$json);"
-            ];
-
-            $json['actions'][] = [
-                "type" => "ValidationTextBox",
-                "name" => "LocalSecretsExportJson",
-                "caption" => "Export JSON",
-                "value" => (string)$this->GetBuffer("LocalSecretsExportJson")
-            ];
-
-            $json['actions'][] = [
-                "type" => "ValidationTextBox",
-                "name" => "LocalSecretsImportJson",
-                "caption" => "Import JSON",
-                "value" => (string)$this->GetBuffer("LocalSecretsImportJson")
-            ];
-
-            $json['actions'][] = [
-                "type" => "Button",
-                "caption" => "📥 Import Local Secrets",
-                "onClick" => "IPS_RequestAction(\$id, 'LOCALUI_ImportJson', \$LocalSecretsImportJson);"
-            ];
         }
+        $json['actions'][] = ["type" => "Label", "caption" => "________________________________________________________________________________________________"];
+        $json['actions'][] = ["type" => "Label", "caption" => "💾 LOCAL SECRETS BACKUP / RESTORE", "bold" => true];
+        $json['actions'][] = ["type" => "Label", "caption" => "Exportiert und importiert nur lokale Daten dieses Systems (__AUTH__ und __LOCAL__)."];
 
+        $json['actions'][] = [
+            "type" => "Button",
+            "caption" => "📤 Export Local Secrets",
+            "onClick" => "\$json = SEC_ExportLocalSecrets(\$id); IPS_RequestAction(\$id, 'LOCALUI_SetExportJson', \$json);"
+        ];
+
+        $json['actions'][] = [
+            "type" => "ValidationTextBox",
+            "name" => "LocalSecretsExportJson",
+            "caption" => "Export JSON",
+            "value" => (string)$this->GetBuffer("LocalSecretsExportJson")
+        ];
+
+        $json['actions'][] = [
+            "type" => "ValidationTextBox",
+            "name" => "LocalSecretsImportJson",
+            "caption" => "Import JSON",
+            "value" => (string)$this->GetBuffer("LocalSecretsImportJson")
+        ];
+
+        $json['actions'][] = [
+            "type" => "Button",
+            "caption" => "📥 Import Local Secrets",
+            "onClick" => "IPS_RequestAction(\$id, 'LOCALUI_ImportJson', \$LocalSecretsImportJson);"
+        ];
         return json_encode($json);
     }
 
@@ -781,58 +780,7 @@ class SecretsManager extends IPSModuleStrict
         $this->LogMessage("ImportLocalSecrets successful.", KL_MESSAGE);
         return true;
     }
-    public function SetRecordFields(string $path, array $fields): bool
-    {
-        if ($this->GetStatus() !== 102) {
-            $this->LogMessage("SetRecordFields aborted: instance is not active.", KL_ERROR);
-            return false;
-        }
 
-        $mode = $this->ReadPropertyInteger("OperationMode");
-        if ($mode === 0) {
-            $this->LogMessage("SetRecordFields aborted: write access is not allowed in Slave mode.", KL_ERROR);
-            return false;
-        }
-
-        $normalizedPath = $this->NormalizeVaultPath($path);
-        if ($normalizedPath === null) {
-            $this->LogMessage("SetRecordFields aborted: invalid path '" . $path . "'.", KL_ERROR);
-            return false;
-        }
-
-        $normalizedFields = $this->NormalizeRecordFields($fields);
-        if ($normalizedFields === null) {
-            $this->LogMessage("SetRecordFields aborted: invalid fields for path '" . $normalizedPath . "'.", KL_ERROR);
-            return false;
-        }
-
-        $vaultData = $this->_decryptVault();
-        if ($vaultData === false) {
-            if ($this->GetValue("Vault") === "") {
-                $vaultData = [];
-            } else {
-                $this->LogMessage("SetRecordFields aborted: vault decryption failed.", KL_ERROR);
-                return false;
-            }
-        }
-
-        if (!$this->WriteRecordFieldsToVault($vaultData, $normalizedPath, $normalizedFields)) {
-            $this->LogMessage("SetRecordFields aborted: could not write fields to vault path '" . $normalizedPath . "'.", KL_ERROR);
-            return false;
-        }
-
-        if (!$this->_encryptAndSave($vaultData)) {
-            $this->LogMessage("SetRecordFields aborted: encrypted save failed for path '" . $normalizedPath . "'.", KL_ERROR);
-            return false;
-        }
-
-        if ($mode === 1) {
-            $this->SyncSlaves();
-        }
-
-        $this->LogMessage("SetRecordFields successful for path '" . $normalizedPath . "'.", KL_MESSAGE);
-        return true;
-    }
 
     // =========================================================================
     // SYNCHRONIZATION (Master -> Slave)
@@ -1217,61 +1165,7 @@ class SecretsManager extends IPSModuleStrict
         return null;
     }
 
-    private function NormalizeVaultPath(string $path): ?string
-    {
-        $path = trim($path);
 
-        if ($path === '') {
-            return null;
-        }
-
-        if ($path[0] === '/' || substr($path, -1) === '/') {
-            return null;
-        }
-
-        $parts = explode('/', $path);
-        $normalized = [];
-
-        foreach ($parts as $part) {
-            $part = trim($part);
-
-            if ($part === '' || strpos($part, '/') !== false) {
-                return null;
-            }
-
-            $normalized[] = $part;
-        }
-
-        return implode('/', $normalized);
-    }
-
-    private function NormalizeRecordFields(array $fields): ?array
-    {
-        $normalized = [];
-
-        foreach ($fields as $key => $value) {
-            if (!is_string($key) && !is_int($key)) {
-                return null;
-            }
-
-            $fieldName = trim((string)$key);
-            if ($fieldName === '') {
-                return null;
-            }
-
-            if ($fieldName === '__folder' || strpos($fieldName, '__') === 0) {
-                return null;
-            }
-
-            if (is_array($value) || is_object($value)) {
-                return null;
-            }
-
-            $normalized[$fieldName] = (string)$value;
-        }
-
-        return $normalized;
-    }
 
     private function IsWriteAllowedForScope(string $scope): bool
     {
@@ -1428,38 +1322,7 @@ class SecretsManager extends IPSModuleStrict
         return $normalized;
     }
 
-    private function WriteRecordFieldsToVault(array &$vaultData, string $path, array $fields): bool
-    {
-        $parts = array_filter(explode('/', $path), 'strlen');
-        if (count($parts) === 0) {
-            return false;
-        }
 
-        $temp = &$vaultData;
-        foreach ($parts as $part) {
-            if (!isset($temp[$part])) {
-                $temp[$part] = [];
-            }
-
-            if (!is_array($temp[$part])) {
-                $temp[$part] = [];
-            }
-
-            $temp = &$temp[$part];
-        }
-
-        foreach ($temp as $key => $value) {
-            if ($key !== "__folder" && !is_array($value)) {
-                unset($temp[$key]);
-            }
-        }
-
-        foreach ($fields as $key => $value) {
-            $temp[$key] = $value;
-        }
-
-        return true;
-    }
 
     /**
      * Hilfsfunktion für das dynamische Popup-Formular
