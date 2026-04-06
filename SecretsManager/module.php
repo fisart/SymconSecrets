@@ -1,13 +1,16 @@
 <?php
 
 declare(strict_types=1);
-// Version 6.1.0  
+// Version 5.3.0
 class SecretsManager extends IPSModuleStrict
 {
 
     // The name of the key file stored on the OS
     private const KEY_FILENAME = 'master.key';
     private const SYSTEM_FILENAME = 'system.vault';
+
+    private const LOCAL_AUTH_KEY    = '__AUTH__';
+    private const LOCAL_SECRETS_KEY = '__LOCAL__';
 
     public function Create(): void
     {
@@ -266,6 +269,35 @@ class SecretsManager extends IPSModuleStrict
             $json['actions'][] = ["type" => "Label", "caption" => "📥 JSON IMPORT", "bold" => true];
             $json['actions'][] = ["type" => "ValidationTextBox", "name" => "ImportInput", "caption" => "JSON String"];
             $json['actions'][] = ["type" => "Button", "caption" => "Importieren", "onClick" => "IPS_RequestAction(\$id, 'EXPL_ImportJson', \$ImportInput);"];
+            $json['actions'][] = ["type" => "Label", "caption" => "________________________________________________________________________________________________"];
+            $json['actions'][] = ["type" => "Label", "caption" => "💾 LOCAL SECRETS BACKUP / RESTORE", "bold" => true];
+            $json['actions'][] = ["type" => "Label", "caption" => "Exportiert und importiert nur lokale Daten dieses Systems (__AUTH__ und __LOCAL__)."];
+
+            $json['actions'][] = [
+                "type" => "Button",
+                "caption" => "📤 Export Local Secrets",
+                "onClick" => "\$json = SEC_ExportLocalSecrets(\$id); IPS_RequestAction(\$id, 'LOCALUI_SetExportJson', \$json);"
+            ];
+
+            $json['actions'][] = [
+                "type" => "ValidationTextBox",
+                "name" => "LocalSecretsExportJson",
+                "caption" => "Export JSON",
+                "value" => (string)$this->GetBuffer("LocalSecretsExportJson")
+            ];
+
+            $json['actions'][] = [
+                "type" => "ValidationTextBox",
+                "name" => "LocalSecretsImportJson",
+                "caption" => "Import JSON",
+                "value" => (string)$this->GetBuffer("LocalSecretsImportJson")
+            ];
+
+            $json['actions'][] = [
+                "type" => "Button",
+                "caption" => "📥 Import Local Secrets",
+                "onClick" => "IPS_RequestAction(\$id, 'LOCALUI_ImportJson', \$LocalSecretsImportJson);"
+            ];
         }
 
         return json_encode($json);
@@ -627,7 +659,128 @@ class SecretsManager extends IPSModuleStrict
         return (is_array($val) || is_object($val)) ? (str_replace(['"__folder":true,', ',"__folder":true', '"__folder":true'], '', json_encode($val)) ?: "") : (string)$val;
     }
 
+    public function SetRecordFields(string $path, array $fields, string $scope): bool
+    {
+        if ($this->GetStatus() !== 102) {
+            $this->LogMessage("SetRecordFields aborted: instance is not active.", KL_ERROR);
+            return false;
+        }
 
+        $normalizedScope = $this->NormalizeWriteScope($scope);
+        if ($normalizedScope === null) {
+            $this->LogMessage("SetRecordFields aborted: invalid scope '" . $scope . "'.", KL_ERROR);
+            return false;
+        }
+
+        if (!$this->IsWriteAllowedForScope($normalizedScope)) {
+            $this->LogMessage("SetRecordFields aborted: scope '" . $normalizedScope . "' is not allowed in the current operation mode.", KL_ERROR);
+            return false;
+        }
+
+        $normalizedPath = $this->NormalizeVaultPath($path);
+        if ($normalizedPath === null) {
+            $this->LogMessage("SetRecordFields aborted: invalid path '" . $path . "'.", KL_ERROR);
+            return false;
+        }
+
+        $normalizedFields = $this->NormalizeRecordFields($fields);
+        if ($normalizedFields === null) {
+            $this->LogMessage("SetRecordFields aborted: invalid fields for path '" . $normalizedPath . "'.", KL_ERROR);
+            return false;
+        }
+
+        $vaultData = $this->_decryptVault();
+        if ($vaultData === false) {
+            if ($this->GetValue("Vault") === "") {
+                $vaultData = [];
+            } else {
+                $this->LogMessage("SetRecordFields aborted: vault decryption failed.", KL_ERROR);
+                return false;
+            }
+        }
+
+        if (!$this->WriteRecordFieldsToVault($vaultData, $normalizedPath, $normalizedFields, $normalizedScope)) {
+            $this->LogMessage("SetRecordFields aborted: could not write fields to vault path '" . $normalizedPath . "'.", KL_ERROR);
+            return false;
+        }
+
+        if (!$this->_encryptAndSave($vaultData)) {
+            $this->LogMessage("SetRecordFields aborted: encrypted save failed for path '" . $normalizedPath . "'.", KL_ERROR);
+            return false;
+        }
+
+        if ($normalizedScope === 'global' && $this->ReadPropertyInteger("OperationMode") === 1) {
+            $this->SyncSlaves();
+        }
+
+        $this->LogMessage("SetRecordFields successful for scope '" . $normalizedScope . "' and path '" . $normalizedPath . "'.", KL_MESSAGE);
+        return true;
+    }
+
+    public function ExportLocalSecrets(): string
+    {
+        if ($this->GetStatus() !== 102) {
+            $this->LogMessage("ExportLocalSecrets aborted: instance is not active.", KL_ERROR);
+            return "";
+        }
+
+        $vaultData = $this->_decryptVault();
+        if ($vaultData === false) {
+            if ($this->GetValue("Vault") === "") {
+                $vaultData = [];
+            } else {
+                $this->LogMessage("ExportLocalSecrets aborted: vault decryption failed.", KL_ERROR);
+                return "";
+            }
+        }
+
+        $export = $this->BuildLocalSecretsExport($vaultData);
+        $json = json_encode($export, JSON_PRETTY_PRINT);
+
+        if ($json === false) {
+            $this->LogMessage("ExportLocalSecrets aborted: JSON encoding failed.", KL_ERROR);
+            return "";
+        }
+
+        return $json;
+    }
+
+    public function ImportLocalSecrets(string $json): bool
+    {
+        if ($this->GetStatus() !== 102) {
+            $this->LogMessage("ImportLocalSecrets aborted: instance is not active.", KL_ERROR);
+            return false;
+        }
+
+        $importData = json_decode($json, true);
+        if (!is_array($importData)) {
+            $this->LogMessage("ImportLocalSecrets aborted: invalid JSON input.", KL_ERROR);
+            return false;
+        }
+
+        $vaultData = $this->_decryptVault();
+        if ($vaultData === false) {
+            if ($this->GetValue("Vault") === "") {
+                $vaultData = [];
+            } else {
+                $this->LogMessage("ImportLocalSecrets aborted: vault decryption failed.", KL_ERROR);
+                return false;
+            }
+        }
+
+        if (!$this->MergeImportedLocalSecrets($vaultData, $importData)) {
+            $this->LogMessage("ImportLocalSecrets aborted: merge failed.", KL_ERROR);
+            return false;
+        }
+
+        if (!$this->_encryptAndSave($vaultData)) {
+            $this->LogMessage("ImportLocalSecrets aborted: encrypted save failed.", KL_ERROR);
+            return false;
+        }
+
+        $this->LogMessage("ImportLocalSecrets successful.", KL_MESSAGE);
+        return true;
+    }
     public function SetRecordFields(string $path, array $fields): bool
     {
         if ($this->GetStatus() !== 102) {
@@ -892,7 +1045,22 @@ class SecretsManager extends IPSModuleStrict
             $this->ReloadForm();
             return;
         }
+        switch ($Ident) {
+            case 'LOCALUI_SetExportJson':
+                $this->SetBuffer("LocalSecretsExportJson", (string)$Value);
+                $this->ReloadForm();
+                return;
 
+            case 'LOCALUI_ImportJson':
+                $this->SetBuffer("LocalSecretsImportJson", (string)$Value);
+                if ($this->ImportLocalSecrets((string)$Value)) {
+                    echo "✅ Local secrets imported successfully.";
+                } else {
+                    echo "❌ Import of local secrets failed.";
+                }
+                $this->ReloadForm();
+                return;
+        }
         // Falls du das Modul später erweiterst, hier Platz für weitere Standard-Actions...
     }
     /**
@@ -1035,6 +1203,172 @@ class SecretsManager extends IPSModuleStrict
         if ($this->_encryptAndSave($vaultData)) {
             echo ($ident === "") ? "✅ Ordner-Felder aktualisiert!" : "✅ Eintrag '$ident' aktualisiert!";
             if ($this->ReadPropertyInteger("OperationMode") === 1) $this->SyncSlaves();
+        }
+    }
+
+    private function NormalizeWriteScope(string $scope): ?string
+    {
+        $scope = strtolower(trim($scope));
+
+        if ($scope === 'local' || $scope === 'global') {
+            return $scope;
+        }
+
+        return null;
+    }
+
+    private function NormalizeVaultPath(string $path): ?string
+    {
+        $path = trim($path);
+
+        if ($path === '') {
+            return null;
+        }
+
+        if ($path[0] === '/' || substr($path, -1) === '/') {
+            return null;
+        }
+
+        $parts = explode('/', $path);
+        $normalized = [];
+
+        foreach ($parts as $part) {
+            $part = trim($part);
+
+            if ($part === '' || strpos($part, '/') !== false) {
+                return null;
+            }
+
+            $normalized[] = $part;
+        }
+
+        return implode('/', $normalized);
+    }
+
+    private function NormalizeRecordFields(array $fields): ?array
+    {
+        $normalized = [];
+
+        foreach ($fields as $key => $value) {
+            if (!is_string($key) && !is_int($key)) {
+                return null;
+            }
+
+            $fieldName = trim((string)$key);
+            if ($fieldName === '') {
+                return null;
+            }
+
+            if ($fieldName === '__folder' || strpos($fieldName, '__') === 0) {
+                return null;
+            }
+
+            if (is_array($value) || is_object($value)) {
+                return null;
+            }
+
+            $normalized[$fieldName] = (string)$value;
+        }
+
+        return $normalized;
+    }
+
+    private function IsWriteAllowedForScope(string $scope): bool
+    {
+        $mode = $this->ReadPropertyInteger("OperationMode");
+
+        if ($scope === 'global') {
+            return ($mode === 1);
+        }
+
+        if ($scope === 'local') {
+            return in_array($mode, [0, 1, 2], true);
+        }
+
+        return false;
+    }
+
+    private function WriteRecordFieldsToVault(array &$vaultData, string $path, array $fields, string $scope): bool
+    {
+        $parts = array_filter(explode('/', $path), 'strlen');
+        if (count($parts) === 0) {
+            return false;
+        }
+
+        if ($scope === 'local') {
+            if (!isset($vaultData[self::LOCAL_SECRETS_KEY]) || !is_array($vaultData[self::LOCAL_SECRETS_KEY])) {
+                $vaultData[self::LOCAL_SECRETS_KEY] = [];
+            }
+            $temp = &$vaultData[self::LOCAL_SECRETS_KEY];
+        } else {
+            $temp = &$vaultData;
+        }
+
+        foreach ($parts as $part) {
+            if (!isset($temp[$part]) || !is_array($temp[$part])) {
+                $temp[$part] = [];
+            }
+            $temp = &$temp[$part];
+        }
+
+        foreach ($temp as $key => $value) {
+            if ($key !== "__folder" && !is_array($value)) {
+                unset($temp[$key]);
+            }
+        }
+
+        foreach ($fields as $key => $value) {
+            $temp[$key] = $value;
+        }
+
+        return true;
+    }
+
+    private function BuildLocalSecretsExport(array $vaultData): array
+    {
+        $export = [];
+
+        if (isset($vaultData[self::LOCAL_AUTH_KEY]) && is_array($vaultData[self::LOCAL_AUTH_KEY])) {
+            $export[self::LOCAL_AUTH_KEY] = $vaultData[self::LOCAL_AUTH_KEY];
+        }
+
+        if (isset($vaultData[self::LOCAL_SECRETS_KEY]) && is_array($vaultData[self::LOCAL_SECRETS_KEY])) {
+            $export[self::LOCAL_SECRETS_KEY] = $vaultData[self::LOCAL_SECRETS_KEY];
+        }
+
+        return $export;
+    }
+
+    private function MergeImportedLocalSecrets(array &$vaultData, array $importData): bool
+    {
+        if (isset($importData[self::LOCAL_AUTH_KEY])) {
+            if (!is_array($importData[self::LOCAL_AUTH_KEY])) {
+                return false;
+            }
+            $vaultData[self::LOCAL_AUTH_KEY] = $importData[self::LOCAL_AUTH_KEY];
+        }
+
+        if (isset($importData[self::LOCAL_SECRETS_KEY])) {
+            if (!is_array($importData[self::LOCAL_SECRETS_KEY])) {
+                return false;
+            }
+            $vaultData[self::LOCAL_SECRETS_KEY] = $importData[self::LOCAL_SECRETS_KEY];
+        }
+
+        return true;
+    }
+
+    private function PreserveLocalVaultAreas(array $currentVault, array &$incomingVault): void
+    {
+        if (isset($currentVault[self::LOCAL_AUTH_KEY]) && is_array($currentVault[self::LOCAL_AUTH_KEY])) {
+            $incomingVault[self::LOCAL_AUTH_KEY] = array_merge(
+                $incomingVault[self::LOCAL_AUTH_KEY] ?? [],
+                $currentVault[self::LOCAL_AUTH_KEY]
+            );
+        }
+
+        if (isset($currentVault[self::LOCAL_SECRETS_KEY]) && is_array($currentVault[self::LOCAL_SECRETS_KEY])) {
+            $incomingVault[self::LOCAL_SECRETS_KEY] = $currentVault[self::LOCAL_SECRETS_KEY];
         }
     }
 
@@ -1580,9 +1914,7 @@ class SecretsManager extends IPSModuleStrict
                 $currentVault = $this->_decryptVault() ?: [];
                 $this->SetValue("Vault", (string)$data['vault']);
                 $masterVault = $this->_decryptVault() ?: [];
-                if (isset($currentVault['__AUTH__']) && is_array($currentVault['__AUTH__'])) {
-                    $masterVault['__AUTH__'] = array_merge($masterVault['__AUTH__'] ?? [], $currentVault['__AUTH__']);
-                }
+                $this->PreserveLocalVaultAreas($currentVault, $masterVault);
                 $this->_encryptAndSave($masterVault);
             }
             echo "OK";
