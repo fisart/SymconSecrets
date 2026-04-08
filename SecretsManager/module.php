@@ -270,6 +270,8 @@ class SecretsManager extends IPSModuleStrict
             $json['actions'][] = ["type" => "ValidationTextBox", "name" => "ImportInput", "caption" => "JSON String"];
             $json['actions'][] = ["type" => "Button", "caption" => "Importieren", "onClick" => "IPS_RequestAction(\$id, 'EXPL_ImportJson', \$ImportInput);"];
         }
+
+        // --- LOCAL SECRETS BACKUP / RESTORE ---
         $json['actions'][] = ["type" => "Label", "caption" => "________________________________________________________________________________________________"];
         $json['actions'][] = ["type" => "Label", "caption" => "💾 LOCAL SECRETS BACKUP / RESTORE", "bold" => true];
         $json['actions'][] = ["type" => "Label", "caption" => "Exportiert und importiert nur lokale Daten dieses Systems (__AUTH__ und __LOCAL__)."];
@@ -299,6 +301,55 @@ class SecretsManager extends IPSModuleStrict
             "caption" => "📥 Import Local Secrets",
             "onClick" => "IPS_RequestAction(\$id, 'LOCALUI_ImportJson', \$LocalSecretsImportJson);"
         ];
+
+        // --- LOCAL PASSKEY DEVICES ---
+        $passkeyRows = [];
+        $vaultDataForPasskeys = $this->_decryptVault() ?: [];
+        $authData = $vaultDataForPasskeys[self::LOCAL_AUTH_KEY] ?? [];
+
+        if (is_array($authData)) {
+            ksort($authData);
+            foreach ($authData as $deviceKey => $deviceData) {
+                if ($deviceKey === "__folder") {
+                    continue;
+                }
+                if (!is_array($deviceData)) {
+                    continue;
+                }
+
+                $credentialId = (string)($deviceData['credentialId'] ?? '');
+                $attestation  = (string)($deviceData['attestation'] ?? '');
+
+                $passkeyRows[] = [
+                    "DeviceKey"    => (string)$deviceKey,
+                    "CredentialId" => $credentialId,
+                    "Info"         => ($credentialId !== '') ? substr($credentialId, 0, 24) . (strlen($credentialId) > 24 ? "..." : "") : "(no credentialId)"
+                ];
+            }
+        }
+
+        $json['actions'][] = ["type" => "Label", "caption" => "________________________________________________________________________________________________"];
+        $json['actions'][] = ["type" => "Label", "caption" => "🔐 LOCAL PASSKEY DEVICES", "bold" => true];
+        $json['actions'][] = ["type" => "Label", "caption" => "Zeigt alle lokal registrierten Passkey-Geräte dieses Systems. Löschen entfernt genau ein Gerät aus __AUTH__."];
+
+        $json['actions'][] = [
+            "type" => "List",
+            "name" => "LocalPasskeyDevicesUI",
+            "rowCount" => 6,
+            "columns" => [
+                ["caption" => "Device Key", "name" => "DeviceKey", "width" => "220px"],
+                ["caption" => "Credential ID", "name" => "CredentialId", "width" => "auto"],
+                ["caption" => "Kurzinfo", "name" => "Info", "width" => "220px"]
+            ],
+            "values" => $passkeyRows
+        ];
+
+        $json['actions'][] = [
+            "type" => "Button",
+            "caption" => "🗑️ Delete selected local passkey",
+            "onClick" => "if(isset(\$LocalPasskeyDevicesUI)) { IPS_RequestAction(\$id, 'LOCALUI_DeletePasskey', \$LocalPasskeyDevicesUI['DeviceKey']); } else { echo 'Bitte erst ein Gerät markieren!'; }"
+        ];
+
         return json_encode($json);
     }
 
@@ -993,6 +1044,7 @@ class SecretsManager extends IPSModuleStrict
             $this->ReloadForm();
             return;
         }
+
         switch ($Ident) {
             case 'LOCALUI_SetExportJson':
                 $this->SetBuffer("LocalSecretsExportJson", (string)$Value);
@@ -1008,7 +1060,17 @@ class SecretsManager extends IPSModuleStrict
                 }
                 $this->ReloadForm();
                 return;
+
+            case 'LOCALUI_DeletePasskey':
+                if ($this->DeleteLocalPasskey((string)$Value)) {
+                    echo "✅ Local passkey deleted successfully.";
+                } else {
+                    echo "❌ Deletion of local passkey failed.";
+                }
+                $this->ReloadForm();
+                return;
         }
+
         // Falls du das Modul später erweiterst, hier Platz für weitere Standard-Actions...
     }
     /**
@@ -1322,7 +1384,62 @@ class SecretsManager extends IPSModuleStrict
         return $normalized;
     }
 
+    private function DeleteLocalPasskey(string $deviceKey): bool
+    {
+        $deviceKey = trim($deviceKey);
 
+        if ($deviceKey === '') {
+            $this->LogMessage("DeleteLocalPasskey aborted: empty device key.", KL_ERROR);
+            return false;
+        }
+
+        if ($deviceKey === '__folder') {
+            $this->LogMessage("DeleteLocalPasskey aborted: invalid device key '__folder'.", KL_ERROR);
+            return false;
+        }
+
+        $vaultData = $this->_decryptVault();
+        if ($vaultData === false) {
+            if ($this->GetValue("Vault") === "") {
+                $vaultData = [];
+            } else {
+                $this->LogMessage("DeleteLocalPasskey aborted: vault decryption failed.", KL_ERROR);
+                return false;
+            }
+        }
+
+        if (
+            !isset($vaultData[self::LOCAL_AUTH_KEY]) ||
+            !is_array($vaultData[self::LOCAL_AUTH_KEY])
+        ) {
+            $this->LogMessage("DeleteLocalPasskey aborted: no local passkey container found.", KL_ERROR);
+            return false;
+        }
+
+        if (!array_key_exists($deviceKey, $vaultData[self::LOCAL_AUTH_KEY])) {
+            $this->LogMessage("DeleteLocalPasskey aborted: device key '" . $deviceKey . "' not found.", KL_ERROR);
+            return false;
+        }
+
+        unset($vaultData[self::LOCAL_AUTH_KEY][$deviceKey]);
+
+        // Optional cleanup: remove __AUTH__ entirely if no real devices remain
+        $remainingKeys = array_filter(array_keys($vaultData[self::LOCAL_AUTH_KEY]), function ($key) {
+            return $key !== '__folder';
+        });
+
+        if (count($remainingKeys) === 0) {
+            unset($vaultData[self::LOCAL_AUTH_KEY]);
+        }
+
+        if (!$this->_encryptAndSave($vaultData)) {
+            $this->LogMessage("DeleteLocalPasskey aborted: encrypted save failed for device key '" . $deviceKey . "'.", KL_ERROR);
+            return false;
+        }
+
+        $this->LogMessage("DeleteLocalPasskey successful for device key '" . $deviceKey . "'.", KL_MESSAGE);
+        return true;
+    }
 
     /**
      * Hilfsfunktion für das dynamische Popup-Formular
