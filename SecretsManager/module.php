@@ -21,6 +21,10 @@ class SecretsManager extends IPSModuleStrict
         // Key Storage
         $this->RegisterPropertyString("KeyFolderPath", "");
 
+        // Portal session lifetime after successful login
+        // Default = 72 hours (= previous 3-day behavior)
+        $this->RegisterPropertyInteger("PortalSessionLifetimeHours", 72);
+
         // IMPORTANT: AuthToken / HookPass werden NICHT mehr als Property gespeichert
         // $this->RegisterPropertyString("AuthToken", "");   // REMOVE
         // $this->RegisterPropertyString("HookPass", "");    // REMOVE
@@ -58,6 +62,17 @@ class SecretsManager extends IPSModuleStrict
 
         $isEditorRole = ($isMaster || $isStandalone);
         $isSyncRole   = ($isMaster || $isSlave);
+
+        // Add dynamic property field for configurable session lifetime
+        if (!isset($json['elements']) || !is_array($json['elements'])) {
+            $json['elements'] = [];
+        }
+
+        $json['elements'][] = [
+            "type"    => "NumberSpinner",
+            "name"    => "PortalSessionLifetimeHours",
+            "caption" => "Portal Session Lifetime (hours)"
+        ];
 
         // Build slave URL options with label (Server — URL)
         $slaveOptions = [];
@@ -317,13 +332,22 @@ class SecretsManager extends IPSModuleStrict
                     continue;
                 }
 
-                $credentialId = (string)($deviceData['credentialId'] ?? '');
-                $attestation  = (string)($deviceData['attestation'] ?? '');
+                $credentialId   = (string)($deviceData['credentialId'] ?? '');
+                $registeredHost = (string)($deviceData['RegisteredHost'] ?? '');
+                $registeredAt   = (int)($deviceData['RegisteredAt'] ?? 0);
+                $userAgent      = (string)($deviceData['UserAgent'] ?? '');
+
+                $registeredAtText = ($registeredAt > 0) ? date('Y-m-d H:i:s', $registeredAt) : '';
+                $shortCredential  = ($credentialId !== '') ? substr($credentialId, 0, 24) . (strlen($credentialId) > 24 ? "..." : "") : "(no credentialId)";
+                $shortUserAgent   = ($userAgent !== '') ? substr($userAgent, 0, 40) . (strlen($userAgent) > 40 ? "..." : "") : '';
 
                 $passkeyRows[] = [
-                    "DeviceKey"    => (string)$deviceKey,
-                    "CredentialId" => $credentialId,
-                    "Info"         => ($credentialId !== '') ? substr($credentialId, 0, 24) . (strlen($credentialId) > 24 ? "..." : "") : "(no credentialId)"
+                    "DeviceKey"      => (string)$deviceKey,
+                    "CredentialId"   => $credentialId,
+                    "RegisteredHost" => $registeredHost,
+                    "RegisteredAt"   => $registeredAtText,
+                    "UserAgent"      => $shortUserAgent,
+                    "Info"           => $shortCredential
                 ];
             }
         }
@@ -335,11 +359,13 @@ class SecretsManager extends IPSModuleStrict
         $json['actions'][] = [
             "type" => "List",
             "name" => "LocalPasskeyDevicesUI",
-            "rowCount" => 6,
+            "rowCount" => 8,
             "columns" => [
-                ["caption" => "Device Key", "name" => "DeviceKey", "width" => "220px"],
-                ["caption" => "Credential ID", "name" => "CredentialId", "width" => "auto"],
-                ["caption" => "Kurzinfo", "name" => "Info", "width" => "220px"]
+                ["caption" => "Device Key", "name" => "DeviceKey", "width" => "200px"],
+                ["caption" => "Registered Host", "name" => "RegisteredHost", "width" => "180px"],
+                ["caption" => "Registered At", "name" => "RegisteredAt", "width" => "160px"],
+                ["caption" => "User Agent", "name" => "UserAgent", "width" => "220px"],
+                ["caption" => "Credential ID", "name" => "Info", "width" => "220px"]
             ],
             "values" => $passkeyRows
         ];
@@ -352,7 +378,6 @@ class SecretsManager extends IPSModuleStrict
 
         return json_encode($json);
     }
-
 
     public function SaveAuthToken(string $token): void
     {
@@ -1833,8 +1858,15 @@ class SecretsManager extends IPSModuleStrict
             $vaultData = $this->_decryptVault();
             $adminPass = $vaultData['AdminPortal']['PW'] ?? '';
             if ($adminPass !== '' && ($_GET['pass'] ?? '') === $adminPass) {
+                $hours = (int)$this->ReadPropertyInteger("PortalSessionLifetimeHours");
+                if ($hours <= 0) {
+                    $hours = 72;
+                }
+
+                $sessionLifetimeSeconds = $hours * 3600;
+
                 $sessionKey = "AuthSession_" . md5($_SERVER['REMOTE_ADDR'] . $_SERVER['HTTP_USER_AGENT']);
-                $this->SetBuffer($sessionKey, (string)(time() + 259200));
+                $this->SetBuffer($sessionKey, (string)(time() + $sessionLifetimeSeconds));
                 $this->ServeAdminDashboard();
                 return;
             }
@@ -2033,8 +2065,15 @@ class SecretsManager extends IPSModuleStrict
         }
 
         if ($authenticated) {
+            $hours = (int)$this->ReadPropertyInteger("PortalSessionLifetimeHours");
+            if ($hours <= 0) {
+                $hours = 72;
+            }
+
+            $sessionLifetimeSeconds = $hours * 3600;
+
             $sessionKey = "AuthSession_" . md5($_SERVER['REMOTE_ADDR'] . $_SERVER['HTTP_USER_AGENT']);
-            $this->SetBuffer($sessionKey, (string)(time() + 259200));
+            $this->SetBuffer($sessionKey, (string)(time() + $sessionLifetimeSeconds));
             $this->SetBuffer("PortalChallenge_" . $sid, "");
             echo "OK";
         } else {
