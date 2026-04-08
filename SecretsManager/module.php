@@ -1957,14 +1957,23 @@ class SecretsManager extends IPSModuleStrict
             $vaultData['__AUTH__'] = [];
         }
 
-        $vaultData['__AUTH__']['device_' . time()] = [
-            'credentialId' => $data['rawId'],
-            'attestation'  => $data['response']['attestationObject']
+        $deviceKey = 'device_' . bin2hex(random_bytes(8));
+
+        $vaultData['__AUTH__'][$deviceKey] = [
+            'credentialId'   => $data['rawId'],
+            'attestation'    => $data['response']['attestationObject'],
+            'RegisteredHost' => (string)($_SERVER['HTTP_HOST'] ?? ''),
+            'RegisteredAt'   => time(),
+            'UserAgent'      => (string)($_SERVER['HTTP_USER_AGENT'] ?? '')
         ];
 
         if ($this->_encryptAndSave($vaultData)) {
             $this->SetBuffer("RegChallenge", "");
-            $this->LogMessage("Passkey Reg: Gerät erfolgreich registriert.", KL_MESSAGE);
+            $this->LogMessage(
+                "Passkey Reg: Gerät erfolgreich registriert. DeviceKey=" . $deviceKey .
+                    " Host=" . (string)($_SERVER['HTTP_HOST'] ?? ''),
+                KL_MESSAGE
+            );
             echo "✅ Gerät erfolgreich registriert!";
         } else {
             echo "❌ Fehler beim Speichern.";
