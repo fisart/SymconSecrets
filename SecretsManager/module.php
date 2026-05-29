@@ -543,6 +543,35 @@ class SecretsManager extends IPSModuleStrict
         $challengeB64 = base64_encode($challenge);
         $returnUrl = $_GET['return'] ?? '';
 
+        // Bestehende Credential-IDs aus __AUTH__ für allowCredentials bereitstellen.
+        // Das ist rückwärts kompatibel, weil vorhandene credentialId-Werte unverändert weiterverwendet werden.
+        $allowCredentials = [];
+        $vaultData = $this->_decryptVault() ?: [];
+        $authData = $vaultData['__AUTH__'] ?? [];
+
+        if (is_array($authData)) {
+            foreach ($authData as $deviceKey => $deviceData) {
+                if ($deviceKey === '__folder') {
+                    continue;
+                }
+                if (!is_array($deviceData)) {
+                    continue;
+                }
+
+                $credentialId = (string)($deviceData['credentialId'] ?? '');
+                if ($credentialId === '') {
+                    continue;
+                }
+
+                $allowCredentials[] = [
+                    'type' => 'public-key',
+                    'id'   => $credentialId
+                ];
+            }
+        }
+
+        $allowCredentialsJson = json_encode($allowCredentials);
+
         echo '<html><head><title>Vault Auth</title><meta name="viewport" content="width=device-width, initial-scale=1">';
         echo '<style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f4f7f6;}';
         echo '.box{background:#fff;padding:40px;border-radius:15px;box-shadow:0 10px 25px rgba(0,0,0,0.1);text-align:center;}';
@@ -550,9 +579,20 @@ class SecretsManager extends IPSModuleStrict
         echo 'button:hover{background:#357abd;}</style></head><body>';
         echo '<div class="box"><h2>🔐 Biometrischer Login</h2><p>Bitte Sensor berühren.</p>';
         echo '<button onclick="login()">Anmelden</button></div>';
-        echo '<script>async function login(){';
+        echo '<script>';
+        echo 'function base64ToUint8Array(value) {';
+        echo 'const binary = atob(value);';
+        echo 'const bytes = new Uint8Array(binary.length);';
+        echo 'for (let i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }';
+        echo 'return bytes;';
+        echo '}';
+        echo 'async function login(){';
         echo 'const challenge = Uint8Array.from(atob("' . $challengeB64 . '"), c => c.charCodeAt(0));';
-        echo 'const options = { publicKey: { challenge, timeout: 60000, userVerification: "required" } };';
+        echo 'const storedCredentials = ' . $allowCredentialsJson . ';';
+        echo 'const allowCredentials = storedCredentials.map(item => ({ type: item.type, id: base64ToUint8Array(item.id) }));';
+        echo 'const publicKey = { challenge, timeout: 60000, userVerification: "required" };';
+        echo 'if (allowCredentials.length > 0) { publicKey.allowCredentials = allowCredentials; }';
+        echo 'const options = { publicKey };';
         echo 'try { const cred = await navigator.credentials.get(options);';
         echo 'const resp = { id: cred.id, rawId: btoa(String.fromCharCode(...new Uint8Array(cred.rawId))), response: { ';
         echo 'clientDataJSON: btoa(String.fromCharCode(...new Uint8Array(cred.response.clientDataJSON))), ';
@@ -561,7 +601,7 @@ class SecretsManager extends IPSModuleStrict
         echo 'type: cred.type, portal: 1, sid: "' . $sid . '", return: "' . addslashes($returnUrl) . '" };';
         echo 'const res = await fetch(window.location.href, { method: "POST", body: JSON.stringify(resp) });';
         echo 'const txt = await res.text(); if(txt === "OK") { window.location.href = decodeURIComponent("' . addslashes($returnUrl) . '") || "/"; } else { alert("Fehler: " + txt); }';
-        echo '} catch(e) { alert("Authentifizierung fehlgeschlagen."); } }';
+        echo '} catch(e) { alert("Authentifizierung fehlgeschlagen: " + e.name + " - " + e.message); } }';
         echo '</script></body></html>';
     }
 
@@ -1949,11 +1989,22 @@ class SecretsManager extends IPSModuleStrict
         echo '<script>async function register(){';
         echo 'const challenge = Uint8Array.from(atob("' . $challengeB64 . '"), c => c.charCodeAt(0));';
         echo 'const userID = Uint8Array.from("user' . $this->InstanceID . '", c => c.charCodeAt(0));';
-        echo 'const options = { publicKey: { rp: { name: "' . $rpName . '", id: window.location.hostname }, user: { id: userID, name: "owner", displayName: "Vault Owner" }, challenge, pubKeyCredParams: [{type: "public-key", alg: -7}], timeout: 60000, authenticatorSelection: { userVerification: "required" } } };';
+        echo 'const options = { publicKey: { ';
+        echo 'rp: { name: "' . $rpName . '", id: window.location.hostname }, ';
+        echo 'user: { id: userID, name: "owner", displayName: "Vault Owner" }, ';
+        echo 'challenge, ';
+        echo 'pubKeyCredParams: [{type: "public-key", alg: -7}], ';
+        echo 'timeout: 60000, ';
+        echo 'authenticatorSelection: { ';
+        echo 'residentKey: "preferred", ';
+        echo 'requireResidentKey: false, ';
+        echo 'userVerification: "required" ';
+        echo '} ';
+        echo '} };';
         echo 'try { const cred = await navigator.credentials.create(options);';
         echo 'const resp = { id: cred.id, rawId: btoa(String.fromCharCode(...new Uint8Array(cred.rawId))), response: { attestationObject: btoa(String.fromCharCode(...new Uint8Array(cred.response.attestationObject))), clientDataJSON: btoa(String.fromCharCode(...new Uint8Array(cred.response.clientDataJSON))) }, type: cred.type };';
         echo 'const res = await fetch(window.location.href, { method: "POST", body: JSON.stringify(resp) });';
-        echo 'alert(await res.text()); } catch(e) { alert("Fehler: " + e); } }';
+        echo 'alert(await res.text()); } catch(e) { alert("Fehler: " + e.name + " - " + e.message); } }';
         echo '</script></body></html>';
     }
 
