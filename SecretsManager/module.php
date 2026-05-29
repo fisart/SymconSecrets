@@ -26,8 +26,6 @@ class SecretsManager extends IPSModuleStrict
         $this->RegisterPropertyInteger("PortalSessionLifetimeHours", 72);
 
         // IMPORTANT: AuthToken / HookPass werden NICHT mehr als Property gespeichert
-        // $this->RegisterPropertyString("AuthToken", "");  AAA // REMOVE
-        // $this->RegisterPropertyString("HookPass", "");    // REMOVE
 
         // Hook user bleibt (nicht geheim)
         $this->RegisterPropertyString("HookUser", "");
