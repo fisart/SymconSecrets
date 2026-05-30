@@ -1,7 +1,7 @@
 <?php
 
 declare(strict_types=1);
-// Version 5.3.0
+// Version 5.3.1
 class SecretsManager extends IPSModuleStrict
 {
 
@@ -314,6 +314,31 @@ class SecretsManager extends IPSModuleStrict
             "caption" => "📥 Import Local Secrets",
             "onClick" => "IPS_RequestAction(\$id, 'LOCALUI_ImportJson', \$LocalSecretsImportJson);"
         ];
+
+        // --- LOCAL SECRET STORE BOOTSTRAP / RECOVERY ---
+        if ($isSlave) {
+            $json['actions'][] = ["type" => "Label", "caption" => "________________________________________________________________________________________________"];
+            $json['actions'][] = ["type" => "Label", "caption" => "🧰 LOCAL SECRET STORE BOOTSTRAP / RECOVERY", "bold" => true];
+            $json['actions'][] = ["type" => "Label", "caption" => "Use this only to initialize or repair the local Secret Store of this Slave without changing the InstanceID."];
+
+            $json['actions'][] = [
+                "type" => "Button",
+                "caption" => "🔎 Check Local Secret Store",
+                "onClick" => "IPS_RequestAction(\$id, 'LOCALSTORE_Check', '');"
+            ];
+
+            $json['actions'][] = [
+                "type" => "ValidationTextBox",
+                "name" => "BootstrapSyncToken",
+                "caption" => "Bootstrap Sync Token from Master"
+            ];
+
+            $json['actions'][] = [
+                "type" => "Button",
+                "caption" => "🧰 Initialize / Repair Slave Secret Store",
+                "onClick" => "IPS_RequestAction(\$id, 'LOCALSTORE_InitializeSlave', \$BootstrapSyncToken);"
+            ];
+        }
 
         // --- LOCAL PASSKEY DEVICES ---
         $passkeyRows = [];
@@ -1132,6 +1157,16 @@ class SecretsManager extends IPSModuleStrict
                 }
                 $this->ReloadForm();
                 return;
+
+            case 'LOCALSTORE_Check':
+                echo $this->CheckLocalSecretStore();
+                $this->ReloadForm();
+                return;
+
+            case 'LOCALSTORE_InitializeSlave':
+                $this->InitializeSlaveSecretStore((string)$Value);
+                $this->ReloadForm();
+                return;
         }
 
         // Falls du das Modul später erweiterst, hier Platz für weitere Standard-Actions...
@@ -1502,6 +1537,384 @@ class SecretsManager extends IPSModuleStrict
 
         $this->LogMessage("DeleteLocalPasskey successful for device key '" . $deviceKey . "'.", KL_MESSAGE);
         return true;
+    }
+
+
+    public function CheckLocalSecretStore(): string
+    {
+        $mode = $this->ReadPropertyInteger("OperationMode");
+        $folder = $this->ReadPropertyString("KeyFolderPath");
+        $keyPath = $this->_getFullPath();
+        $systemPath = $this->getSystemPath();
+
+        $lines = [];
+        $lines[] = "LOCAL SECRET STORE DIAGNOSTIC";
+        $lines[] = "";
+        $lines[] = "System Role: " . (($mode === 0) ? "Slave (Receiver)" : (($mode === 1) ? "Master (Sender)" : "Standalone (Local Vault)"));
+        $lines[] = "KeyFolderPath: " . (($folder !== "") ? $folder : "(not configured)");
+        $lines[] = "";
+
+        if ($folder === "") {
+            $lines[] = "❌ KeyFolderPath is not configured.";
+            $lines[] = "";
+            $lines[] = "To bring this Slave back online:";
+            $lines[] = "1. Enter the directory path where this Slave should store master.key and system.vault.";
+            $lines[] = "2. Click Apply Changes.";
+            $lines[] = "3. Run this diagnostic again.";
+            return implode("\n", $lines);
+        }
+
+        if (!is_dir($folder)) {
+            $lines[] = "❌ KeyFolderPath does not exist.";
+            $lines[] = "";
+            $lines[] = "To bring this Slave back online:";
+            $lines[] = "1. Create the directory on the Symcon host.";
+            $lines[] = "2. Make sure the Symcon process can read and write this directory.";
+            $lines[] = "3. Click Apply Changes.";
+            $lines[] = "4. Run this diagnostic again.";
+            return implode("\n", $lines);
+        }
+
+        $lines[] = "✅ KeyFolderPath exists.";
+
+        if (!is_writable($folder)) {
+            $lines[] = "❌ KeyFolderPath is not writable by the Symcon process.";
+            $lines[] = "";
+            $lines[] = "To bring this Slave back online:";
+            $lines[] = "1. Fix owner/group/permissions of the configured KeyFolderPath.";
+            $lines[] = "2. Make sure Symcon can create and update files in this directory.";
+            $lines[] = "3. Run this diagnostic again.";
+            return implode("\n", $lines);
+        }
+
+        $lines[] = "✅ KeyFolderPath is writable.";
+
+        if ($keyPath === "") {
+            $lines[] = "❌ master.key path cannot be calculated.";
+            $lines[] = "";
+            $lines[] = "To bring this Slave back online:";
+            $lines[] = "1. Check KeyFolderPath.";
+            $lines[] = "2. Click Apply Changes.";
+            $lines[] = "3. Run this diagnostic again.";
+            return implode("\n", $lines);
+        }
+
+        if (!file_exists($keyPath)) {
+            $lines[] = "❌ master.key is missing.";
+            $lines[] = "";
+            $lines[] = "To bring this Slave back online:";
+            $lines[] = "1. Copy the correct master.key from the Master or from the last working backup into the configured KeyFolderPath.";
+            $lines[] = "2. Click Apply Changes.";
+            $lines[] = "3. Run this diagnostic again.";
+            $lines[] = "4. Then enter the Sync Token from the Master and run Initialize / Repair Slave Secret Store.";
+            $lines[] = "5. After successful initialization, start the sync from the Master.";
+            return implode("\n", $lines);
+        }
+
+        if (!is_readable($keyPath)) {
+            $lines[] = "❌ master.key exists but cannot be read by Symcon.";
+            $lines[] = "";
+            $lines[] = "To bring this Slave back online:";
+            $lines[] = "1. Fix file permissions for master.key.";
+            $lines[] = "2. Make sure the Symcon process can read it.";
+            $lines[] = "3. Run this diagnostic again.";
+            return implode("\n", $lines);
+        }
+
+        $keyHex = trim((string)@file_get_contents($keyPath));
+        if (!preg_match('/^[0-9a-fA-F]{32}$/', $keyHex)) {
+            $lines[] = "❌ master.key exists but does not contain a valid AES-128 key.";
+            $lines[] = "";
+            $lines[] = "To bring this Slave back online:";
+            $lines[] = "1. Restore the correct master.key from the last working backup of this Slave.";
+            $lines[] = "2. If no backup exists, manually move the broken master.key and system.vault out of the KeyFolderPath.";
+            $lines[] = "3. Then run Initialize / Repair Slave Secret Store with the Sync Token from the Master.";
+            $lines[] = "4. After that, start the sync from the Master and re-register local passkeys / re-import local secrets if needed.";
+            return implode("\n", $lines);
+        }
+
+        $lines[] = "✅ master.key exists and has a valid format.";
+
+        if ($systemPath === "") {
+            $lines[] = "❌ system.vault path cannot be calculated.";
+            $lines[] = "";
+            $lines[] = "To bring this Slave back online:";
+            $lines[] = "1. Check KeyFolderPath.";
+            $lines[] = "2. Click Apply Changes.";
+            $lines[] = "3. Run this diagnostic again.";
+            return implode("\n", $lines);
+        }
+
+        if (!file_exists($systemPath)) {
+            $lines[] = "⚠️ system.vault is missing.";
+            $lines[] = "";
+            $lines[] = "To bring this Slave back online:";
+            $lines[] = "1. Enter the Sync Token from the Master into Bootstrap Sync Token.";
+            $lines[] = "2. Run Initialize / Repair Slave Secret Store.";
+            $lines[] = "3. After successful initialization, start the sync from the Master.";
+            return implode("\n", $lines);
+        }
+
+        $error = "";
+        $systemSecrets = $this->LoadExistingSystemSecretsForBootstrap($keyHex, $error);
+        if ($systemSecrets === null) {
+            $lines[] = "❌ system.vault exists but cannot be decrypted with the current master.key.";
+            $lines[] = "Details: " . $error;
+            $lines[] = "";
+            $lines[] = "No files were changed.";
+            $lines[] = "";
+            $lines[] = "To bring this Slave back online, choose one option:";
+            $lines[] = "";
+            $lines[] = "Option 1 - Restore:";
+            $lines[] = "Copy the matching master.key and system.vault from the last working backup of this Slave into the configured KeyFolderPath.";
+            $lines[] = "";
+            $lines[] = "Option 2 - Repair file permissions:";
+            $lines[] = "Check that the Symcon process can read master.key and system.vault and can write to the KeyFolderPath.";
+            $lines[] = "";
+            $lines[] = "Option 3 - Reinitialize as a new Slave:";
+            $lines[] = "If no backup exists, manually rename or move the broken master.key and system.vault files out of the KeyFolderPath, then run Initialize / Repair Slave Secret Store with the Sync Token from the Master.";
+            $lines[] = "After that, start the sync from the Master and re-register local passkeys / re-import local secrets if needed.";
+            return implode("\n", $lines);
+        }
+
+        $lines[] = "✅ system.vault exists and can be decrypted.";
+
+        if ((string)($systemSecrets['authToken'] ?? '') === "") {
+            $lines[] = "⚠️ Sync Token is not stored in system.vault.";
+            $lines[] = "";
+            $lines[] = "To bring this Slave back online:";
+            $lines[] = "1. Open the SecretsManager instance on the Master.";
+            $lines[] = "2. Click Show/Copy Token.";
+            $lines[] = "3. Paste the token into Bootstrap Sync Token on this Slave.";
+            $lines[] = "4. Run Initialize / Repair Slave Secret Store.";
+            $lines[] = "5. After successful initialization, start the sync from the Master.";
+            return implode("\n", $lines);
+        }
+
+        $lines[] = "✅ Sync Token is stored locally and readable.";
+        $lines[] = "";
+        $lines[] = "Result: This Slave local Secret Store is ready for Master sync.";
+
+        return implode("\n", $lines);
+    }
+
+    public function InitializeSlaveSecretStore(string $syncToken): bool
+    {
+        $syncToken = trim($syncToken);
+        $mode = $this->ReadPropertyInteger("OperationMode");
+        $folder = $this->ReadPropertyString("KeyFolderPath");
+        $systemPath = $this->getSystemPath();
+
+        if ($mode !== 0) {
+            echo "❌ This action is only available in Slave mode.\n\n";
+            echo "This instance is currently not configured as a Slave.\n";
+            echo "No files were changed.\n\n";
+            echo "To initialize this system as a Slave:\n";
+            echo "1. Set System Role to Slave (Receiver).\n";
+            echo "2. Click Apply Changes.\n";
+            echo "3. Enter the Sync Token from the Master into Bootstrap Sync Token.\n";
+            echo "4. Run Initialize / Repair Slave Secret Store again.\n";
+            echo "5. After successful initialization, start the sync from the Master.\n\n";
+            echo "If this instance is intended to be Master or Standalone, do not use this Slave initialization function.";
+            $this->LogMessage("InitializeSlaveSecretStore aborted: instance is not in Slave mode.", KL_ERROR);
+            return false;
+        }
+
+        if ($syncToken === "") {
+            echo "❌ No Sync Token entered.\n\n";
+            echo "The Slave cannot be initialized because it needs the same Sync Token that is stored on the Master.\n";
+            echo "No files were changed.\n\n";
+            echo "To bring this Slave back online:\n";
+            echo "1. Open the SecretsManager instance on the Master.\n";
+            echo "2. Click Show/Copy Token.\n";
+            echo "3. Copy the token.\n";
+            echo "4. Paste it into Bootstrap Sync Token on this Slave.\n";
+            echo "5. Run Initialize / Repair Slave Secret Store again.\n";
+            echo "6. After successful initialization, start the sync from the Master.\n\n";
+            echo "If the Master token is unknown, generate and save a new token on the Master first. Then use the same new token to initialize every Slave.";
+            $this->LogMessage("InitializeSlaveSecretStore aborted: empty Sync Token.", KL_ERROR);
+            return false;
+        }
+
+        if ($folder === "" || !is_dir($folder) || !is_writable($folder)) {
+            echo "❌ KeyFolderPath is not ready.\n\n";
+            echo "The Slave cannot create or update its local Secret Store.\n";
+            echo "No files were changed.\n\n";
+            echo "To bring this Slave back online:\n";
+            echo "1. Enter a valid KeyFolderPath.\n";
+            echo "2. Make sure the directory exists on the Symcon host.\n";
+            echo "3. Make sure the Symcon process can write to this directory.\n";
+            echo "4. Click Apply Changes.\n";
+            echo "5. Run Initialize / Repair Slave Secret Store again.";
+            $this->LogMessage("InitializeSlaveSecretStore aborted: KeyFolderPath is missing, invalid, or not writable.", KL_ERROR);
+            return false;
+        }
+
+        $error = "";
+        $keyHex = $this->ReadExistingLocalKeyForBootstrap($error);
+        if ($keyHex === null) {
+            echo "❌ Local master.key is missing or invalid.\n\n";
+            echo $error . "\n";
+            echo "No files were changed.\n\n";
+            echo "To bring this Slave back online:\n";
+            echo "1. Copy the correct master.key from the Master or from the last working backup into the configured KeyFolderPath.\n";
+            echo "2. Click Apply Changes.\n";
+            echo "3. Run Initialize / Repair Slave Secret Store again with the Sync Token from the Master.\n";
+            echo "4. After successful initialization, start the sync from the Master.\n";
+            echo "5. If this was a replacement system, re-register local passkeys or import local secrets if needed.";
+            $this->LogMessage("InitializeSlaveSecretStore aborted: local key missing or invalid. " . $error, KL_ERROR);
+            return false;
+        }
+
+        if ($systemPath === "") {
+            echo "❌ system.vault path cannot be calculated.\n\n";
+            echo "No files were changed.\n\n";
+            echo "To bring this Slave back online:\n";
+            echo "1. Check KeyFolderPath.\n";
+            echo "2. Click Apply Changes.\n";
+            echo "3. Run Initialize / Repair Slave Secret Store again.";
+            $this->LogMessage("InitializeSlaveSecretStore aborted: system.vault path cannot be calculated.", KL_ERROR);
+            return false;
+        }
+
+        if (file_exists($systemPath)) {
+            $systemSecrets = $this->LoadExistingSystemSecretsForBootstrap($keyHex, $error);
+            if ($systemSecrets === null) {
+                echo "❌ Slave local store cannot be read.\n\n";
+                echo "The file system.vault exists, but it cannot be decrypted with the current master.key.\n";
+                echo "Details: " . $error . "\n";
+                echo "No files were changed.\n\n";
+                echo "To bring this Slave back online, do one of the following:\n\n";
+                echo "Option 1 - Restore:\n";
+                echo "Copy the matching master.key and system.vault from the last working backup of this Slave into the configured KeyFolderPath.\n\n";
+                echo "Option 2 - Repair file permissions:\n";
+                echo "Check that the Symcon process can read master.key and system.vault and can write to the KeyFolderPath.\n\n";
+                echo "Option 3 - Reinitialize as a new Slave:\n";
+                echo "If no Slave backup exists, copy the correct master.key from the Master, manually rename or move the broken system.vault file out of the KeyFolderPath, then run this initialization again with the Sync Token from the Master.\n";
+                echo "After that, run a Master sync and re-register local passkeys / re-import local secrets if needed.";
+                $this->LogMessage("InitializeSlaveSecretStore aborted: existing system.vault cannot be decrypted. " . $error, KL_ERROR);
+                return false;
+            }
+        } else {
+            $systemSecrets = [];
+        }
+
+        $systemSecrets['authToken'] = $syncToken;
+
+        if (!$this->saveSystemSecretsUsingKeyHex($systemSecrets, $keyHex)) {
+            echo "❌ Failed to write system.vault.\n\n";
+            echo "No sync was performed.\n\n";
+            echo "To bring this Slave back online:\n";
+            echo "1. Check that the KeyFolderPath is writable by the Symcon process.\n";
+            echo "2. Check free disk space.\n";
+            echo "3. Run Initialize / Repair Slave Secret Store again.";
+            $this->LogMessage("InitializeSlaveSecretStore aborted: saveSystemSecretsUsingKeyHex failed.", KL_ERROR);
+            return false;
+        }
+
+        $this->LogMessage("InitializeSlaveSecretStore successful: local authToken stored and Slave is ready for Master sync.", KL_MESSAGE);
+
+        echo "✅ Slave local Secret Store initialized / repaired successfully.\n\n";
+        echo "What was done:\n";
+        echo "- The existing local master.key was used.\n";
+        echo "- The Sync Token was stored encrypted in system.vault.\n";
+        echo "- No global Vault data, passkeys, or __LOCAL__ secrets were changed.\n\n";
+        echo "Next steps to bring this Slave fully online:\n";
+        echo "1. Open the SecretsManager instance on the Master.\n";
+        echo "2. Start Manually Sync to Slaves.\n";
+        echo "3. Check that this Slave reports Sync OK on the Master.\n";
+        echo "4. If this was a replacement system, re-register local passkeys or import local secrets if needed.";
+
+        return true;
+    }
+
+    private function ReadExistingLocalKeyForBootstrap(string &$error): ?string
+    {
+        $keyPath = $this->_getFullPath();
+        if ($keyPath === "") {
+            $error = "The master.key path cannot be calculated because KeyFolderPath is not configured.";
+            return null;
+        }
+
+        if (!file_exists($keyPath)) {
+            $error = "master.key is missing. This module version uses the same master.key for the synced Vault and the local system.vault, so the correct key must be restored or copied before initialization.";
+            return null;
+        }
+
+        if (!is_readable($keyPath)) {
+            $error = "master.key exists but cannot be read by the Symcon process.";
+            return null;
+        }
+
+        $keyHex = trim((string)@file_get_contents($keyPath));
+        if (!preg_match('/^[0-9a-fA-F]{32}$/', $keyHex)) {
+            $error = "master.key exists but does not contain a valid AES-128 key.";
+            return null;
+        }
+
+        return strtolower($keyHex);
+    }
+
+    private function LoadExistingSystemSecretsForBootstrap(string $keyHex, string &$error): ?array
+    {
+        $path = $this->getSystemPath();
+        if ($path === "") {
+            $error = "The system.vault path cannot be calculated because KeyFolderPath is not configured.";
+            return null;
+        }
+
+        if (!file_exists($path)) {
+            return [];
+        }
+
+        if (!is_readable($path)) {
+            $error = "system.vault exists but cannot be read by the Symcon process.";
+            return null;
+        }
+
+        $json = @file_get_contents($path);
+        if ($json === false || trim($json) === "") {
+            $error = "system.vault exists but is empty or cannot be read.";
+            return null;
+        }
+
+        $meta = json_decode($json, true);
+        if (!is_array($meta) || !isset($meta['data'], $meta['iv'], $meta['tag'])) {
+            $error = "system.vault does not contain a valid encrypted vault structure.";
+            return null;
+        }
+
+        $cipher = $meta['cipher'] ?? "aes-128-gcm";
+        $keyBin = hex2bin($keyHex);
+        $ivBin = hex2bin((string)$meta['iv']);
+        $tagBin = hex2bin((string)$meta['tag']);
+
+        if ($keyBin === false || $ivBin === false || $tagBin === false) {
+            $error = "system.vault contains invalid hex encoding for key, iv, or tag.";
+            return null;
+        }
+
+        $plain = openssl_decrypt(
+            (string)$meta['data'],
+            $cipher,
+            $keyBin,
+            0,
+            $ivBin,
+            $tagBin
+        );
+
+        if ($plain === false) {
+            $error = "system.vault cannot be decrypted with the current master.key.";
+            return null;
+        }
+
+        $arr = json_decode($plain, true);
+        if (!is_array($arr)) {
+            $error = "system.vault was decrypted, but the plaintext is not valid JSON data.";
+            return null;
+        }
+
+        return $arr;
     }
 
     /**
