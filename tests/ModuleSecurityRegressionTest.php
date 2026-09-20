@@ -21,6 +21,8 @@ $required = [
     'ConsumePortalChallenge(',
     'GetMigratableLegacyCredentials',
     'VerifyLegacyMigration',
+    "'credentialIdV2'",
+    '$migrated = $old',
     'httponly',
     "'samesite' => 'Strict'",
     'hash_equals',
@@ -59,6 +61,21 @@ foreach (['authenticatorData', 'signature', 'credentialPublicKey', 'processGet('
     if (!str_contains($verify, $needle)) {
         throw new RuntimeException('Assertion verifier does not use ' . $needle);
     }
+}
+
+$migrationStart = strpos($module, 'private function VerifyLegacyMigration(): void');
+$migrationEnd = strpos($module, 'private function ServeRegistrationUI(): void');
+if ($migrationStart === false || $migrationEnd === false || $migrationEnd <= $migrationStart) {
+    throw new RuntimeException('Could not isolate VerifyLegacyMigration');
+}
+$migration = substr($module, $migrationStart, $migrationEnd - $migrationStart);
+foreach (['$migrated[\'credentialIdV2\']', '$vaultData[self::LOCAL_AUTH_KEY][$deviceKey] = $migrated'] as $needle) {
+    if (!str_contains($migration, $needle)) {
+        throw new RuntimeException('Rollback-compatible migration control missing: ' . $needle);
+    }
+}
+if (str_contains($migration, "'credentialId' => $credentialId")) {
+    throw new RuntimeException('Migration overwrites the legacy rollback credential ID');
 }
 
 echo "ModuleSecurityRegressionTest: OK\n";

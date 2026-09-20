@@ -2678,21 +2678,30 @@ class SecretsManager extends IPSModuleStrict
         }
 
         $old = $vaultData[self::LOCAL_AUTH_KEY][$deviceKey];
-        $vaultData[self::LOCAL_AUTH_KEY][$deviceKey] = [
-            'schemaVersion'       => SecretsPortalSecurity::CREDENTIAL_SCHEMA_VERSION,
-            'credentialId'        => $credentialId,
-            'credentialPublicKey' => (string)$legacy['credentialPublicKey'],
-            'signatureCounter'    => (int)($newCounter ?? 0),
-            'rpId'                => $rpId,
-            'origin'              => $origin,
-            'aaguid'              => (string)($legacy['aaguid'] ?? ''),
-            'attestationFormat'   => (string)($legacy['attestationFormat'] ?? ''),
-            'backupEligible'      => false,
-            'backedUp'            => false,
-            'RegisteredAt'        => (int)($old['RegisteredAt'] ?? time()),
-            'MigratedAt'          => time(),
-            'UserAgent'           => substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 512)
-        ];
+        if (!is_array($old)) {
+            $this->RejectPortalRequest('migration-state');
+            return;
+        }
+
+        // Preserve the complete legacy record, especially its padded Base64
+        // credentialId and attestation. The old branch ignores the V2 fields
+        // and can therefore still use the same passkey after a code rollback.
+        // Secure code uses credentialIdV2, never the rollback-only encoding.
+        $migrated = $old;
+        $migrated['schemaVersion'] = SecretsPortalSecurity::CREDENTIAL_SCHEMA_VERSION;
+        $migrated['credentialIdV2'] = $credentialId;
+        $migrated['credentialPublicKey'] = (string)$legacy['credentialPublicKey'];
+        $migrated['signatureCounter'] = (int)($newCounter ?? 0);
+        $migrated['rpId'] = $rpId;
+        $migrated['origin'] = $origin;
+        $migrated['aaguid'] = (string)($legacy['aaguid'] ?? '');
+        $migrated['attestationFormat'] = (string)($legacy['attestationFormat'] ?? '');
+        $migrated['backupEligible'] = false;
+        $migrated['backedUp'] = false;
+        $migrated['RegisteredAt'] = (int)($old['RegisteredAt'] ?? time());
+        $migrated['MigratedAt'] = time();
+        $migrated['UserAgent'] = substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 512);
+        $vaultData[self::LOCAL_AUTH_KEY][$deviceKey] = $migrated;
 
         if (!$this->_encryptAndSave($vaultData)) {
             $this->SendPortalJson(500, ['ok' => false, 'error' => 'The verified migrated credential could not be saved.']);
@@ -3145,7 +3154,10 @@ class SecretsManager extends IPSModuleStrict
                 continue; // legacy ID-only registrations fail closed
             }
 
-            $credentialId = (string)($device['credentialId'] ?? '');
+            // Migrated records retain credentialId in the exact encoding used
+            // by the old branch for rollback compatibility. V2 verification
+            // addresses the same credential by canonical Base64URL instead.
+            $credentialId = (string)($device['credentialIdV2'] ?? $device['credentialId'] ?? '');
             $publicKey = (string)($device['credentialPublicKey'] ?? '');
             if (
                 SecretsPortalSecurity::base64UrlDecode($credentialId) === null ||

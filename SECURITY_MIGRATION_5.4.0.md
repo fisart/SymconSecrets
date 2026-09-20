@@ -31,14 +31,20 @@ registration page only when adding a genuinely new device.
 Legacy passkey records cannot authenticate normal portal sessions. They are
 accepted only by the admin-authenticated migration route, and only after a
 fresh cryptographically valid assertion. Successful migration updates the
-existing record to schemaVersion 2 with a verified credentialPublicKey. A
-damaged record whose attestation cannot be parsed cannot be migrated and
-remains unusable. Alarm runtime, vault read APIs, scoped write APIs, local
-secret backup/restore, and master/slave synchronization are unchanged.
+existing record to schemaVersion 2 with a verified credentialPublicKey. The
+original legacy credentialId encoding and attestation are retained in that
+same record solely so the unchanged rollback branch can still use the passkey;
+the secure verifier uses credentialIdV2. A damaged record whose attestation
+cannot be parsed cannot be migrated and remains unusable. Alarm runtime, vault
+read APIs, scoped write APIs, local secret backup/restore, and master/slave
+synchronization are unchanged.
 
 ## Rollback
 
 The remediation is developed on security/webauthn-verification. Returning the
 IP-Symcon module to mit-grafischem-Editor restores the previous code. Do not
 re-enable internet access to the old portal after rollback because its
-authentication bypass remains present.
+authentication bypass remains present. Existing legacy passkeys continue to
+work after rollback, including passkeys already migrated by 5.4.0, because the
+migration retains the old credentialId and attestation fields unchanged. This
+compatibility does not make the rolled-back verifier safe.
