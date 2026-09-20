@@ -44,8 +44,8 @@ class SecretsManager extends IPSModuleStrict
         // been configured and legacy credentials have been cryptographically
         // migrated (or newly enrolled later, if the administrator chooses).
         $this->RegisterPropertyBoolean("PortalEnabled", false);
-        $this->RegisterPropertyString("PortalRpId", "");
         $this->RegisterPropertyString("PortalOrigin", "");
+        $this->RegisterPropertyString("PortalBackupOrigin", "");
         $this->RegisterPropertyInteger("PortalSessionLifetimeMinutes", 60);
 
         // IMPORTANT: AuthToken / HookPass werden NICHT mehr als Property gespeichert
@@ -569,21 +569,27 @@ class SecretsManager extends IPSModuleStrict
         if (!$this->RequirePortalReady()) {
             return;
         }
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        if ($profile === null) {
+            $this->SendPortalError(503, $profileError);
+            return;
+        }
         if (!$this->CheckPortalRateLimit('page', true)) {
             $this->SendPortalError(429, 'Too many requests. Please try again later.');
             return;
         }
 
-        $credentials = $this->GetVerifiedPortalCredentials();
+        $credentials = $this->GetVerifiedPortalCredentials($profile['rpId'], $profile['origin']);
         if (count($credentials) === 0) {
-            $this->SendPortalError(409, 'No verified passkeys are registered. Use the registration page to enrol a passkey.');
+            $this->SendPortalError(409, 'No verified passkeys are available for this origin. Use verified migration in the admin dashboard.');
             return;
         }
 
         $challenge = random_bytes(32);
         $returnUrl = SecretsPortalSecurity::sanitizeReturnUrl((string)($_GET['return'] ?? '/'));
-        $rpId = strtolower(trim($this->ReadPropertyString('PortalRpId')));
-        $origin = rtrim(trim($this->ReadPropertyString('PortalOrigin')), '/');
+        $rpId = $profile['rpId'];
+        $origin = $profile['origin'];
 
         $allowedCredentialIds = array_keys($credentials);
         $sid = $this->StorePortalChallenge('assertion', [
@@ -2280,16 +2286,26 @@ class SecretsManager extends IPSModuleStrict
 
     private function ServeAdminDashboard(): void
     {
+        if (!$this->RequirePortalReady(false)) {
+            return;
+        }
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        if ($profile === null) {
+            $this->SendPortalError(503, $profileError);
+            return;
+        }
+
         $vault = $this->_decryptVault();
         if (!is_array($vault)) {
             $this->SendPortalError(500, 'The vault could not be decrypted.');
             return;
         }
 
-        $origin = rtrim(trim($this->ReadPropertyString('PortalOrigin')), '/');
+        $origin = $profile['origin'];
         $localUrl = $origin . '/hook/secrets_' . $this->InstanceID . '?register=1';
         $migrationUrl = $origin . '/hook/secrets_' . $this->InstanceID . '?migrate=1';
-        $legacyCount = count($this->GetMigratableLegacyCredentials());
+        $legacyCount = count($this->GetMigratableLegacyCredentials($profile['rpId']));
         $slaves = json_decode($this->ReadPropertyString('SlaveURLs'), true);
         if (!is_array($slaves)) {
             $slaves = [];
@@ -2301,6 +2317,7 @@ class SecretsManager extends IPSModuleStrict
         echo '<html><head><title>Admin Dashboard</title><meta name="viewport" content="width=device-width, initial-scale=1">';
         echo '<style>body{font-family:sans-serif;background:#f4f7f6;padding:20px;color:#333}.box{background:#fff;padding:25px;border-radius:12px;box-shadow:0 5px 20px rgba(0,0,0,.1);max-width:1000px;margin:auto}h1{border-bottom:2px solid #eee;padding-bottom:10px;color:#2c3e50}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{padding:12px;border-bottom:1px solid #eee;text-align:left}th{background:#f8f9fa;color:#666;font-size:13px;text-transform:uppercase}.link-cell{word-break:break-all;font-family:monospace;font-size:12px;background:#f9f9f9;padding:8px;border-radius:4px;display:block}a{color:#4a90e2;text-decoration:none}a:hover{text-decoration:underline}.tag{font-size:10px;padding:2px 6px;border-radius:10px;background:#eee;color:#777;margin-left:8px}</style></head><body>';
         echo '<div class="box"><h1>🛠️ Admin Dashboard</h1>';
+        echo '<p>Current WebAuthn profile: <code>' . htmlspecialchars($origin, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</code></p>';
         echo '<p>Registration links never contain long-term passwords. A target system asks for its registration password unless this browser already has an authenticated session there.</p>';
         if ($legacyCount > 0) {
             echo '<p><strong>' . $legacyCount . ' legacy passkey(s) can be upgraded without re-enrolment.</strong> <a href="' . htmlspecialchars($migrationUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">Start verified migration</a>.</p>';
@@ -2328,6 +2345,16 @@ class SecretsManager extends IPSModuleStrict
 
     private function ServeAdminLoginPage(string $error = ''): void
     {
+        if (!$this->RequirePortalReady(false)) {
+            return;
+        }
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        if ($profile === null) {
+            $this->SendPortalError(503, $profileError);
+            return;
+        }
+
         $nonce = SecretsPortalSecurity::base64UrlEncode(random_bytes(18));
         $this->SendPortalSecurityHeaders($nonce);
         $returnUrl = '/hook/secrets_' . $this->InstanceID . '?admin=1';
@@ -2339,7 +2366,7 @@ class SecretsManager extends IPSModuleStrict
         if ($error !== '') {
             echo '<p class="error">' . htmlspecialchars($error, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</p>';
         }
-        if ($this->ReadPropertyBoolean('PortalEnabled') && count($this->GetVerifiedPortalCredentials()) > 0) {
+        if ($this->ReadPropertyBoolean('PortalEnabled') && count($this->GetVerifiedPortalCredentials($profile['rpId'], $profile['origin'])) > 0) {
             echo '<a href="' . htmlspecialchars($passkeyUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">Sign in with passkey</a>';
         }
         echo '<form method="post" action="?admin=1"><input type="hidden" name="action" value="admin-login">';
@@ -2545,18 +2572,24 @@ class SecretsManager extends IPSModuleStrict
         if (!$this->RequirePortalReady(false)) {
             return;
         }
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        if ($profile === null) {
+            $this->SendPortalError(503, $profileError);
+            return;
+        }
 
-        $legacyCredentials = $this->GetMigratableLegacyCredentials();
+        $legacyCredentials = $this->GetMigratableLegacyCredentials($profile['rpId']);
         if (count($legacyCredentials) === 0) {
             $nonce = SecretsPortalSecurity::base64UrlEncode(random_bytes(18));
             $this->SendPortalSecurityHeaders($nonce);
-            echo '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Passkey migration</title></head><body><h2>Passkey migration complete</h2><p>No migratable legacy passkeys remain. You can enable the WebAuthn portal.</p><p><a href="?admin=1">Return to the admin dashboard</a></p></body></html>';
+            echo '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Passkey migration</title></head><body><h2>Passkey migration complete for this origin</h2><p>No migratable legacy passkeys remain here. Repeat migration through any configured backup origin before enabling the portal.</p><p><a href="?admin=1">Return to the admin dashboard</a></p></body></html>';
             return;
         }
 
         $challenge = random_bytes(32);
-        $rpId = strtolower(trim($this->ReadPropertyString('PortalRpId')));
-        $origin = rtrim(trim($this->ReadPropertyString('PortalOrigin')), '/');
+        $rpId = $profile['rpId'];
+        $origin = $profile['origin'];
         $allowedIds = array_keys($legacyCredentials);
 
         $sid = $this->StorePortalChallenge('migration', [
@@ -2621,7 +2654,7 @@ class SecretsManager extends IPSModuleStrict
         }
 
         $buffer = $this->ConsumePortalChallenge($sid, 'migration');
-        if ($buffer === null) {
+        if ($buffer === null || !$this->ChallengeMatchesCurrentPortalProfile($buffer)) {
             $this->RejectPortalRequest('migration-expired');
             return;
         }
@@ -2638,15 +2671,15 @@ class SecretsManager extends IPSModuleStrict
 
         $credentialId = SecretsPortalSecurity::base64UrlEncode($rawId);
         $allowed = $buffer['allowedCredentialIds'] ?? [];
-        $legacyCredentials = $this->GetMigratableLegacyCredentials();
+        $rpId = (string)($buffer['rpId'] ?? '');
+        $origin = (string)($buffer['origin'] ?? '');
+        $legacyCredentials = $this->GetMigratableLegacyCredentials($rpId);
         if (!is_array($allowed) || !in_array($credentialId, $allowed, true) || !isset($legacyCredentials[$credentialId])) {
             $this->RejectPortalRequest('migration-credential');
             return;
         }
 
         $legacy = $legacyCredentials[$credentialId];
-        $origin = (string)($buffer['origin'] ?? '');
-        $rpId = (string)($buffer['rpId'] ?? '');
         if (SecretsPortalSecurity::validateClientData($clientDataJson, 'webauthn.get', $challenge, $origin) === null) {
             $this->RejectPortalRequest('migration-client-data');
             return;
@@ -2718,10 +2751,16 @@ class SecretsManager extends IPSModuleStrict
         if (!$this->RequirePortalReady(false)) {
             return;
         }
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        if ($profile === null) {
+            $this->SendPortalError(503, $profileError);
+            return;
+        }
 
         $challenge = random_bytes(32);
-        $rpId = strtolower(trim($this->ReadPropertyString('PortalRpId')));
-        $origin = rtrim(trim($this->ReadPropertyString('PortalOrigin')), '/');
+        $rpId = $profile['rpId'];
+        $origin = $profile['origin'];
 
         $sid = $this->StorePortalChallenge('registration', [
             'challenge' => SecretsPortalSecurity::base64UrlEncode($challenge),
@@ -2730,7 +2769,7 @@ class SecretsManager extends IPSModuleStrict
         ]);
 
         $excludeCredentials = [];
-        foreach (array_keys($this->GetVerifiedPortalCredentials()) as $credentialId) {
+        foreach (array_keys($this->GetVerifiedPortalCredentials($rpId, $origin)) as $credentialId) {
             $excludeCredentials[] = ['type' => 'public-key', 'id' => $credentialId];
         }
 
@@ -2782,7 +2821,7 @@ class SecretsManager extends IPSModuleStrict
         }
 
         $buffer = $this->ConsumePortalChallenge($sid, 'registration');
-        if ($buffer === null) {
+        if ($buffer === null || !$this->ChallengeMatchesCurrentPortalProfile($buffer)) {
             $this->RejectPortalRequest('registration-expired');
             return;
         }
@@ -2838,7 +2877,14 @@ class SecretsManager extends IPSModuleStrict
         }
 
         foreach ($vaultData[self::LOCAL_AUTH_KEY] as $existing) {
-            if (is_array($existing) && (string)($existing['credentialId'] ?? '') === $credentialId) {
+            if (!is_array($existing)) {
+                continue;
+            }
+            $existingCredentialId = (string)($existing['credentialIdV2'] ?? $existing['credentialId'] ?? '');
+            if (
+                (string)($existing['rpId'] ?? '') === $rpId &&
+                hash_equals($existingCredentialId, $credentialId)
+            ) {
                 $this->SendPortalJson(409, ['ok' => false, 'error' => 'This passkey is already registered.']);
                 return;
             }
@@ -2889,7 +2935,7 @@ class SecretsManager extends IPSModuleStrict
         }
 
         $buffer = $this->ConsumePortalChallenge($sid, 'assertion');
-        if ($buffer === null) {
+        if ($buffer === null || !$this->ChallengeMatchesCurrentPortalProfile($buffer)) {
             $this->RejectPortalRequest('assertion-expired');
             return;
         }
@@ -2912,7 +2958,9 @@ class SecretsManager extends IPSModuleStrict
             return;
         }
 
-        $credentials = $this->GetVerifiedPortalCredentials();
+        $origin = (string)($buffer['origin'] ?? '');
+        $rpId = (string)($buffer['rpId'] ?? '');
+        $credentials = $this->GetVerifiedPortalCredentials($rpId, $origin);
         if (!isset($credentials[$credentialId])) {
             $this->RejectPortalRequest('assertion-credential');
             return;
@@ -2920,9 +2968,6 @@ class SecretsManager extends IPSModuleStrict
 
         $credentialEntry = $credentials[$credentialId];
         $credential = $credentialEntry['data'];
-        $origin = (string)($buffer['origin'] ?? '');
-        $rpId = (string)($buffer['rpId'] ?? '');
-
         if (SecretsPortalSecurity::validateClientData($clientDataJson, 'webauthn.get', $challenge, $origin) === null) {
             $this->RejectPortalRequest('assertion-client-data');
             return;
@@ -2989,6 +3034,12 @@ class SecretsManager extends IPSModuleStrict
             return false;
         }
 
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        if ($profile === null) {
+            return false;
+        }
+
         $cookieName = self::PORTAL_COOKIE_PREFIX . $this->InstanceID;
         $token = (string)($_COOKIE[$cookieName] ?? '');
         if (SecretsPortalSecurity::base64UrlDecode($token) === null) {
@@ -3014,7 +3065,11 @@ class SecretsManager extends IPSModuleStrict
         if ($changed) {
             $this->SetBuffer(self::PORTAL_SESSION_BUFFER, json_encode($sessions));
         }
-        if (!is_array($session) || (int)($session['expires'] ?? 0) <= $now) {
+        if (
+            !is_array($session) ||
+            (int)($session['expires'] ?? 0) <= $now ||
+            !hash_equals((string)($session['origin'] ?? ''), $profile['origin'])
+        ) {
             return false;
         }
 
@@ -3024,6 +3079,12 @@ class SecretsManager extends IPSModuleStrict
 
     private function CreatePortalSession(string $authenticationMethod): bool
     {
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        if ($profile === null) {
+            return false;
+        }
+
         $token = SecretsPortalSecurity::base64UrlEncode(random_bytes(32));
         $tokenHash = hash('sha256', $token);
         $now = time();
@@ -3049,6 +3110,7 @@ class SecretsManager extends IPSModuleStrict
             'expires'        => $expiry,
             'created'        => $now,
             'method'         => $authenticationMethod,
+            'origin'         => $profile['origin'],
             'userAgentHash'  => hash('sha256', (string)($_SERVER['HTTP_USER_AGENT'] ?? ''))
         ];
 
@@ -3058,7 +3120,7 @@ class SecretsManager extends IPSModuleStrict
         }
         $this->SetBuffer(self::PORTAL_SESSION_BUFFER, $encoded);
 
-        $secure = str_starts_with(rtrim(trim($this->ReadPropertyString('PortalOrigin')), '/'), 'https://');
+        $secure = str_starts_with($profile['origin'], 'https://');
         return setcookie(self::PORTAL_COOKIE_PREFIX . $this->InstanceID, $token, [
             'expires'  => $expiry,
             'path'     => '/',
@@ -3073,7 +3135,9 @@ class SecretsManager extends IPSModuleStrict
         if (!isset($_SERVER['REQUEST_METHOD'])) {
             return;
         }
-        $secure = str_starts_with(rtrim(trim($this->ReadPropertyString('PortalOrigin')), '/'), 'https://');
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        $secure = $profile === null || str_starts_with($profile['origin'], 'https://');
         setcookie(self::PORTAL_COOKIE_PREFIX . $this->InstanceID, '', [
             'expires'  => time() - 3600,
             'path'     => '/',
@@ -3101,16 +3165,107 @@ class SecretsManager extends IPSModuleStrict
         }
 
         $error = '';
-        if (!SecretsPortalSecurity::validateRpConfiguration(
-            $this->ReadPropertyString('PortalRpId'),
-            $this->ReadPropertyString('PortalOrigin'),
-            $error
-        )) {
+        if ($this->GetCurrentPortalProfile($error) === null) {
             $this->SendPortalError(503, $error);
             return false;
         }
 
         return true;
+    }
+
+    /**
+     * @return array<int, array<string, string>>
+     */
+    private function GetConfiguredPortalProfiles(string &$error): array
+    {
+        $error = '';
+        $pairs = [
+            [
+                'name'   => 'primary',
+                'origin' => $this->ReadPropertyString('PortalOrigin')
+            ],
+            [
+                'name'   => 'backup',
+                'origin' => $this->ReadPropertyString('PortalBackupOrigin')
+            ]
+        ];
+
+        $profiles = [];
+        $authorities = [];
+        foreach ($pairs as $index => $pair) {
+            $origin = trim((string)$pair['origin']);
+            if ($index === 1 && $origin === '') {
+                continue;
+            }
+            if ($origin === '') {
+                $error = ucfirst((string)$pair['name']) . ' portal origin is required.';
+                return [];
+            }
+
+            $parts = parse_url(rtrim($origin, '/'));
+            $rpId = is_array($parts) ? strtolower((string)($parts['host'] ?? '')) : '';
+            if ($rpId === '') {
+                $error = ucfirst((string)$pair['name']) . ' portal origin does not contain a valid hostname.';
+                return [];
+            }
+
+            $profileError = '';
+            $profile = SecretsPortalSecurity::normalizeRpProfile($rpId, $origin, $profileError);
+            if ($profile === null) {
+                $error = ucfirst((string)$pair['name']) . ' profile: ' . $profileError;
+                return [];
+            }
+            if (isset($authorities[$profile['authority']])) {
+                $error = 'Primary and backup portal origins must be different.';
+                return [];
+            }
+
+            $profile['name'] = (string)$pair['name'];
+            $profiles[] = $profile;
+            $authorities[$profile['authority']] = true;
+        }
+
+        return $profiles;
+    }
+
+    /**
+     * @return array<string, string>|null
+     */
+    private function GetCurrentPortalProfile(string &$error): ?array
+    {
+        $profiles = $this->GetConfiguredPortalProfiles($error);
+        if (count($profiles) === 0) {
+            if ($error === '') {
+                $error = 'No WebAuthn portal profile is configured.';
+            }
+            return null;
+        }
+
+        $profile = SecretsPortalSecurity::selectRpProfile(
+            $profiles,
+            (string)($_SERVER['HTTP_HOST'] ?? '')
+        );
+        if ($profile === null) {
+            $error = 'This request host is not an explicitly configured WebAuthn portal origin.';
+            return null;
+        }
+
+        return $profile;
+    }
+
+    /**
+     * Ensure a one-time ceremony issued for one hostname can never be posted
+     * through the other configured hostname.
+     *
+     * @param array<string, mixed> $challenge
+     */
+    private function ChallengeMatchesCurrentPortalProfile(array $challenge): bool
+    {
+        $error = '';
+        $profile = $this->GetCurrentPortalProfile($error);
+        return $profile !== null &&
+            hash_equals($profile['rpId'], (string)($challenge['rpId'] ?? '')) &&
+            hash_equals($profile['origin'], (string)($challenge['origin'] ?? ''));
     }
 
     private function CreateWebAuthnVerifier(string $rpId): \lbuchs\WebAuthn\WebAuthn
@@ -3134,7 +3289,7 @@ class SecretsManager extends IPSModuleStrict
     /**
      * @return array<string, array{deviceKey:string,data:array<string,mixed>}>
      */
-    private function GetVerifiedPortalCredentials(): array
+    private function GetVerifiedPortalCredentials(string $rpId, string $origin): array
     {
         $vault = $this->_decryptVault();
         $authData = is_array($vault) ? ($vault[self::LOCAL_AUTH_KEY] ?? []) : [];
@@ -3142,8 +3297,6 @@ class SecretsManager extends IPSModuleStrict
             return [];
         }
 
-        $rpId = strtolower(trim($this->ReadPropertyString('PortalRpId')));
-        $origin = rtrim(trim($this->ReadPropertyString('PortalOrigin')), '/');
         $result = [];
 
         foreach ($authData as $deviceKey => $device) {
@@ -3184,7 +3337,7 @@ class SecretsManager extends IPSModuleStrict
      *
      * @return array<string, array<string, mixed>>
      */
-    private function GetMigratableLegacyCredentials(): array
+    private function GetMigratableLegacyCredentials(string $rpId): array
     {
         $vault = $this->_decryptVault();
         $authData = is_array($vault) ? ($vault[self::LOCAL_AUTH_KEY] ?? []) : [];
@@ -3192,7 +3345,6 @@ class SecretsManager extends IPSModuleStrict
             return [];
         }
 
-        $rpId = strtolower(trim($this->ReadPropertyString('PortalRpId')));
         if ($rpId === '') {
             return [];
         }

@@ -38,6 +38,39 @@ check(
     !SecretsPortalSecurity::validateRpConfiguration('example.com', 'https://example.com/path', $error),
     'origin with a path was accepted'
 );
+check(
+    !SecretsPortalSecurity::validateRpConfiguration('example.com', 'https://example.com:443', $error),
+    'origin with an explicit default port was accepted'
+);
+
+$primary = SecretsPortalSecurity::normalizeRpProfile(
+    'primary.example.com',
+    'https://primary.example.com',
+    $error
+);
+$backup = SecretsPortalSecurity::normalizeRpProfile(
+    'backup.example.net',
+    'https://backup.example.net',
+    $error
+);
+check(is_array($primary) && is_array($backup), 'valid primary/backup profiles were rejected: ' . $error);
+$profiles = [$primary, $backup];
+check(
+    SecretsPortalSecurity::selectRpProfile($profiles, 'primary.example.com') === $primary,
+    'primary host did not select the primary profile'
+);
+check(
+    SecretsPortalSecurity::selectRpProfile($profiles, 'backup.example.net') === $backup,
+    'backup host did not select the backup profile'
+);
+check(
+    SecretsPortalSecurity::selectRpProfile($profiles, 'attacker.example') === null,
+    'unconfigured Host header selected a WebAuthn profile'
+);
+check(
+    SecretsPortalSecurity::selectRpProfile($profiles, "primary.example.com\r\nX-Test: injected") === null,
+    'Host header containing control characters was accepted'
+);
 
 $challenge = random_bytes(32);
 $clientData = json_encode([

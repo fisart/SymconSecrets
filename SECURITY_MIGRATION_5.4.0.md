@@ -6,12 +6,15 @@ complete server-side WebAuthn registration and assertion verification.
 ## Safe upgrade order
 
 1. Install version 5.4.0. The WebAuthn portal is disabled by default.
-2. Configure PortalRpId with the DNS name used by the passkey.
-3. Configure PortalOrigin with the exact HTTPS origin, including a nonstandard
-   port if one is used. Do not include a path or trailing slash.
+2. Configure PortalOrigin with the exact primary HTTPS origin. The RP ID is
+   derived from its hostname.
+3. Optionally configure PortalBackupOrigin with a second exact HTTPS origin.
+   Include a nonstandard port if one is used. Do not include paths, default
+   ports, or trailing slashes.
 4. Visit /hook/secrets_INSTANCE-ID?admin=1 and authenticate with the
    AdminPortal/PW password through the form.
-5. Choose Start verified migration. Touch each existing passkey once. The
+5. Choose Start verified migration. Touch each existing passkey once. Repeat
+   this through the backup URL for credentials registered under that hostname. The
    module extracts its stored public key and upgrades it only after a fresh
    assertion verifies the signature, current challenge, exact origin, RP ID,
    user presence, and user verification. No new credential is registered.
@@ -20,8 +23,12 @@ complete server-side WebAuthn registration and assertion verification.
 8. Test the login URL and every custom webhook that calls
    SEC_IsPortalAuthenticated().
 
-Repeat the verified migration separately on every host/RP ID. The existing
+Repeat the verified migration separately on every configured origin/RP ID. The existing
 master-to-slave preservation of the local __AUTH__ area remains in place.
+
+Portal origins are user-configurable and are never hardcoded. One primary
+origin is required; the backup origin is optional. Requests whose Host header
+does not exactly match a configured origin are rejected before any ceremony.
 
 Use Remove all passkeys only if you intentionally want a clean reset. Use the
 registration page only when adding a genuinely new device.

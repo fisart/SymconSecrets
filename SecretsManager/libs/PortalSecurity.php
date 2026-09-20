@@ -93,6 +93,10 @@ final class SecretsPortalSecurity
                 $error = 'Portal origin contains an invalid port.';
                 return false;
             }
+            if (($scheme === 'https' && $port === 443) || ($scheme === 'http' && $port === 80)) {
+                $error = 'Portal origin must omit the default port.';
+                return false;
+            }
             $normalizedOrigin .= ':' . $port;
         }
 
@@ -102,6 +106,66 @@ final class SecretsPortalSecurity
         }
 
         return true;
+    }
+
+    /**
+     * Return a canonical, explicitly configured RP profile.
+     *
+     * @return array{rpId:string,origin:string,authority:string}|null
+     */
+    public static function normalizeRpProfile(string $rpId, string $origin, string &$error): ?array
+    {
+        if (!self::validateRpConfiguration($rpId, $origin, $error)) {
+            return null;
+        }
+
+        $rpId = strtolower(trim($rpId));
+        $origin = rtrim(trim($origin), '/');
+        $parts = parse_url($origin);
+        if (!is_array($parts)) {
+            $error = 'Portal origin could not be parsed.';
+            return null;
+        }
+
+        $authority = strtolower((string)$parts['host']);
+        if (isset($parts['port'])) {
+            $authority .= ':' . (int)$parts['port'];
+        }
+
+        return [
+            'rpId'      => $rpId,
+            'origin'    => $origin,
+            'authority' => $authority
+        ];
+    }
+
+    /**
+     * Select only an explicitly configured profile from the HTTP Host header.
+     * The Host header chooses among allowlisted values; it never creates an
+     * RP ID or origin.
+     *
+     * @param array<int, array<string, string>> $profiles
+     * @return array<string, string>|null
+     */
+    public static function selectRpProfile(array $profiles, string $httpHost): ?array
+    {
+        $httpHost = strtolower(trim($httpHost));
+        if (
+            $httpHost === '' ||
+            strlen($httpHost) > 320 ||
+            preg_match('/[\\s\\x00-\\x1F\\x7F\\/\\\\@]/', $httpHost) === 1
+        ) {
+            return null;
+        }
+
+        foreach ($profiles as $profile) {
+            $authority = strtolower((string)($profile['authority'] ?? ''));
+            if ($authority !== '' && hash_equals($authority, $httpHost)) {
+                return $profile;
+            }
+        }
+
+        return null;
     }
 
     /**

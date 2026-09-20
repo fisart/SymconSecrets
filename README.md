@@ -81,7 +81,7 @@ Das Modul erkennt automatisch die Struktur Ihrer Daten:
 
 ## 7. 🔐 Biometrische Authentifizierung (Passkeys)
 
-> **Sicherheitsmigration auf Version 5.4.0:** Frühere Passkey-Einträge wurden nicht vollständig serverseitig geprüft und werden deshalb nicht mehr akzeptiert. Nach dem Update bleibt das Portal zunächst deaktiviert. Tragen Sie `PortalRpId` und `PortalOrigin` ein, melden Sie sich am Admin-Dashboard mit dem Admin-Passwort an und starten Sie **Start verified migration**. Jeder vorhandene Passkey wird durch eine echte Signaturprüfung in das sichere Format übernommen; es wird kein neuer Passkey registriert.
+> **Sicherheitsmigration auf Version 5.4.0:** Frühere Passkey-Einträge wurden nicht vollständig serverseitig geprüft und werden deshalb nicht mehr akzeptiert. Nach dem Update bleibt das Portal zunächst deaktiviert. Tragen Sie den primären `PortalOrigin` und bei Bedarf einen `PortalBackupOrigin` ein, melden Sie sich über jede konfigurierte URL am Admin-Dashboard mit dem Admin-Passwort an und starten Sie **Start verified migration**. Jeder vorhandene Passkey wird durch eine echte Signaturprüfung in das sichere Format übernommen; es wird kein neuer Passkey registriert.
 
 ### 7.1 Übersicht
 
@@ -106,19 +106,20 @@ Bevor Sie ein Gerät nutzen können, muss es einmalig verknüpft werden. Dieser 
 
 **Schritt 2: Portal konfigurieren**
 
-1. Tragen Sie die DNS-Domain ohne Schema in `PortalRpId` ein.
-2. Tragen Sie den exakten HTTPS-Origin ohne abschließenden Schrägstrich in `PortalOrigin` ein.
-3. Lassen Sie `PortalEnabled` während der Registrierung zunächst ausgeschaltet.
+1. Tragen Sie den exakten primären HTTPS-Origin ohne abschließenden Schrägstrich in `PortalOrigin` ein.
+2. Optional können Sie einen zweiten, unabhängigen HTTPS-Origin in `PortalBackupOrigin` eintragen.
+3. Die RP-ID wird sicher aus dem jeweiligen Hostnamen abgeleitet. Lassen Sie `PortalEnabled` während der Migration ausgeschaltet.
 
 **Schritt 3: Vorhandene Passkeys übernehmen**
 
-Rufen Sie `https://[Ihre-Symcon-URL]/hook/secrets_[ID]?admin=1` auf, melden Sie sich mit dem Admin-Passwort an und wählen Sie **Start verified migration**. Berühren Sie jeden vorhandenen Passkey einmal. Dabei wird kein neuer Passkey erstellt; nur der bereits gespeicherte öffentliche Schlüssel wird durch eine aktuelle Signatur bestätigt. Aktivieren Sie `PortalEnabled`, sobald alle vorhandenen Passkeys übernommen wurden.
+Rufen Sie `https://[Ihre-Symcon-URL]/hook/secrets_[ID]?admin=1` auf, melden Sie sich mit dem Admin-Passwort an und wählen Sie **Start verified migration**. Berühren Sie jeden vorhandenen Passkey einmal. Wiederholen Sie dies über die Backup-URL, falls dort eigene Passkeys registriert wurden. Dabei wird kein neuer Passkey erstellt; nur der bereits gespeicherte öffentliche Schlüssel wird durch eine aktuelle Signatur bestätigt. Aktivieren Sie `PortalEnabled`, sobald alle vorhandenen Passkeys übernommen wurden.
 
 Die Seite `?register=1` wird nur benötigt, wenn Sie später tatsächlich ein neues Gerät hinzufügen möchten.
 
 ### 7.3 Nutzung im Alltag
 
 - **Login-Portal:** Sie können das Portal nutzen, um eine Sitzung für Ihren Browser zu starten. URL: `https://[Ihre-Symcon-URL]/hook/secrets_[ID]?portal=1`. Nach erfolgreichem Scan ist Ihr Browser für 60 Minuten autorisiert.
+- **Primär-/Backup-URL:** Passkeys und Sitzungs-Cookies bleiben jeweils an ihren exakten Origin gebunden. Bei einem Wechsel zur Backup-URL authentifizieren Sie sich dort erneut mit dem für diese URL registrierten Passkey.
 - **Integration in eigene Skripte:** Sie können die biometrische Prüfung in jedes WebHook-Skript einbauen:
 
 ```php
@@ -255,7 +256,7 @@ The module automatically detects the structure of your data:
 
 ## 7. 🔐 Biometric Authentication (Passkeys)
 
-> **Security migration to version 5.4.0:** Earlier passkey records were not fully verified on the server and are no longer accepted. After upgrading, the portal remains disabled. Configure `PortalRpId` and `PortalOrigin`, sign in to the admin dashboard with the admin password, and choose **Start verified migration**. Each existing passkey is upgraded after a real signed assertion; no new passkey is registered.
+> **Security migration to version 5.4.0:** Earlier passkey records were not fully verified on the server and are no longer accepted. After upgrading, the portal remains disabled. Configure the primary `PortalOrigin` and, if needed, a `PortalBackupOrigin`; then sign in through each configured URL and choose **Start verified migration**. Each existing passkey is upgraded after a real signed assertion; no new passkey is registered.
 
 ### 7.1 Overview
 
@@ -280,19 +281,20 @@ Before you can use a device, it must be linked once. This process is protected b
 
 **Step 2: Configure the portal**
 
-1. Enter the DNS domain without a scheme in `PortalRpId`.
-2. Enter the exact HTTPS origin without a trailing slash in `PortalOrigin`.
-3. Leave `PortalEnabled` off while enrolling the first credential.
+1. Enter the exact primary HTTPS origin without a trailing slash in `PortalOrigin`.
+2. Optionally enter a second independent HTTPS origin in `PortalBackupOrigin`.
+3. The RP ID is safely derived from each origin hostname. Leave `PortalEnabled` off during migration.
 
 **Step 3: Upgrade existing passkeys**
 
-Open `https://[Your-Symcon-URL]/hook/secrets_[ID]?admin=1`, sign in with the admin password, and choose **Start verified migration**. Touch each existing passkey once. This does not create a new passkey; it proves possession of the already stored key with a current signed assertion. Enable `PortalEnabled` after all existing passkeys have been upgraded.
+Open `https://[Your-Symcon-URL]/hook/secrets_[ID]?admin=1`, sign in with the admin password, and choose **Start verified migration**. Touch each existing passkey once. Repeat this through the backup URL if separate passkeys were registered there. This does not create a new passkey; it proves possession of the already stored key with a current signed assertion. Enable `PortalEnabled` after all existing passkeys have been upgraded.
 
 Use `?register=1` only if you later choose to add a genuinely new device.
 
 ### 7.3 Daily Usage
 
 - **Login Portal:** `https://[Your-Symcon-URL]/hook/secrets_[ID]?portal=1`. After a successful scan, your browser is authorized for 60 minutes.
+- **Primary/backup URL:** Passkeys and session cookies remain bound to their exact origin. When switching to the backup URL, authenticate there with a passkey registered for that URL.
 - **Integration into Custom Scripts:** You can integrate biometric verification into any WebHook script:
 
 ```php
