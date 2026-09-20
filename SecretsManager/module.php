@@ -20,6 +20,8 @@ class SecretsManager extends IPSModuleStrict
     private const PORTAL_RATE_WINDOW_SECONDS = 600;
     private const PORTAL_RATE_MAX_PER_CLIENT = 5;
     private const PORTAL_RATE_MAX_GLOBAL = 50;
+    private const PORTAL_CHALLENGE_BUFFER = 'PortalChallengesV2';
+    private const PORTAL_CHALLENGE_MAX_ENTRIES = 100;
     private const PORTAL_SESSION_BUFFER = 'PortalSessionsV2';
     private const PORTAL_RATE_BUFFER = 'PortalRateLimitsV2';
     private const PORTAL_COOKIE_PREFIX = 'SEC_PORTAL_V2_';
@@ -567,7 +569,7 @@ class SecretsManager extends IPSModuleStrict
         if (!$this->RequirePortalReady()) {
             return;
         }
-        if (!$this->CheckPortalRateLimit('page', false)) {
+        if (!$this->CheckPortalRateLimit('page', true)) {
             $this->SendPortalError(429, 'Too many requests. Please try again later.');
             return;
         }
@@ -578,21 +580,19 @@ class SecretsManager extends IPSModuleStrict
             return;
         }
 
-        $sid = SecretsPortalSecurity::base64UrlEncode(random_bytes(16));
         $challenge = random_bytes(32);
         $returnUrl = SecretsPortalSecurity::sanitizeReturnUrl((string)($_GET['return'] ?? '/'));
         $rpId = strtolower(trim($this->ReadPropertyString('PortalRpId')));
         $origin = rtrim(trim($this->ReadPropertyString('PortalOrigin')), '/');
 
         $allowedCredentialIds = array_keys($credentials);
-        $this->SetBuffer('PortalAuthChallengeV2_' . $sid, json_encode([
+        $sid = $this->StorePortalChallenge('assertion', [
             'challenge'            => SecretsPortalSecurity::base64UrlEncode($challenge),
-            'expires'              => time() + self::PORTAL_CHALLENGE_TTL_SECONDS,
             'return'               => $returnUrl,
             'rpId'                 => $rpId,
             'origin'               => $origin,
             'allowedCredentialIds' => $allowedCredentialIds
-        ]));
+        ]);
 
         $allowCredentials = [];
         foreach ($allowedCredentialIds as $credentialId) {
@@ -2555,18 +2555,16 @@ class SecretsManager extends IPSModuleStrict
         }
 
         $challenge = random_bytes(32);
-        $sid = SecretsPortalSecurity::base64UrlEncode(random_bytes(16));
         $rpId = strtolower(trim($this->ReadPropertyString('PortalRpId')));
         $origin = rtrim(trim($this->ReadPropertyString('PortalOrigin')), '/');
         $allowedIds = array_keys($legacyCredentials);
 
-        $this->SetBuffer('PortalMigrationChallengeV2_' . $sid, json_encode([
+        $sid = $this->StorePortalChallenge('migration', [
             'challenge'            => SecretsPortalSecurity::base64UrlEncode($challenge),
-            'expires'              => time() + self::PORTAL_CHALLENGE_TTL_SECONDS,
             'rpId'                 => $rpId,
             'origin'               => $origin,
             'allowedCredentialIds' => $allowedIds
-        ]));
+        ]);
 
         $allowCredentials = [];
         foreach ($allowedIds as $credentialId) {
@@ -2622,10 +2620,8 @@ class SecretsManager extends IPSModuleStrict
             return;
         }
 
-        $bufferName = 'PortalMigrationChallengeV2_' . $sid;
-        $buffer = json_decode($this->GetBuffer($bufferName), true);
-        $this->SetBuffer($bufferName, '');
-        if (!is_array($buffer) || time() > (int)($buffer['expires'] ?? 0)) {
+        $buffer = $this->ConsumePortalChallenge($sid, 'migration');
+        if ($buffer === null) {
             $this->RejectPortalRequest('migration-expired');
             return;
         }
@@ -2715,16 +2711,14 @@ class SecretsManager extends IPSModuleStrict
         }
 
         $challenge = random_bytes(32);
-        $sid = SecretsPortalSecurity::base64UrlEncode(random_bytes(16));
         $rpId = strtolower(trim($this->ReadPropertyString('PortalRpId')));
         $origin = rtrim(trim($this->ReadPropertyString('PortalOrigin')), '/');
 
-        $this->SetBuffer('PortalRegistrationChallengeV2_' . $sid, json_encode([
+        $sid = $this->StorePortalChallenge('registration', [
             'challenge' => SecretsPortalSecurity::base64UrlEncode($challenge),
-            'expires'   => time() + self::PORTAL_CHALLENGE_TTL_SECONDS,
             'rpId'      => $rpId,
             'origin'    => $origin
-        ]));
+        ]);
 
         $excludeCredentials = [];
         foreach (array_keys($this->GetVerifiedPortalCredentials()) as $credentialId) {
@@ -2778,11 +2772,8 @@ class SecretsManager extends IPSModuleStrict
             return;
         }
 
-        $bufferName = 'PortalRegistrationChallengeV2_' . $sid;
-        $buffer = json_decode($this->GetBuffer($bufferName), true);
-        $this->SetBuffer($bufferName, ''); // one use, successful or not
-
-        if (!is_array($buffer) || time() > (int)($buffer['expires'] ?? 0)) {
+        $buffer = $this->ConsumePortalChallenge($sid, 'registration');
+        if ($buffer === null) {
             $this->RejectPortalRequest('registration-expired');
             return;
         }
@@ -2888,11 +2879,8 @@ class SecretsManager extends IPSModuleStrict
             return;
         }
 
-        $bufferName = 'PortalAuthChallengeV2_' . $sid;
-        $buffer = json_decode($this->GetBuffer($bufferName), true);
-        $this->SetBuffer($bufferName, ''); // assertions are strictly single-use
-
-        if (!is_array($buffer) || time() > (int)($buffer['expires'] ?? 0)) {
+        $buffer = $this->ConsumePortalChallenge($sid, 'assertion');
+        if ($buffer === null) {
             $this->RejectPortalRequest('assertion-expired');
             return;
         }
@@ -2970,6 +2958,7 @@ class SecretsManager extends IPSModuleStrict
         }
 
         $this->ResetPortalRateLimit('assertion');
+        $this->ResetPortalRateLimit('page');
         $this->LogMessage('WebAuthn portal authentication succeeded after signature verification.', KL_MESSAGE);
         $this->SendPortalJson(200, [
             'ok'       => true,
@@ -3255,6 +3244,79 @@ class SecretsManager extends IPSModuleStrict
         }
 
         return SecretsPortalSecurity::base64UrlDecode($encoded);
+    }
+
+    /**
+     * Store all pending ceremonies in one expiry-pruned, size-bounded buffer.
+     * This prevents unauthenticated portal page loads from creating an
+     * unbounded number of persistent IP-Symcon buffer names.
+     *
+     * @param array<string, mixed> $data
+     */
+    private function StorePortalChallenge(string $purpose, array $data): string
+    {
+        $now = time();
+        $challenges = json_decode($this->GetBuffer(self::PORTAL_CHALLENGE_BUFFER), true);
+        if (!is_array($challenges)) {
+            $challenges = [];
+        }
+
+        foreach ($challenges as $key => $entry) {
+            if (!is_array($entry) || (int)($entry['expires'] ?? 0) <= $now) {
+                unset($challenges[$key]);
+            }
+        }
+
+        if (count($challenges) >= self::PORTAL_CHALLENGE_MAX_ENTRIES) {
+            uasort($challenges, static function (array $a, array $b): int {
+                return ((int)($a['expires'] ?? 0)) <=> ((int)($b['expires'] ?? 0));
+            });
+            while (count($challenges) >= self::PORTAL_CHALLENGE_MAX_ENTRIES) {
+                array_shift($challenges);
+            }
+        }
+
+        $sid = SecretsPortalSecurity::base64UrlEncode(random_bytes(16));
+        $data['purpose'] = $purpose;
+        $data['expires'] = $now + self::PORTAL_CHALLENGE_TTL_SECONDS;
+        $challenges[$sid] = $data;
+        $this->SetBuffer(self::PORTAL_CHALLENGE_BUFFER, json_encode($challenges));
+
+        return $sid;
+    }
+
+    /**
+     * Consume a ceremony before validating its response. Invalid and replayed
+     * assertions therefore cannot retry the same server challenge.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function ConsumePortalChallenge(string $sid, string $purpose): ?array
+    {
+        $now = time();
+        $challenges = json_decode($this->GetBuffer(self::PORTAL_CHALLENGE_BUFFER), true);
+        if (!is_array($challenges)) {
+            return null;
+        }
+
+        $selected = $challenges[$sid] ?? null;
+        unset($challenges[$sid]);
+        foreach ($challenges as $key => $entry) {
+            if (!is_array($entry) || (int)($entry['expires'] ?? 0) <= $now) {
+                unset($challenges[$key]);
+            }
+        }
+        $this->SetBuffer(self::PORTAL_CHALLENGE_BUFFER, json_encode($challenges));
+
+        if (
+            !is_array($selected) ||
+            (string)($selected['purpose'] ?? '') !== $purpose ||
+            (int)($selected['expires'] ?? 0) <= $now
+        ) {
+            return null;
+        }
+
+        return $selected;
     }
 
     private function IsJsonRequest(): bool

@@ -15,9 +15,10 @@ $required = [
     "'webauthn.get'",
     "'webauthn.create'",
     'SecretsPortalSecurity::validateClientData',
-    'PortalAuthChallengeV2_',
-    'PortalRegistrationChallengeV2_',
-    'PortalMigrationChallengeV2_',
+    "PORTAL_CHALLENGE_BUFFER = 'PortalChallengesV2'",
+    'PORTAL_CHALLENGE_MAX_ENTRIES = 100',
+    'StorePortalChallenge(',
+    'ConsumePortalChallenge(',
     'GetMigratableLegacyCredentials',
     'VerifyLegacyMigration',
     'httponly',
@@ -37,7 +38,10 @@ $forbidden = [
     'Challenge Erwartet',
     '?register=1&pass=',
     'rawId: btoa(',
-    'addslashes($returnUrl)'
+    'addslashes($returnUrl)',
+    "'PortalAuthChallengeV2_' . \$sid",
+    "'PortalRegistrationChallengeV2_' . \$sid",
+    "'PortalMigrationChallengeV2_' . \$sid"
 ];
 foreach ($forbidden as $needle) {
     if (str_contains($module, $needle)) {
