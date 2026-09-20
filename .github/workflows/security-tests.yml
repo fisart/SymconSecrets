@@ -1,0 +1,35 @@
+name: Security tests
+
+on:
+  push:
+    branches:
+      - security/**
+  pull_request:
+    branches:
+      - mit-grafischem-Editor
+
+permissions:
+  contents: read
+
+jobs:
+  php:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.0', '8.2', '8.4']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: openssl, mbstring, sodium
+          coverage: none
+      - name: Lint PHP
+        run: find SecretsManager tests -name '*.php' -print0 | xargs -0 -n1 php -l
+      - name: Test portal helpers
+        run: php tests/PortalSecurityTest.php
+      - name: Test cryptographic assertion verification
+        run: php tests/WebAuthnAssertionTest.php
+      - name: Test module security regressions
+        run: php tests/ModuleSecurityRegressionTest.php

@@ -1,7 +1,11 @@
 <?php
 
 declare(strict_types=1);
-// Version 5.3.1
+
+require_once __DIR__ . '/libs/PortalSecurity.php';
+require_once __DIR__ . '/libs/WebAuthn/src/WebAuthn.php';
+
+// Version 5.4.0
 class SecretsManager extends IPSModuleStrict
 {
 
@@ -12,6 +16,16 @@ class SecretsManager extends IPSModuleStrict
     private const LOCAL_AUTH_KEY    = '__AUTH__';
     private const LOCAL_SECRETS_KEY = '__LOCAL__';
 
+    private const PORTAL_CHALLENGE_TTL_SECONDS = 300;
+    private const PORTAL_RATE_WINDOW_SECONDS = 600;
+    private const PORTAL_RATE_MAX_PER_CLIENT = 5;
+    private const PORTAL_RATE_MAX_GLOBAL = 50;
+    private const PORTAL_CHALLENGE_BUFFER = 'PortalChallengesV2';
+    private const PORTAL_CHALLENGE_MAX_ENTRIES = 100;
+    private const PORTAL_SESSION_BUFFER = 'PortalSessionsV2';
+    private const PORTAL_RATE_BUFFER = 'PortalRateLimitsV2';
+    private const PORTAL_COOKIE_PREFIX = 'SEC_PORTAL_V2_';
+
     public function Create(): void
     {
         parent::Create();
@@ -21,9 +35,18 @@ class SecretsManager extends IPSModuleStrict
         // Key Storage
         $this->RegisterPropertyString("KeyFolderPath", "");
 
-        // Portal session lifetime after successful login
-        // Default = 72 hours (= previous 3-day behavior)
+        // Legacy setting retained so existing installations can be opened and
+        // migrated without losing their configuration.
         $this->RegisterPropertyInteger("PortalSessionLifetimeHours", 72);
+
+        // WebAuthn portal is deliberately disabled after upgrading. It can
+        // only be enabled after a canonical RP ID and exact HTTPS origin have
+        // been configured and legacy credentials have been cryptographically
+        // migrated (or newly enrolled later, if the administrator chooses).
+        $this->RegisterPropertyBoolean("PortalEnabled", false);
+        $this->RegisterPropertyString("PortalOrigin", "");
+        $this->RegisterPropertyString("PortalBackupOrigin", "");
+        $this->RegisterPropertyInteger("PortalSessionLifetimeMinutes", 60);
 
         // IMPORTANT: AuthToken / HookPass werden NICHT mehr als Property gespeichert
 
@@ -60,17 +83,6 @@ class SecretsManager extends IPSModuleStrict
 
         $isEditorRole = ($isMaster || $isStandalone);
         $isSyncRole   = ($isMaster || $isSlave);
-
-        // Add dynamic property field for configurable session lifetime
-        if (!isset($json['elements']) || !is_array($json['elements'])) {
-            $json['elements'] = [];
-        }
-
-        $json['elements'][] = [
-            "type"    => "NumberSpinner",
-            "name"    => "PortalSessionLifetimeHours",
-            "caption" => "Portal Session Lifetime (hours)"
-        ];
 
         // Build slave URL options with label (Server — URL)
         $slaveOptions = [];
@@ -554,46 +566,57 @@ class SecretsManager extends IPSModuleStrict
 
     private function ServePortalUI(): void
     {
-        $sid = bin2hex(random_bytes(8));
-        $challenge = random_bytes(32);
-
-        // Eindeutigen Puffer für diese Session speichern
-        $this->SetBuffer("PortalChallenge_" . $sid, json_encode([
-            'challenge' => bin2hex($challenge),
-            'expires'   => time() + 300
-        ]));
-
-        $challengeB64 = base64_encode($challenge);
-        $returnUrl = $_GET['return'] ?? '';
-
-        // Bestehende Credential-IDs aus __AUTH__ für allowCredentials bereitstellen.
-        // Das ist rückwärts kompatibel, weil vorhandene credentialId-Werte unverändert weiterverwendet werden.
-        $allowCredentials = [];
-        $vaultData = $this->_decryptVault() ?: [];
-        $authData = $vaultData['__AUTH__'] ?? [];
-
-        if (is_array($authData)) {
-            foreach ($authData as $deviceKey => $deviceData) {
-                if ($deviceKey === '__folder') {
-                    continue;
-                }
-                if (!is_array($deviceData)) {
-                    continue;
-                }
-
-                $credentialId = (string)($deviceData['credentialId'] ?? '');
-                if ($credentialId === '') {
-                    continue;
-                }
-
-                $allowCredentials[] = [
-                    'type' => 'public-key',
-                    'id'   => $credentialId
-                ];
-            }
+        if (!$this->RequirePortalReady()) {
+            return;
+        }
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        if ($profile === null) {
+            $this->SendPortalError(503, $profileError);
+            return;
+        }
+        if (!$this->CheckPortalRateLimit('page', true)) {
+            $this->SendPortalError(429, 'Too many requests. Please try again later.');
+            return;
         }
 
-        $allowCredentialsJson = json_encode($allowCredentials);
+        $credentials = $this->GetVerifiedPortalCredentials($profile['rpId'], $profile['origin']);
+        if (count($credentials) === 0) {
+            $this->SendPortalError(409, 'No verified passkeys are available for this origin. Use verified migration in the admin dashboard.');
+            return;
+        }
+
+        $challenge = random_bytes(32);
+        $returnUrl = SecretsPortalSecurity::sanitizeReturnUrl((string)($_GET['return'] ?? '/'));
+        $rpId = $profile['rpId'];
+        $origin = $profile['origin'];
+
+        $allowedCredentialIds = array_keys($credentials);
+        $sid = $this->StorePortalChallenge('assertion', [
+            'challenge'            => SecretsPortalSecurity::base64UrlEncode($challenge),
+            'return'               => $returnUrl,
+            'rpId'                 => $rpId,
+            'origin'               => $origin,
+            'allowedCredentialIds' => $allowedCredentialIds
+        ]);
+
+        $allowCredentials = [];
+        foreach ($allowedCredentialIds as $credentialId) {
+            $allowCredentials[] = [
+                'type' => 'public-key',
+                'id'   => $credentialId
+            ];
+        }
+
+        $configJson = json_encode([
+            'sid'              => $sid,
+            'challenge'        => SecretsPortalSecurity::base64UrlEncode($challenge),
+            'rpId'             => $rpId,
+            'allowCredentials' => $allowCredentials
+        ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
+
+        $nonce = SecretsPortalSecurity::base64UrlEncode(random_bytes(18));
+        $this->SendPortalSecurityHeaders($nonce);
 
         echo '<html><head><title>Vault Auth</title><meta name="viewport" content="width=device-width, initial-scale=1">';
         echo '<style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f4f7f6;}';
@@ -601,30 +624,19 @@ class SecretsManager extends IPSModuleStrict
         echo 'button{background:#4a90e2;color:white;border:none;padding:15px 30px;border-radius:8px;font-size:18px;cursor:pointer;transition:background 0.3s;}';
         echo 'button:hover{background:#357abd;}</style></head><body>';
         echo '<div class="box"><h2>🔐 Biometrischer Login</h2><p>Bitte Sensor berühren.</p>';
-        echo '<button onclick="login()">Anmelden</button></div>';
-        echo '<script>';
-        echo 'function base64ToUint8Array(value) {';
-        echo 'const binary = atob(value);';
-        echo 'const bytes = new Uint8Array(binary.length);';
-        echo 'for (let i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }';
-        echo 'return bytes;';
-        echo '}';
-        echo 'async function login(){';
-        echo 'const challenge = Uint8Array.from(atob("' . $challengeB64 . '"), c => c.charCodeAt(0));';
-        echo 'const storedCredentials = ' . $allowCredentialsJson . ';';
-        echo 'const allowCredentials = storedCredentials.map(item => ({ type: item.type, id: base64ToUint8Array(item.id) }));';
-        echo 'const publicKey = { challenge, timeout: 60000, userVerification: "required" };';
-        echo 'if (allowCredentials.length > 0) { publicKey.allowCredentials = allowCredentials; }';
-        echo 'const options = { publicKey };';
-        echo 'try { const cred = await navigator.credentials.get(options);';
-        echo 'const resp = { id: cred.id, rawId: btoa(String.fromCharCode(...new Uint8Array(cred.rawId))), response: { ';
-        echo 'clientDataJSON: btoa(String.fromCharCode(...new Uint8Array(cred.response.clientDataJSON))), ';
-        echo 'authenticatorData: btoa(String.fromCharCode(...new Uint8Array(cred.response.authenticatorData))), ';
-        echo 'signature: btoa(String.fromCharCode(...new Uint8Array(cred.response.signature))) }, ';
-        echo 'type: cred.type, portal: 1, sid: "' . $sid . '", return: "' . addslashes($returnUrl) . '" };';
-        echo 'const res = await fetch(window.location.href, { method: "POST", body: JSON.stringify(resp) });';
-        echo 'const txt = await res.text(); if(txt === "OK") { window.location.href = decodeURIComponent("' . addslashes($returnUrl) . '") || "/"; } else { alert("Fehler: " + txt); }';
-        echo '} catch(e) { alert("Authentifizierung fehlgeschlagen: " + e.name + " - " + e.message); } }';
+        echo '<button id="loginButton" type="button">Anmelden</button><p id="status" role="status"></p></div>';
+        echo '<script nonce="' . htmlspecialchars($nonce, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">';
+        echo 'const config=' . $configJson . ';';
+        echo 'const fromB64u=v=>{v=v.replace(/-/g,"+").replace(/_/g,"/");while(v.length%4)v+="=";const b=atob(v);return Uint8Array.from(b,c=>c.charCodeAt(0));};';
+        echo 'const toB64u=v=>{let s="";new Uint8Array(v).forEach(b=>s+=String.fromCharCode(b));return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");};';
+        echo 'async function login(){const status=document.getElementById("status");status.textContent="";try{';
+        echo 'const publicKey={challenge:fromB64u(config.challenge),rpId:config.rpId,timeout:60000,userVerification:"required",allowCredentials:config.allowCredentials.map(i=>({type:i.type,id:fromB64u(i.id)}))};';
+        echo 'const cred=await navigator.credentials.get({publicKey});';
+        echo 'const payload={sid:config.sid,type:cred.type,rawId:toB64u(cred.rawId),response:{clientDataJSON:toB64u(cred.response.clientDataJSON),authenticatorData:toB64u(cred.response.authenticatorData),signature:toB64u(cred.response.signature)}};';
+        echo 'const res=await fetch(location.pathname+"?portal=1",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});';
+        echo 'const body=await res.json().catch(()=>({error:"Authentication failed."}));if(!res.ok||!body.ok)throw new Error(body.error||"Authentication failed.");location.assign(body.redirect||"/");';
+        echo '}catch(e){status.textContent="Authentifizierung fehlgeschlagen: "+e.message;}}';
+        echo 'document.getElementById("loginButton").addEventListener("click",login);';
         echo '</script></body></html>';
     }
 
@@ -751,6 +763,44 @@ class SecretsManager extends IPSModuleStrict
         $this->UpdateFormField("BtnClear", "visible", false);
         $this->UpdateFormField("LabelSecurityWarning", "visible", false);
         $this->UpdateFormField("BtnLoad", "visible", true);
+    }
+
+    public function RevokePortalSessions(): void
+    {
+        $this->SetBuffer(self::PORTAL_SESSION_BUFFER, '{}');
+        $this->ClearPortalSessionCookie();
+        $this->LogMessage('All WebAuthn portal sessions were revoked.', KL_WARNING);
+        echo "✅ All portal sessions were revoked.";
+    }
+
+    public function RemoveAllPasskeys(): void
+    {
+        $vaultData = $this->_decryptVault();
+        if (!is_array($vaultData)) {
+            echo "❌ The vault could not be decrypted. No passkeys were changed.";
+            return;
+        }
+
+        $removed = 0;
+        if (isset($vaultData[self::LOCAL_AUTH_KEY]) && is_array($vaultData[self::LOCAL_AUTH_KEY])) {
+            foreach ($vaultData[self::LOCAL_AUTH_KEY] as $key => $value) {
+                if ($key !== '__folder' && is_array($value)) {
+                    $removed++;
+                }
+            }
+        }
+        $vaultData[self::LOCAL_AUTH_KEY] = [];
+
+        if (!$this->_encryptAndSave($vaultData)) {
+            echo "❌ Passkeys could not be removed because the encrypted vault save failed.";
+            return;
+        }
+
+        $this->SetBuffer(self::PORTAL_SESSION_BUFFER, '{}');
+        $this->SetBuffer(self::PORTAL_RATE_BUFFER, '{}');
+        $this->ClearPortalSessionCookie();
+        $this->LogMessage('All WebAuthn credentials and portal sessions were removed. Count=' . $removed, KL_WARNING);
+        echo "✅ Removed $removed passkey record(s) and revoked all portal sessions.";
     }
 
     // =========================================================================
@@ -2236,58 +2286,124 @@ class SecretsManager extends IPSModuleStrict
 
     private function ServeAdminDashboard(): void
     {
-        $vault = $this->_decryptVault();
-        if ($vault === false) {
-            echo "Fehler: Tresor konnte nicht entschlüsselt werden.";
+        if (!$this->RequirePortalReady(false)) {
+            return;
+        }
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        if ($profile === null) {
+            $this->SendPortalError(503, $profileError);
             return;
         }
 
-        $regPass = $vault['RegistrationPassword']['PW'] ?? '';
-        if ($regPass === '') {
-            echo "Fehler: 'RegistrationPassword' -> 'PW' nicht im Tresor gefunden.";
+        $vault = $this->_decryptVault();
+        if (!is_array($vault)) {
+            $this->SendPortalError(500, 'The vault could not be decrypted.');
             return;
         }
+
+        $origin = $profile['origin'];
+        $localUrl = $origin . '/hook/secrets_' . $this->InstanceID . '?register=1';
+        $migrationUrl = $origin . '/hook/secrets_' . $this->InstanceID . '?migrate=1';
+        $legacyCount = count($this->GetMigratableLegacyCredentials($profile['rpId']));
+        $slaves = json_decode($this->ReadPropertyString('SlaveURLs'), true);
+        if (!is_array($slaves)) {
+            $slaves = [];
+        }
+
+        $nonce = SecretsPortalSecurity::base64UrlEncode(random_bytes(18));
+        $this->SendPortalSecurityHeaders($nonce);
 
         echo '<html><head><title>Admin Dashboard</title><meta name="viewport" content="width=device-width, initial-scale=1">';
-        echo '<style>body{font-family:sans-serif;background:#f4f7f6;padding:20px;color:#333;}';
-        echo '.box{background:#fff;padding:25px;border-radius:12px;box-shadow:0 5px 20px rgba(0,0,0,0.1);max-width:1000px;margin:auto;}';
-        echo 'h1{border-bottom:2px solid #eee;padding-bottom:10px;color:#2c3e50;}';
-        echo 'table{width:100%;border-collapse:collapse;margin-top:20px;} th,td{padding:12px;border-bottom:1px solid #eee;text-align:left;}';
-        echo 'th{background:#f8f9fa;color:#666;font-size:13px;text-transform:uppercase;}';
-        echo '.link-cell{word-break:break-all;font-family:monospace;font-size:12px;background:#f9f9f9;padding:8px;border-radius:4px;display:block;}';
-        echo 'a{color:#4a90e2;text-decoration:none;} a:hover{text-decoration:underline;}';
-        echo '.tag{font-size:10px;padding:2px 6px;border-radius:10px;background:#eee;color:#777;margin-left:8px;vertical-align:middle;}</style></head><body>';
-
+        echo '<style>body{font-family:sans-serif;background:#f4f7f6;padding:20px;color:#333}.box{background:#fff;padding:25px;border-radius:12px;box-shadow:0 5px 20px rgba(0,0,0,.1);max-width:1000px;margin:auto}h1{border-bottom:2px solid #eee;padding-bottom:10px;color:#2c3e50}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{padding:12px;border-bottom:1px solid #eee;text-align:left}th{background:#f8f9fa;color:#666;font-size:13px;text-transform:uppercase}.link-cell{word-break:break-all;font-family:monospace;font-size:12px;background:#f9f9f9;padding:8px;border-radius:4px;display:block}a{color:#4a90e2;text-decoration:none}a:hover{text-decoration:underline}.tag{font-size:10px;padding:2px 6px;border-radius:10px;background:#eee;color:#777;margin-left:8px}</style></head><body>';
         echo '<div class="box"><h1>🛠️ Admin Dashboard</h1>';
-        echo '<p>Registrierungs-Links für Ihre konfigurierten Systeme:</p>';
-        echo '<table><tr><th>Systemquelle / Name</th><th>Registrierungs-URL (für Passkey)</th></tr>';
+        echo '<p>Current WebAuthn profile: <code>' . htmlspecialchars($origin, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</code></p>';
+        echo '<p>Registration links never contain long-term passwords. A target system asks for its registration password unless this browser already has an authenticated session there.</p>';
+        if ($legacyCount > 0) {
+            echo '<p><strong>' . $legacyCount . ' legacy passkey(s) can be upgraded without re-enrolment.</strong> <a href="' . htmlspecialchars($migrationUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">Start verified migration</a>.</p>';
+        }
+        echo '<table><tr><th>System</th><th>Passkey registration URL</th></tr>';
+        echo '<tr><td><strong>LOCAL</strong><span class="tag">This server</span></td><td><a class="link-cell" href="' . htmlspecialchars($localUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">' . htmlspecialchars($localUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</a></td></tr>';
 
-        // --- 1. LOKALES SYSTEM (Automatisch ermittelt) ---
-        $localDomain = $_SERVER['HTTP_HOST'];
-        $localUrl = "https://$localDomain/hook/secrets_" . $this->InstanceID . "?register=1&pass=" . urlencode($regPass);
-        echo '<tr><td><strong>LOKAL</strong><span class="tag">Dieser Server</span></td>';
-        echo '<td><a href="' . $localUrl . '" target="_blank" class="link-cell">' . htmlspecialchars($localUrl) . "</a></td></tr>";
-
-        // --- 2. REMOTE SLAVES (Aus der Slave-Liste) ---
-        $slaves = json_decode($this->ReadPropertyString("SlaveURLs"), true) ?: [];
         foreach ($slaves as $slave) {
-            $url = trim($slave['Url'] ?? '');
-            if ($url !== '') {
-                $name = $slave['Server'] ?? 'Unbekannter Slave';
-                // Parameter-Handling (? oder &)
-                $sep = (strpos($url, '?') === false) ? '?' : '&';
-                $fullUrl = $url . $sep . "register=1&pass=" . urlencode($regPass);
-
-                echo '<tr><td><strong>' . htmlspecialchars($name) . '</strong><span class="tag">Slave Liste</span></td>';
-                echo '<td><a href="' . $fullUrl . '" target="_blank" class="link-cell">' . htmlspecialchars($fullUrl) . "</a></td></tr>";
+            if (!is_array($slave)) {
+                continue;
             }
+            $url = trim((string)($slave['Url'] ?? ''));
+            if ($url === '') {
+                continue;
+            }
+            $baseUrl = explode('?', $url, 2)[0];
+            $registerUrl = $baseUrl . '?register=1';
+            $name = trim((string)($slave['Server'] ?? 'Remote system'));
+            echo '<tr><td><strong>' . htmlspecialchars($name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</strong><span class="tag">Remote</span></td>';
+            echo '<td><a class="link-cell" href="' . htmlspecialchars($registerUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">' . htmlspecialchars($registerUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</a></td></tr>';
         }
 
-        echo '</table>';
-        echo '<br><p style="color:#e74c3c;font-size:12px;">⚠️ <strong>Sicherheitshinweis:</strong> Diese Links enthalten das Registrierungs-Passwort. Nur autorisierten Personen zugänglich machen.</p>';
+        echo '</table></div></body></html>';
+    }
+
+    private function ServeAdminLoginPage(string $error = ''): void
+    {
+        if (!$this->RequirePortalReady(false)) {
+            return;
+        }
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        if ($profile === null) {
+            $this->SendPortalError(503, $profileError);
+            return;
+        }
+
+        $nonce = SecretsPortalSecurity::base64UrlEncode(random_bytes(18));
+        $this->SendPortalSecurityHeaders($nonce);
+        $returnUrl = '/hook/secrets_' . $this->InstanceID . '?admin=1';
+        $passkeyUrl = '/hook/secrets_' . $this->InstanceID . '?portal=1&return=' . rawurlencode($returnUrl);
+
+        echo '<html><head><title>Vault Admin Login</title><meta name="viewport" content="width=device-width, initial-scale=1">';
+        echo '<style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f4f7f6}.box{background:#fff;padding:32px;border-radius:12px;box-shadow:0 5px 20px rgba(0,0,0,.1);width:min(420px,90vw)}input,button,a{box-sizing:border-box;width:100%;padding:12px;margin-top:12px}a{display:block;text-align:center}.error{color:#b00020}</style></head><body><div class="box">';
+        echo '<h2>Vault administration</h2>';
+        if ($error !== '') {
+            echo '<p class="error">' . htmlspecialchars($error, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</p>';
+        }
+        if ($this->ReadPropertyBoolean('PortalEnabled') && count($this->GetVerifiedPortalCredentials($profile['rpId'], $profile['origin'])) > 0) {
+            echo '<a href="' . htmlspecialchars($passkeyUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">Sign in with passkey</a>';
+        }
+        echo '<form method="post" action="?admin=1"><input type="hidden" name="action" value="admin-login">';
+        echo '<label>Admin password<input type="password" name="password" autocomplete="current-password" required></label>';
+        echo '<button type="submit">Sign in with admin password</button></form>';
         echo '</div></body></html>';
     }
 
+    private function HandleAdminLogin(): void
+    {
+        if (!$this->RequirePortalReady(false)) {
+            return;
+        }
+        if (!$this->CheckPortalRateLimit('admin-password', true)) {
+            $this->SendPortalError(429, 'Too many attempts. Please try again later.');
+            return;
+        }
+
+        $vault = $this->_decryptVault();
+        $expected = is_array($vault) ? (string)($vault['AdminPortal']['PW'] ?? '') : '';
+        $provided = (string)($_POST['password'] ?? '');
+
+        if ($expected === '' || $provided === '' || !hash_equals($expected, $provided)) {
+            $this->LogPortalFailure('admin-password');
+            http_response_code(401);
+            $this->ServeAdminLoginPage('Authentication failed.');
+            return;
+        }
+
+        $this->ResetPortalRateLimit('admin-password');
+        if (!$this->CreatePortalSession('admin-password')) {
+            $this->SendPortalError(500, 'The session could not be created.');
+            return;
+        }
+
+        header('Location: /hook/secrets_' . $this->InstanceID . '?admin=1', true, 303);
+    }
 
     /**
      * WEBHOOK DATA PROCESSING
@@ -2295,275 +2411,1189 @@ class SecretsManager extends IPSModuleStrict
      */
     protected function ProcessHookData(): void
     {
-        $mode = $this->ReadPropertyInteger("OperationMode");
+        $mode = $this->ReadPropertyInteger('OperationMode');
+        $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
         $isPortal = isset($_GET['portal']);
         $isRegister = isset($_GET['register']);
         $isAdmin = isset($_GET['admin']);
+        $isMigrate = isset($_GET['migrate']);
 
-        // --- GATE 1: Admin Dashboard (Password or Passkey) ---
         if ($isAdmin) {
-            if ($this->IsPortalAuthenticated()) {
-                $this->ServeAdminDashboard();
-                return;
-            }
-            $vaultData = $this->_decryptVault();
-            $adminPass = $vaultData['AdminPortal']['PW'] ?? '';
-            if ($adminPass !== '' && ($_GET['pass'] ?? '') === $adminPass) {
-                $hours = (int)$this->ReadPropertyInteger("PortalSessionLifetimeHours");
-                if ($hours <= 0) {
-                    $hours = 72;
+            if ($method === 'GET') {
+                if ($this->IsPortalSessionValid(false)) {
+                    $this->ServeAdminDashboard();
+                } else {
+                    $this->ServeAdminLoginPage();
                 }
-
-                $sessionLifetimeSeconds = $hours * 3600;
-
-                $sessionKey = "AuthSession_" . md5($_SERVER['REMOTE_ADDR'] . $_SERVER['HTTP_USER_AGENT']);
-                $this->SetBuffer($sessionKey, (string)(time() + $sessionLifetimeSeconds));
-                $this->ServeAdminDashboard();
                 return;
             }
-            header("HTTP/1.1 403 Forbidden");
-            echo "Access Denied: Admin authentication required.";
+            if ($method === 'POST' && (string)($_POST['action'] ?? '') === 'admin-login') {
+                $this->HandleAdminLogin();
+                return;
+            }
+            $this->SendMethodNotAllowed(['GET', 'POST']);
             return;
         }
 
-        // --- GATE 2: Registration Password Check ---
         if ($isRegister) {
-            $vaultData = $this->_decryptVault();
-            $regPass = $vaultData['RegistrationPassword']['PW'] ?? '';
-            if ($regPass === '' || ($_GET['pass'] ?? '') !== $regPass) {
-                header("HTTP/1.1 403 Forbidden");
-                echo "Access Denied: Invalid Registration Password.";
+            if ($method === 'GET') {
+                if ($this->IsPortalSessionValid(false)) {
+                    $this->ServeRegistrationUI();
+                } else {
+                    $this->ServeRegistrationPasswordPage();
+                }
                 return;
             }
-        }
 
-        // --- GATE 3: Mode & Standard Portal Access ---
-        if ($mode !== 0 && !$isPortal && !$isRegister) {
-            header("HTTP/1.1 403 Forbidden");
-            echo "Access Denied: This instance is not configured as a Slave.";
-            return;
-        }
-
-        // --- ROUTING ---
-        if ($_SERVER['REQUEST_METHOD'] === 'GET' && $isRegister) {
-            $this->ServeRegistrationUI();
-            return;
-        }
-        if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isRegister) {
-            $this->FinishRegistration();
-            return;
-        }
-        if ($_SERVER['REQUEST_METHOD'] === 'GET' && $isPortal) {
-            $this->ServePortalUI();
-            return;
-        }
-        if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isPortal) {
-            $this->VerifyPortalAccess();
-            return;
-        }
-
-        // Standard Sync Logic (Slave only)
-        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            $input = file_get_contents("php://input");
-            $data = json_decode($input, true);
-            $expectedToken = $this->getAuthToken();
-            if (!isset($data['auth']) || $data['auth'] !== $expectedToken) {
-                header("HTTP/1.1 403 Forbidden");
-                echo "Invalid Sync Token";
+            if ($method === 'POST' && $this->IsJsonRequest()) {
+                $this->FinishRegistration();
                 return;
             }
-            // Merging logic here...
-            if (isset($data['vault'])) {
-                $currentVault = $this->_decryptVault() ?: [];
-                $this->SetValue("Vault", (string)$data['vault']);
-                $masterVault = $this->_decryptVault() ?: [];
-                $this->PreserveLocalVaultAreas($currentVault, $masterVault);
-                $this->_encryptAndSave($masterVault);
+
+            if ($method === 'POST' && (string)($_POST['action'] ?? '') === 'registration-login') {
+                $this->HandleRegistrationPassword();
+                return;
             }
-            echo "OK";
+
+            $this->SendMethodNotAllowed(['GET', 'POST']);
+            return;
         }
+
+        if ($isMigrate) {
+            if (!$this->IsPortalSessionValid(false)) {
+                $this->SendPortalError(403, 'Admin authentication is required before legacy passkeys can be migrated.');
+                return;
+            }
+            if ($method === 'GET') {
+                $this->ServeLegacyMigrationUI();
+                return;
+            }
+            if ($method === 'POST' && $this->IsJsonRequest()) {
+                $this->VerifyLegacyMigration();
+                return;
+            }
+            $this->SendMethodNotAllowed(['GET', 'POST']);
+            return;
+        }
+
+        if ($isPortal) {
+            if ($method === 'GET') {
+                if ($this->IsPortalAuthenticated()) {
+                    $returnUrl = SecretsPortalSecurity::sanitizeReturnUrl((string)($_GET['return'] ?? '/'));
+                    header('Location: ' . $returnUrl, true, 303);
+                } else {
+                    $this->ServePortalUI();
+                }
+                return;
+            }
+            if ($method === 'POST') {
+                $this->VerifyPortalAccess();
+                return;
+            }
+            $this->SendMethodNotAllowed(['GET', 'POST']);
+            return;
+        }
+
+        if ($mode !== 0) {
+            $this->SendPortalError(403, 'Access denied: this instance is not configured as a Slave.');
+            return;
+        }
+
+        if ($method !== 'POST') {
+            $this->SendMethodNotAllowed(['POST']);
+            return;
+        }
+
+        // Standard sync logic (Slave only)
+        $input = file_get_contents('php://input');
+        $data = json_decode((string)$input, true);
+        $expectedToken = $this->getAuthToken();
+        if (!is_array($data) || !isset($data['auth']) || !is_string($data['auth']) || !hash_equals($expectedToken, $data['auth'])) {
+            http_response_code(403);
+            echo 'Invalid Sync Token';
+            return;
+        }
+
+        if (isset($data['vault'])) {
+            $currentVault = $this->_decryptVault() ?: [];
+            $this->SetValue('Vault', (string)$data['vault']);
+            $masterVault = $this->_decryptVault() ?: [];
+            $this->PreserveLocalVaultAreas($currentVault, $masterVault);
+            $this->_encryptAndSave($masterVault);
+        }
+        echo 'OK';
+    }
+
+    private function ServeRegistrationPasswordPage(string $error = ''): void
+    {
+        if (!$this->RequirePortalReady(false)) {
+            return;
+        }
+
+        $nonce = SecretsPortalSecurity::base64UrlEncode(random_bytes(18));
+        $this->SendPortalSecurityHeaders($nonce);
+        echo '<html><head><title>Register Passkey</title><meta name="viewport" content="width=device-width, initial-scale=1">';
+        echo '<style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f4f7f6}.box{background:#fff;padding:32px;border-radius:12px;box-shadow:0 5px 20px rgba(0,0,0,.1);width:min(420px,90vw)}input,button{box-sizing:border-box;width:100%;padding:12px;margin-top:12px}.error{color:#b00020}</style></head><body><div class="box"><h2>Register a passkey</h2>';
+        if ($error !== '') {
+            echo '<p class="error">' . htmlspecialchars($error, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</p>';
+        }
+        echo '<form method="post" action="?register=1"><input type="hidden" name="action" value="registration-login">';
+        echo '<label>Registration password<input type="password" name="password" autocomplete="one-time-code" required></label>';
+        echo '<button type="submit">Continue</button></form></div></body></html>';
+    }
+
+    private function HandleRegistrationPassword(): void
+    {
+        if (!$this->RequirePortalReady(false)) {
+            return;
+        }
+        if (!$this->CheckPortalRateLimit('registration-password', true)) {
+            $this->SendPortalError(429, 'Too many attempts. Please try again later.');
+            return;
+        }
+
+        $vault = $this->_decryptVault();
+        $expected = is_array($vault) ? (string)($vault['RegistrationPassword']['PW'] ?? '') : '';
+        $provided = (string)($_POST['password'] ?? '');
+
+        if ($expected === '' || $provided === '' || !hash_equals($expected, $provided)) {
+            $this->LogPortalFailure('registration-password');
+            http_response_code(401);
+            $this->ServeRegistrationPasswordPage('Authentication failed.');
+            return;
+        }
+
+        $this->ResetPortalRateLimit('registration-password');
+        $this->ServeRegistrationUI();
+    }
+
+    private function ServeLegacyMigrationUI(): void
+    {
+        if (!$this->RequirePortalReady(false)) {
+            return;
+        }
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        if ($profile === null) {
+            $this->SendPortalError(503, $profileError);
+            return;
+        }
+
+        $legacyCredentials = $this->GetMigratableLegacyCredentials($profile['rpId']);
+        if (count($legacyCredentials) === 0) {
+            $nonce = SecretsPortalSecurity::base64UrlEncode(random_bytes(18));
+            $this->SendPortalSecurityHeaders($nonce);
+            echo '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Passkey migration</title></head><body><h2>Passkey migration complete for this origin</h2><p>No migratable legacy passkeys remain here. Repeat migration through any configured backup origin before enabling the portal.</p><p><a href="?admin=1">Return to the admin dashboard</a></p></body></html>';
+            return;
+        }
+
+        $challenge = random_bytes(32);
+        $rpId = $profile['rpId'];
+        $origin = $profile['origin'];
+        $allowedIds = array_keys($legacyCredentials);
+
+        $sid = $this->StorePortalChallenge('migration', [
+            'challenge'            => SecretsPortalSecurity::base64UrlEncode($challenge),
+            'rpId'                 => $rpId,
+            'origin'               => $origin,
+            'allowedCredentialIds' => $allowedIds
+        ]);
+
+        $allowCredentials = [];
+        foreach ($allowedIds as $credentialId) {
+            $allowCredentials[] = ['type' => 'public-key', 'id' => $credentialId];
+        }
+        $configJson = json_encode([
+            'sid'              => $sid,
+            'challenge'        => SecretsPortalSecurity::base64UrlEncode($challenge),
+            'rpId'             => $rpId,
+            'remaining'        => count($legacyCredentials),
+            'allowCredentials' => $allowCredentials
+        ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
+
+        $nonce = SecretsPortalSecurity::base64UrlEncode(random_bytes(18));
+        $this->SendPortalSecurityHeaders($nonce);
+        echo '<html><head><title>Passkey migration</title><meta name="viewport" content="width=device-width, initial-scale=1">';
+        echo '<style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f4f7f6}.box{background:#fff;padding:32px;border-radius:12px;box-shadow:0 5px 20px rgba(0,0,0,.1);text-align:center;max-width:520px}button,a{padding:12px 20px}.ok{color:#087f23}.error{color:#b00020}</style></head><body>';
+        echo '<div class="box"><h2>Upgrade existing passkey</h2><p>A new passkey will not be created. Touch the authenticator once to prove possession and upgrade its stored public key.</p>';
+        echo '<p>' . count($legacyCredentials) . ' migratable credential(s) remain.</p><button id="migrateButton" type="button">Verify and upgrade one passkey</button><p id="status" role="status"></p><p><a href="?admin=1">Admin dashboard</a></p></div>';
+        echo '<script nonce="' . htmlspecialchars($nonce, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">';
+        echo 'const config=' . $configJson . ';';
+        echo 'const fromB64u=v=>{v=v.replace(/-/g,"+").replace(/_/g,"/");while(v.length%4)v+="=";const b=atob(v);return Uint8Array.from(b,c=>c.charCodeAt(0));};';
+        echo 'const toB64u=v=>{let s="";new Uint8Array(v).forEach(b=>s+=String.fromCharCode(b));return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");};';
+        echo 'async function migrate(){const status=document.getElementById("status");status.className="";status.textContent="";try{';
+        echo 'const publicKey={challenge:fromB64u(config.challenge),rpId:config.rpId,timeout:60000,userVerification:"required",allowCredentials:config.allowCredentials.map(i=>({type:i.type,id:fromB64u(i.id)}))};';
+        echo 'const cred=await navigator.credentials.get({publicKey});';
+        echo 'const payload={sid:config.sid,type:cred.type,rawId:toB64u(cred.rawId),response:{clientDataJSON:toB64u(cred.response.clientDataJSON),authenticatorData:toB64u(cred.response.authenticatorData),signature:toB64u(cred.response.signature)}};';
+        echo 'const res=await fetch(location.pathname+"?migrate=1",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});';
+        echo 'const body=await res.json().catch(()=>({error:"Migration failed."}));if(!res.ok||!body.ok)throw new Error(body.error||"Migration failed.");status.className="ok";status.innerHTML="✅ Passkey upgraded. <a href=\\"?migrate=1\\">Continue with the next passkey</a>.";';
+        echo '}catch(e){status.className="error";status.textContent="Migration failed: "+e.message;}}';
+        echo 'document.getElementById("migrateButton").addEventListener("click",migrate);';
+        echo '</script></body></html>';
+    }
+
+    private function VerifyLegacyMigration(): void
+    {
+        if (!$this->IsPortalSessionValid(false)) {
+            $this->SendPortalJson(403, ['ok' => false, 'error' => 'Admin authentication is required.']);
+            return;
+        }
+        if (!$this->RequirePortalReady(false)) {
+            return;
+        }
+        if (!$this->CheckPortalRateLimit('migration', true)) {
+            $this->SendPortalJson(429, ['ok' => false, 'error' => 'Too many attempts. Please try again later.']);
+            return;
+        }
+
+        $data = SecretsPortalSecurity::decodeJsonRequest((string)file_get_contents('php://input'));
+        $sid = is_array($data) ? (string)($data['sid'] ?? '') : '';
+        if (preg_match('/^[A-Za-z0-9_-]{20,64}$/D', $sid) !== 1) {
+            $this->RejectPortalRequest('migration-request');
+            return;
+        }
+
+        $buffer = $this->ConsumePortalChallenge($sid, 'migration');
+        if ($buffer === null || !$this->ChallengeMatchesCurrentPortalProfile($buffer)) {
+            $this->RejectPortalRequest('migration-expired');
+            return;
+        }
+
+        $challenge = SecretsPortalSecurity::base64UrlDecode((string)($buffer['challenge'] ?? ''));
+        $rawId = SecretsPortalSecurity::base64UrlDecode((string)($data['rawId'] ?? ''));
+        $clientDataJson = SecretsPortalSecurity::base64UrlDecode((string)($data['response']['clientDataJSON'] ?? ''));
+        $authenticatorData = SecretsPortalSecurity::base64UrlDecode((string)($data['response']['authenticatorData'] ?? ''));
+        $signature = SecretsPortalSecurity::base64UrlDecode((string)($data['response']['signature'] ?? ''));
+        if (($data['type'] ?? null) !== 'public-key' || $challenge === null || $rawId === null || $clientDataJson === null || $authenticatorData === null || $signature === null) {
+            $this->RejectPortalRequest('migration-payload');
+            return;
+        }
+
+        $credentialId = SecretsPortalSecurity::base64UrlEncode($rawId);
+        $allowed = $buffer['allowedCredentialIds'] ?? [];
+        $rpId = (string)($buffer['rpId'] ?? '');
+        $origin = (string)($buffer['origin'] ?? '');
+        $legacyCredentials = $this->GetMigratableLegacyCredentials($rpId);
+        if (!is_array($allowed) || !in_array($credentialId, $allowed, true) || !isset($legacyCredentials[$credentialId])) {
+            $this->RejectPortalRequest('migration-credential');
+            return;
+        }
+
+        $legacy = $legacyCredentials[$credentialId];
+        if (SecretsPortalSecurity::validateClientData($clientDataJson, 'webauthn.get', $challenge, $origin) === null) {
+            $this->RejectPortalRequest('migration-client-data');
+            return;
+        }
+
+        try {
+            $webAuthn = $this->CreateWebAuthnVerifier($rpId);
+            $webAuthn->processGet(
+                $clientDataJson,
+                $authenticatorData,
+                $signature,
+                (string)$legacy['credentialPublicKey'],
+                $challenge,
+                null,
+                true,
+                true
+            );
+            $newCounter = $webAuthn->getSignatureCounter();
+        } catch (Throwable $e) {
+            $this->RejectPortalRequest('migration-cryptographic-verification');
+            return;
+        }
+
+        $vaultData = $this->_decryptVault();
+        $deviceKey = (string)$legacy['deviceKey'];
+        if (!is_array($vaultData) || !isset($vaultData[self::LOCAL_AUTH_KEY][$deviceKey])) {
+            $this->RejectPortalRequest('migration-state');
+            return;
+        }
+
+        $old = $vaultData[self::LOCAL_AUTH_KEY][$deviceKey];
+        if (!is_array($old)) {
+            $this->RejectPortalRequest('migration-state');
+            return;
+        }
+
+        // Preserve the complete legacy record, especially its padded Base64
+        // credentialId and attestation. The old branch ignores the V2 fields
+        // and can therefore still use the same passkey after a code rollback.
+        // Secure code uses credentialIdV2, never the rollback-only encoding.
+        $migrated = $old;
+        $migrated['schemaVersion'] = SecretsPortalSecurity::CREDENTIAL_SCHEMA_VERSION;
+        $migrated['credentialIdV2'] = $credentialId;
+        $migrated['credentialPublicKey'] = (string)$legacy['credentialPublicKey'];
+        $migrated['signatureCounter'] = (int)($newCounter ?? 0);
+        $migrated['rpId'] = $rpId;
+        $migrated['origin'] = $origin;
+        $migrated['aaguid'] = (string)($legacy['aaguid'] ?? '');
+        $migrated['attestationFormat'] = (string)($legacy['attestationFormat'] ?? '');
+        $migrated['backupEligible'] = false;
+        $migrated['backedUp'] = false;
+        $migrated['RegisteredAt'] = (int)($old['RegisteredAt'] ?? time());
+        $migrated['MigratedAt'] = time();
+        $migrated['UserAgent'] = substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 512);
+        $vaultData[self::LOCAL_AUTH_KEY][$deviceKey] = $migrated;
+
+        if (!$this->_encryptAndSave($vaultData)) {
+            $this->SendPortalJson(500, ['ok' => false, 'error' => 'The verified migrated credential could not be saved.']);
+            return;
+        }
+
+        $this->ResetPortalRateLimit('migration');
+        $this->LogMessage('Legacy WebAuthn credential upgraded after live signature verification. DeviceKey=' . $deviceKey, KL_MESSAGE);
+        $this->SendPortalJson(200, ['ok' => true]);
     }
 
     private function ServeRegistrationUI(): void
     {
-        $challenge = random_bytes(32);
-        $this->SetBuffer("RegChallenge", bin2hex($challenge));
+        if (!$this->RequirePortalReady(false)) {
+            return;
+        }
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        if ($profile === null) {
+            $this->SendPortalError(503, $profileError);
+            return;
+        }
 
-        $challengeB64 = base64_encode($challenge);
-        $rpName = "Symcon Vault (" . $_SERVER['HTTP_HOST'] . ")";
+        $challenge = random_bytes(32);
+        $rpId = $profile['rpId'];
+        $origin = $profile['origin'];
+
+        $sid = $this->StorePortalChallenge('registration', [
+            'challenge' => SecretsPortalSecurity::base64UrlEncode($challenge),
+            'rpId'      => $rpId,
+            'origin'    => $origin
+        ]);
+
+        $excludeCredentials = [];
+        foreach (array_keys($this->GetVerifiedPortalCredentials($rpId, $origin)) as $credentialId) {
+            $excludeCredentials[] = ['type' => 'public-key', 'id' => $credentialId];
+        }
+
+        $configJson = json_encode([
+            'sid'                => $sid,
+            'challenge'          => SecretsPortalSecurity::base64UrlEncode($challenge),
+            'rpId'               => $rpId,
+            'userId'             => SecretsPortalSecurity::base64UrlEncode(hash('sha256', 'symcon-vault-owner:' . $this->InstanceID, true)),
+            'excludeCredentials' => $excludeCredentials
+        ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
+
+        $nonce = SecretsPortalSecurity::base64UrlEncode(random_bytes(18));
+        $this->SendPortalSecurityHeaders($nonce);
 
         echo '<html><head><title>Vault Register</title><meta name="viewport" content="width=device-width, initial-scale=1">';
-        echo '<style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f4f7f6;}';
-        echo '.box{background:#fff;padding:40px;border-radius:15px;box-shadow:0 10px 25px rgba(0,0,0,0.1);text-align:center;}</style></head><body>';
-        echo '<div class="box"><h2>🔑 Passkey registrieren</h2><p>Klicken Sie unten, um dieses Gerät zu verknüpfen.</p>';
-        echo '<button style="padding:10px 20px" onclick="register()">Dieses Gerät registrieren</button></div>';
-        echo '<script>async function register(){';
-        echo 'const challenge = Uint8Array.from(atob("' . $challengeB64 . '"), c => c.charCodeAt(0));';
-        echo 'const userID = Uint8Array.from("user' . $this->InstanceID . '", c => c.charCodeAt(0));';
-        echo 'const options = { publicKey: { ';
-        echo 'rp: { name: "' . $rpName . '", id: window.location.hostname }, ';
-        echo 'user: { id: userID, name: "owner", displayName: "Vault Owner" }, ';
-        echo 'challenge, ';
-        echo 'pubKeyCredParams: [{type: "public-key", alg: -7}], ';
-        echo 'timeout: 60000, ';
-        echo 'authenticatorSelection: { ';
-        echo 'residentKey: "preferred", ';
-        echo 'requireResidentKey: false, ';
-        echo 'userVerification: "required" ';
-        echo '} ';
-        echo '} };';
-        echo 'try { const cred = await navigator.credentials.create(options);';
-        echo 'const resp = { id: cred.id, rawId: btoa(String.fromCharCode(...new Uint8Array(cred.rawId))), response: { attestationObject: btoa(String.fromCharCode(...new Uint8Array(cred.response.attestationObject))), clientDataJSON: btoa(String.fromCharCode(...new Uint8Array(cred.response.clientDataJSON))) }, type: cred.type };';
-        echo 'const res = await fetch(window.location.href, { method: "POST", body: JSON.stringify(resp) });';
-        echo 'alert(await res.text()); } catch(e) { alert("Fehler: " + e.name + " - " + e.message); } }';
+        echo '<style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f4f7f6}.box{background:#fff;padding:32px;border-radius:12px;box-shadow:0 5px 20px rgba(0,0,0,.1);text-align:center}button{padding:12px 20px}.ok{color:#087f23}.error{color:#b00020}</style></head><body>';
+        echo '<div class="box"><h2>🔑 Passkey registrieren</h2><p>Register this device for the configured portal origin.</p>';
+        echo '<button id="registerButton" type="button">Dieses Gerät registrieren</button><p id="status" role="status"></p></div>';
+        echo '<script nonce="' . htmlspecialchars($nonce, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">';
+        echo 'const config=' . $configJson . ';';
+        echo 'const fromB64u=v=>{v=v.replace(/-/g,"+").replace(/_/g,"/");while(v.length%4)v+="=";const b=atob(v);return Uint8Array.from(b,c=>c.charCodeAt(0));};';
+        echo 'const toB64u=v=>{let s="";new Uint8Array(v).forEach(b=>s+=String.fromCharCode(b));return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");};';
+        echo 'async function register(){const status=document.getElementById("status");status.className="";status.textContent="";try{';
+        echo 'const publicKey={rp:{name:"Symcon Vault",id:config.rpId},user:{id:fromB64u(config.userId),name:"owner",displayName:"Vault Owner"},challenge:fromB64u(config.challenge),pubKeyCredParams:[{type:"public-key",alg:-7},{type:"public-key",alg:-257}],timeout:60000,attestation:"none",authenticatorSelection:{residentKey:"preferred",requireResidentKey:false,userVerification:"required"},excludeCredentials:config.excludeCredentials.map(i=>({type:i.type,id:fromB64u(i.id)}))};';
+        echo 'const cred=await navigator.credentials.create({publicKey});';
+        echo 'const payload={sid:config.sid,type:cred.type,rawId:toB64u(cred.rawId),response:{attestationObject:toB64u(cred.response.attestationObject),clientDataJSON:toB64u(cred.response.clientDataJSON)}};';
+        echo 'const res=await fetch(location.pathname+"?register=1",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});';
+        echo 'const body=await res.json().catch(()=>({error:"Registration failed."}));if(!res.ok||!body.ok)throw new Error(body.error||"Registration failed.");status.className="ok";status.textContent="✅ Device successfully registered. The portal can now be enabled.";';
+        echo '}catch(e){status.className="error";status.textContent="Registration failed: "+e.message;}}';
+        echo 'document.getElementById("registerButton").addEventListener("click",register);';
         echo '</script></body></html>';
     }
 
     private function FinishRegistration(): void
     {
-        $input = file_get_contents("php://input");
-        $data = json_decode($input, true);
-        $storedChallenge = $this->GetBuffer("RegChallenge");
-
-        if (!$data) {
-            $this->LogMessage("Passkey Reg: Keine Daten empfangen.", KL_ERROR);
-            echo "Fehler: Keine Daten.";
+        if (!$this->RequirePortalReady(false)) {
+            return;
+        }
+        if (!$this->CheckPortalRateLimit('registration', true)) {
+            $this->SendPortalJson(429, ['ok' => false, 'error' => 'Too many attempts. Please try again later.']);
             return;
         }
 
-        if ($storedChallenge === "") {
-            $this->LogMessage("Passkey Reg: Sicherheits-Puffer leer.", KL_ERROR);
-            echo "Fehler: Puffer leer.";
+        $data = SecretsPortalSecurity::decodeJsonRequest((string)file_get_contents('php://input'));
+        $sid = is_array($data) ? (string)($data['sid'] ?? '') : '';
+        if (preg_match('/^[A-Za-z0-9_-]{20,64}$/D', $sid) !== 1) {
+            $this->RejectPortalRequest('registration-request');
             return;
         }
 
-        $clientData = json_decode(base64_decode($data['response']['clientDataJSON']), true);
-        $receivedChallenge = bin2hex(base64_decode(strtr($clientData['challenge'], '-_', '+/')));
-
-        if ($receivedChallenge !== $storedChallenge) {
-            $this->LogMessage("Passkey Reg: Challenge mismatch. Empfangen: $receivedChallenge, Erwartet: $storedChallenge", KL_ERROR);
-            echo "Fehler: Challenge mismatch.";
+        $buffer = $this->ConsumePortalChallenge($sid, 'registration');
+        if ($buffer === null || !$this->ChallengeMatchesCurrentPortalProfile($buffer)) {
+            $this->RejectPortalRequest('registration-expired');
             return;
         }
 
-        $vaultData = $this->_decryptVault() ?: [];
-        if (!isset($vaultData['__AUTH__']) || !is_array($vaultData['__AUTH__'])) {
-            $vaultData['__AUTH__'] = [];
+        $challenge = SecretsPortalSecurity::base64UrlDecode((string)($buffer['challenge'] ?? ''));
+        $rawId = SecretsPortalSecurity::base64UrlDecode((string)($data['rawId'] ?? ''));
+        $clientDataJson = SecretsPortalSecurity::base64UrlDecode((string)($data['response']['clientDataJSON'] ?? ''));
+        $attestationObject = SecretsPortalSecurity::base64UrlDecode((string)($data['response']['attestationObject'] ?? ''));
+
+        if (($data['type'] ?? null) !== 'public-key' || $challenge === null || $rawId === null || $clientDataJson === null || $attestationObject === null) {
+            $this->RejectPortalRequest('registration-payload');
+            return;
         }
 
+        $origin = (string)($buffer['origin'] ?? '');
+        $rpId = (string)($buffer['rpId'] ?? '');
+        if (SecretsPortalSecurity::validateClientData($clientDataJson, 'webauthn.create', $challenge, $origin) === null) {
+            $this->RejectPortalRequest('registration-client-data');
+            return;
+        }
+
+        try {
+            $webAuthn = $this->CreateWebAuthnVerifier($rpId);
+            $registration = $webAuthn->processCreate(
+                $clientDataJson,
+                $attestationObject,
+                $challenge,
+                true,
+                true,
+                false,
+                false
+            );
+        } catch (Throwable $e) {
+            $this->RejectPortalRequest('registration-cryptographic-verification');
+            return;
+        }
+
+        $verifiedCredentialId = (string)($registration->credentialId ?? '');
+        $publicKey = (string)($registration->credentialPublicKey ?? '');
+        if ($verifiedCredentialId === '' || !hash_equals($verifiedCredentialId, $rawId) || $publicKey === '') {
+            $this->RejectPortalRequest('registration-credential');
+            return;
+        }
+
+        $credentialId = SecretsPortalSecurity::base64UrlEncode($verifiedCredentialId);
+        $vaultData = $this->_decryptVault();
+        if (!is_array($vaultData)) {
+            $this->SendPortalJson(500, ['ok' => false, 'error' => 'The vault could not be decrypted.']);
+            return;
+        }
+        if (!isset($vaultData[self::LOCAL_AUTH_KEY]) || !is_array($vaultData[self::LOCAL_AUTH_KEY])) {
+            $vaultData[self::LOCAL_AUTH_KEY] = [];
+        }
+
+        foreach ($vaultData[self::LOCAL_AUTH_KEY] as $existing) {
+            if (!is_array($existing)) {
+                continue;
+            }
+            $existingCredentialId = (string)($existing['credentialIdV2'] ?? $existing['credentialId'] ?? '');
+            if (
+                (string)($existing['rpId'] ?? '') === $rpId &&
+                hash_equals($existingCredentialId, $credentialId)
+            ) {
+                $this->SendPortalJson(409, ['ok' => false, 'error' => 'This passkey is already registered.']);
+                return;
+            }
+        }
+
+        $aaguid = (string)($registration->AAGUID ?? '');
         $deviceKey = 'device_' . bin2hex(random_bytes(8));
-
-        $vaultData['__AUTH__'][$deviceKey] = [
-            'credentialId'   => $data['rawId'],
-            'attestation'    => $data['response']['attestationObject'],
-            'RegisteredHost' => (string)($_SERVER['HTTP_HOST'] ?? ''),
-            'RegisteredAt'   => time(),
-            'UserAgent'      => (string)($_SERVER['HTTP_USER_AGENT'] ?? '')
+        $vaultData[self::LOCAL_AUTH_KEY][$deviceKey] = [
+            'schemaVersion'       => SecretsPortalSecurity::CREDENTIAL_SCHEMA_VERSION,
+            'credentialId'        => $credentialId,
+            'credentialPublicKey' => $publicKey,
+            'signatureCounter'    => (int)($registration->signatureCounter ?? 0),
+            'rpId'                => $rpId,
+            'origin'              => $origin,
+            'aaguid'              => ($aaguid === '') ? '' : SecretsPortalSecurity::base64UrlEncode($aaguid),
+            'attestationFormat'   => (string)($registration->attestationFormat ?? ''),
+            'backupEligible'      => (bool)($registration->isBackupEligible ?? false),
+            'backedUp'            => (bool)($registration->isBackedUp ?? false),
+            'RegisteredAt'        => time(),
+            'UserAgent'           => substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 512)
         ];
 
-        if ($this->_encryptAndSave($vaultData)) {
-            $this->SetBuffer("RegChallenge", "");
-            $this->LogMessage(
-                "Passkey Reg: Gerät erfolgreich registriert. DeviceKey=" . $deviceKey .
-                    " Host=" . (string)($_SERVER['HTTP_HOST'] ?? ''),
-                KL_MESSAGE
-            );
-            echo "✅ Gerät erfolgreich registriert!";
-        } else {
-            echo "❌ Fehler beim Speichern.";
+        if (!$this->_encryptAndSave($vaultData)) {
+            $this->SendPortalJson(500, ['ok' => false, 'error' => 'The verified passkey could not be saved.']);
+            return;
         }
+
+        $this->ResetPortalRateLimit('registration');
+        $this->LogMessage('WebAuthn passkey registered after complete server-side verification. DeviceKey=' . $deviceKey, KL_MESSAGE);
+        $this->SendPortalJson(200, ['ok' => true]);
     }
 
     private function VerifyPortalAccess(): void
     {
-        $input = file_get_contents("php://input");
-        $data = json_decode($input, true);
+        if (!$this->RequirePortalReady()) {
+            return;
+        }
+        if (!$this->CheckPortalRateLimit('assertion', true)) {
+            $this->SendPortalJson(429, ['ok' => false, 'error' => 'Too many attempts. Please try again later.']);
+            return;
+        }
 
-        $sid = $data['sid'] ?? '';
-        $buffer = json_decode($this->GetBuffer("PortalChallenge_" . $sid), true);
+        $data = SecretsPortalSecurity::decodeJsonRequest((string)file_get_contents('php://input'));
+        $sid = is_array($data) ? (string)($data['sid'] ?? '') : '';
+        if (preg_match('/^[A-Za-z0-9_-]{20,64}$/D', $sid) !== 1) {
+            $this->RejectPortalRequest('assertion-request');
+            return;
+        }
 
-        if (!$buffer || time() > $buffer['expires']) {
-            $this->LogMessage("Portal Auth DEBUG: Puffer abgelaufen oder SID ungültig. SID: " . $sid, KL_ERROR);
-            echo "Sitzung abgelaufen. Bitte Seite neu laden.";
+        $buffer = $this->ConsumePortalChallenge($sid, 'assertion');
+        if ($buffer === null || !$this->ChallengeMatchesCurrentPortalProfile($buffer)) {
+            $this->RejectPortalRequest('assertion-expired');
+            return;
+        }
+
+        $challenge = SecretsPortalSecurity::base64UrlDecode((string)($buffer['challenge'] ?? ''));
+        $rawId = SecretsPortalSecurity::base64UrlDecode((string)($data['rawId'] ?? ''));
+        $clientDataJson = SecretsPortalSecurity::base64UrlDecode((string)($data['response']['clientDataJSON'] ?? ''));
+        $authenticatorData = SecretsPortalSecurity::base64UrlDecode((string)($data['response']['authenticatorData'] ?? ''));
+        $signature = SecretsPortalSecurity::base64UrlDecode((string)($data['response']['signature'] ?? ''));
+
+        if (($data['type'] ?? null) !== 'public-key' || $challenge === null || $rawId === null || $clientDataJson === null || $authenticatorData === null || $signature === null) {
+            $this->RejectPortalRequest('assertion-payload');
+            return;
+        }
+
+        $credentialId = SecretsPortalSecurity::base64UrlEncode($rawId);
+        $allowed = $buffer['allowedCredentialIds'] ?? [];
+        if (!is_array($allowed) || !in_array($credentialId, $allowed, true)) {
+            $this->RejectPortalRequest('assertion-credential');
+            return;
+        }
+
+        $origin = (string)($buffer['origin'] ?? '');
+        $rpId = (string)($buffer['rpId'] ?? '');
+        $credentials = $this->GetVerifiedPortalCredentials($rpId, $origin);
+        if (!isset($credentials[$credentialId])) {
+            $this->RejectPortalRequest('assertion-credential');
+            return;
+        }
+
+        $credentialEntry = $credentials[$credentialId];
+        $credential = $credentialEntry['data'];
+        if (SecretsPortalSecurity::validateClientData($clientDataJson, 'webauthn.get', $challenge, $origin) === null) {
+            $this->RejectPortalRequest('assertion-client-data');
+            return;
+        }
+
+        try {
+            $webAuthn = $this->CreateWebAuthnVerifier($rpId);
+            $webAuthn->processGet(
+                $clientDataJson,
+                $authenticatorData,
+                $signature,
+                (string)$credential['credentialPublicKey'],
+                $challenge,
+                (int)($credential['signatureCounter'] ?? 0),
+                true,
+                true
+            );
+            $newCounter = $webAuthn->getSignatureCounter();
+        } catch (Throwable $e) {
+            $this->RejectPortalRequest('assertion-cryptographic-verification');
             return;
         }
 
         $vaultData = $this->_decryptVault();
-        if (!$vaultData || !isset($vaultData['__AUTH__'])) {
-            $this->LogMessage("Portal Auth DEBUG: Keine __AUTH__ Daten im Tresor gefunden.", KL_ERROR);
-            echo "Keine autorisierten Geräte im Tresor gefunden.";
+        $deviceKey = (string)$credentialEntry['deviceKey'];
+        if (!is_array($vaultData) || !isset($vaultData[self::LOCAL_AUTH_KEY][$deviceKey])) {
+            $this->RejectPortalRequest('assertion-state');
+            return;
+        }
+        if ($newCounter !== null) {
+            $vaultData[self::LOCAL_AUTH_KEY][$deviceKey]['signatureCounter'] = (int)$newCounter;
+        }
+        $vaultData[self::LOCAL_AUTH_KEY][$deviceKey]['LastUsedAt'] = time();
+
+        if (!$this->_encryptAndSave($vaultData)) {
+            $this->SendPortalJson(500, ['ok' => false, 'error' => 'Authentication state could not be saved.']);
+            return;
+        }
+        if (!$this->CreatePortalSession('passkey')) {
+            $this->SendPortalJson(500, ['ok' => false, 'error' => 'The authenticated session could not be created.']);
             return;
         }
 
-        $authenticated = false;
-        $browserId = $data['rawId'] ?? 'FEHLT';
-
-        // Log: Was sendet der Browser?
-        $this->LogMessage("Portal Auth DEBUG: Browser-ID: " . $browserId, KL_MESSAGE);
-
-        foreach ($vaultData['__AUTH__'] as $deviceId => $device) {
-            if (!is_array($device)) continue;
-
-            $storedId = $device['credentialId'] ?? 'FEHLT';
-            // Log: Was ist im Tresor gespeichert?
-            $this->LogMessage("Portal Auth DEBUG: Prüfe Tresor-Gerät ($deviceId) - ID: " . $storedId, KL_MESSAGE);
-
-            if ($storedId === $browserId) {
-                $this->LogMessage("Portal Auth DEBUG: ID Treffer! Prüfe nun Challenge...", KL_MESSAGE);
-
-                $clientData = json_decode(base64_decode(strtr($data['response']['clientDataJSON'], '-_', '+/')), true);
-                $receivedChallenge = bin2hex(base64_decode(strtr($clientData['challenge'], '-_', '+/')));
-                $expectedChallenge = $buffer['challenge'];
-
-                // Log: Challenge-Vergleich
-                $this->LogMessage("Portal Auth DEBUG: Challenge Empfangen: " . $receivedChallenge, KL_MESSAGE);
-                $this->LogMessage("Portal Auth DEBUG: Challenge Erwartet:  " . $expectedChallenge, KL_MESSAGE);
-
-                if ($receivedChallenge === $expectedChallenge) {
-                    $authenticated = true;
-                    break;
-                }
-            }
-        }
-
-        if ($authenticated) {
-            $hours = (int)$this->ReadPropertyInteger("PortalSessionLifetimeHours");
-            if ($hours <= 0) {
-                $hours = 72;
-            }
-
-            $sessionLifetimeSeconds = $hours * 3600;
-
-            $sessionKey = "AuthSession_" . md5($_SERVER['REMOTE_ADDR'] . $_SERVER['HTTP_USER_AGENT']);
-            $this->SetBuffer($sessionKey, (string)(time() + $sessionLifetimeSeconds));
-            $this->SetBuffer("PortalChallenge_" . $sid, "");
-            echo "OK";
-        } else {
-            $this->LogMessage("Portal Auth DEBUG: Keine Übereinstimmung gefunden.", KL_ERROR);
-            header("HTTP/1.1 401 Unauthorized");
-            echo "Biometrische Verifizierung fehlgeschlagen.";
-        }
+        $this->ResetPortalRateLimit('assertion');
+        $this->ResetPortalRateLimit('page');
+        $this->LogMessage('WebAuthn portal authentication succeeded after signature verification.', KL_MESSAGE);
+        $this->SendPortalJson(200, [
+            'ok'       => true,
+            'redirect' => SecretsPortalSecurity::sanitizeReturnUrl((string)($buffer['return'] ?? '/'))
+        ]);
     }
 
     public function IsPortalAuthenticated(): bool
     {
-        // Prüfen, ob wir in einem Web-Kontext sind (verhindert Warnungen im Hintergrund)
-        if (!isset($_SERVER['REMOTE_ADDR']) || !isset($_SERVER['HTTP_USER_AGENT'])) {
+        if (!$this->ReadPropertyBoolean('PortalEnabled')) {
+            return false;
+        }
+        return $this->IsPortalSessionValid(true);
+    }
+
+    private function IsPortalSessionValid(bool $requireEnabled): bool
+    {
+        if ($requireEnabled && !$this->ReadPropertyBoolean('PortalEnabled')) {
             return false;
         }
 
-        $sessionKey = "AuthSession_" . md5($_SERVER['REMOTE_ADDR'] . $_SERVER['HTTP_USER_AGENT']);
-        $expiry = $this->GetBuffer($sessionKey);
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        if ($profile === null) {
+            return false;
+        }
 
-        if ($expiry === "" || time() > (int)$expiry) {
+        $cookieName = self::PORTAL_COOKIE_PREFIX . $this->InstanceID;
+        $token = (string)($_COOKIE[$cookieName] ?? '');
+        if (SecretsPortalSecurity::base64UrlDecode($token) === null) {
+            return false;
+        }
+
+        $sessions = json_decode($this->GetBuffer(self::PORTAL_SESSION_BUFFER), true);
+        if (!is_array($sessions)) {
+            return false;
+        }
+
+        $now = time();
+        $changed = false;
+        foreach ($sessions as $key => $session) {
+            if (!is_array($session) || (int)($session['expires'] ?? 0) <= $now) {
+                unset($sessions[$key]);
+                $changed = true;
+            }
+        }
+
+        $tokenHash = hash('sha256', $token);
+        $session = $sessions[$tokenHash] ?? null;
+        if ($changed) {
+            $this->SetBuffer(self::PORTAL_SESSION_BUFFER, json_encode($sessions));
+        }
+        if (
+            !is_array($session) ||
+            (int)($session['expires'] ?? 0) <= $now ||
+            !hash_equals((string)($session['origin'] ?? ''), $profile['origin'])
+        ) {
+            return false;
+        }
+
+        $currentUserAgentHash = hash('sha256', (string)($_SERVER['HTTP_USER_AGENT'] ?? ''));
+        return hash_equals((string)($session['userAgentHash'] ?? ''), $currentUserAgentHash);
+    }
+
+    private function CreatePortalSession(string $authenticationMethod): bool
+    {
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        if ($profile === null) {
+            return false;
+        }
+
+        $token = SecretsPortalSecurity::base64UrlEncode(random_bytes(32));
+        $tokenHash = hash('sha256', $token);
+        $now = time();
+        $expiry = $now + ($this->GetPortalSessionLifetimeMinutes() * 60);
+
+        $sessions = json_decode($this->GetBuffer(self::PORTAL_SESSION_BUFFER), true);
+        if (!is_array($sessions)) {
+            $sessions = [];
+        }
+        foreach ($sessions as $key => $session) {
+            if (!is_array($session) || (int)($session['expires'] ?? 0) <= $now) {
+                unset($sessions[$key]);
+            }
+        }
+        if (count($sessions) >= 50) {
+            uasort($sessions, static function (array $a, array $b): int {
+                return ((int)($a['expires'] ?? 0)) <=> ((int)($b['expires'] ?? 0));
+            });
+            $sessions = array_slice($sessions, -49, null, true);
+        }
+
+        $sessions[$tokenHash] = [
+            'expires'        => $expiry,
+            'created'        => $now,
+            'method'         => $authenticationMethod,
+            'origin'         => $profile['origin'],
+            'userAgentHash'  => hash('sha256', (string)($_SERVER['HTTP_USER_AGENT'] ?? ''))
+        ];
+
+        $encoded = json_encode($sessions);
+        if ($encoded === false) {
+            return false;
+        }
+        $this->SetBuffer(self::PORTAL_SESSION_BUFFER, $encoded);
+
+        $secure = str_starts_with($profile['origin'], 'https://');
+        return setcookie(self::PORTAL_COOKIE_PREFIX . $this->InstanceID, $token, [
+            'expires'  => $expiry,
+            'path'     => '/',
+            'secure'   => $secure,
+            'httponly' => true,
+            'samesite' => 'Strict'
+        ]);
+    }
+
+    private function ClearPortalSessionCookie(): void
+    {
+        if (!isset($_SERVER['REQUEST_METHOD'])) {
+            return;
+        }
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        $secure = $profile === null || str_starts_with($profile['origin'], 'https://');
+        setcookie(self::PORTAL_COOKIE_PREFIX . $this->InstanceID, '', [
+            'expires'  => time() - 3600,
+            'path'     => '/',
+            'secure'   => $secure,
+            'httponly' => true,
+            'samesite' => 'Strict'
+        ]);
+    }
+
+    private function GetPortalSessionLifetimeMinutes(): int
+    {
+        $minutes = $this->ReadPropertyInteger('PortalSessionLifetimeMinutes');
+        return max(5, min(1440, $minutes));
+    }
+
+    private function RequirePortalReady(bool $requireEnabled = true): bool
+    {
+        if ($requireEnabled && !$this->ReadPropertyBoolean('PortalEnabled')) {
+            $this->SendPortalError(503, 'The WebAuthn portal is disabled until credential migration is complete.');
+            return false;
+        }
+        if (PHP_VERSION_ID < 80000 || !extension_loaded('openssl') || !extension_loaded('mbstring')) {
+            $this->SendPortalError(503, 'WebAuthn requires PHP 8.0+, OpenSSL, and mbstring.');
+            return false;
+        }
+
+        $error = '';
+        if ($this->GetCurrentPortalProfile($error) === null) {
+            $this->SendPortalError(503, $error);
             return false;
         }
 
         return true;
     }
 
+    /**
+     * @return array<int, array<string, string>>
+     */
+    private function GetConfiguredPortalProfiles(string &$error): array
+    {
+        $error = '';
+        $pairs = [
+            [
+                'name'   => 'primary',
+                'origin' => $this->ReadPropertyString('PortalOrigin')
+            ],
+            [
+                'name'   => 'backup',
+                'origin' => $this->ReadPropertyString('PortalBackupOrigin')
+            ]
+        ];
 
-    // =========================================================================
+        $profiles = [];
+        $authorities = [];
+        foreach ($pairs as $index => $pair) {
+            $origin = trim((string)$pair['origin']);
+            if ($index === 1 && $origin === '') {
+                continue;
+            }
+            if ($origin === '') {
+                $error = ucfirst((string)$pair['name']) . ' portal origin is required.';
+                return [];
+            }
+
+            $parts = parse_url(rtrim($origin, '/'));
+            $rpId = is_array($parts) ? strtolower((string)($parts['host'] ?? '')) : '';
+            if ($rpId === '') {
+                $error = ucfirst((string)$pair['name']) . ' portal origin does not contain a valid hostname.';
+                return [];
+            }
+
+            $profileError = '';
+            $profile = SecretsPortalSecurity::normalizeRpProfile($rpId, $origin, $profileError);
+            if ($profile === null) {
+                $error = ucfirst((string)$pair['name']) . ' profile: ' . $profileError;
+                return [];
+            }
+            if (isset($authorities[$profile['authority']])) {
+                $error = 'Primary and backup portal origins must be different.';
+                return [];
+            }
+
+            $profile['name'] = (string)$pair['name'];
+            $profiles[] = $profile;
+            $authorities[$profile['authority']] = true;
+        }
+
+        return $profiles;
+    }
+
+    /**
+     * @return array<string, string>|null
+     */
+    private function GetCurrentPortalProfile(string &$error): ?array
+    {
+        $profiles = $this->GetConfiguredPortalProfiles($error);
+        if (count($profiles) === 0) {
+            if ($error === '') {
+                $error = 'No WebAuthn portal profile is configured.';
+            }
+            return null;
+        }
+
+        $profile = SecretsPortalSecurity::selectRpProfile(
+            $profiles,
+            (string)($_SERVER['HTTP_HOST'] ?? '')
+        );
+        if ($profile === null) {
+            $error = 'This request host is not an explicitly configured WebAuthn portal origin.';
+            return null;
+        }
+
+        return $profile;
+    }
+
+    /**
+     * Ensure a one-time ceremony issued for one hostname can never be posted
+     * through the other configured hostname.
+     *
+     * @param array<string, mixed> $challenge
+     */
+    private function ChallengeMatchesCurrentPortalProfile(array $challenge): bool
+    {
+        $error = '';
+        $profile = $this->GetCurrentPortalProfile($error);
+        return $profile !== null &&
+            hash_equals($profile['rpId'], (string)($challenge['rpId'] ?? '')) &&
+            hash_equals($profile['origin'], (string)($challenge['origin'] ?? ''));
+    }
+
+    private function CreateWebAuthnVerifier(string $rpId): \lbuchs\WebAuthn\WebAuthn
+    {
+        return new \lbuchs\WebAuthn\WebAuthn(
+            'Symcon Vault',
+            $rpId,
+            $this->GetAllowedAttestationFormats(),
+            true
+        );
+    }
+
+    /**
+     * @return string[]
+     */
+    private function GetAllowedAttestationFormats(): array
+    {
+        return ['none', 'packed', 'apple', 'fido-u2f', 'tpm', 'android-key', 'android-safetynet'];
+    }
+
+    /**
+     * @return array<string, array{deviceKey:string,data:array<string,mixed>}>
+     */
+    private function GetVerifiedPortalCredentials(string $rpId, string $origin): array
+    {
+        $vault = $this->_decryptVault();
+        $authData = is_array($vault) ? ($vault[self::LOCAL_AUTH_KEY] ?? []) : [];
+        if (!is_array($authData)) {
+            return [];
+        }
+
+        $result = [];
+
+        foreach ($authData as $deviceKey => $device) {
+            if ($deviceKey === '__folder' || !is_array($device)) {
+                continue;
+            }
+            if ((int)($device['schemaVersion'] ?? 0) !== SecretsPortalSecurity::CREDENTIAL_SCHEMA_VERSION) {
+                continue; // legacy ID-only registrations fail closed
+            }
+
+            // Migrated records retain credentialId in the exact encoding used
+            // by the old branch for rollback compatibility. V2 verification
+            // addresses the same credential by canonical Base64URL instead.
+            $credentialId = (string)($device['credentialIdV2'] ?? $device['credentialId'] ?? '');
+            $publicKey = (string)($device['credentialPublicKey'] ?? '');
+            if (
+                SecretsPortalSecurity::base64UrlDecode($credentialId) === null ||
+                $publicKey === '' ||
+                (string)($device['rpId'] ?? '') !== $rpId ||
+                (string)($device['origin'] ?? '') !== $origin
+            ) {
+                continue;
+            }
+
+            $result[$credentialId] = [
+                'deviceKey' => (string)$deviceKey,
+                'data'      => $device
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Extract public keys from legacy attestation objects. These keys are not
+     * trusted until VerifyLegacyMigration completes a fresh signed assertion
+     * in an admin-authenticated session.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function GetMigratableLegacyCredentials(string $rpId): array
+    {
+        $vault = $this->_decryptVault();
+        $authData = is_array($vault) ? ($vault[self::LOCAL_AUTH_KEY] ?? []) : [];
+        if (!is_array($authData)) {
+            return [];
+        }
+
+        if ($rpId === '') {
+            return [];
+        }
+        $expectedRpIdHash = hash('sha256', $rpId, true);
+        $result = [];
+
+        foreach ($authData as $deviceKey => $device) {
+            if ($deviceKey === '__folder' || !is_array($device)) {
+                continue;
+            }
+            if ((int)($device['schemaVersion'] ?? 0) === SecretsPortalSecurity::CREDENTIAL_SCHEMA_VERSION) {
+                continue;
+            }
+
+            $storedCredentialId = $this->DecodeLegacyStoredBinary((string)($device['credentialId'] ?? ''));
+            $storedAttestation = $this->DecodeLegacyStoredBinary((string)($device['attestation'] ?? ''));
+            if ($storedCredentialId === null || $storedAttestation === null) {
+                continue;
+            }
+
+            try {
+                $attestation = new \lbuchs\WebAuthn\Attestation\AttestationObject(
+                    $storedAttestation,
+                    $this->GetAllowedAttestationFormats()
+                );
+                if (!$attestation->validateRpIdHash($expectedRpIdHash)) {
+                    continue;
+                }
+                $authenticatorData = $attestation->getAuthenticatorData();
+                $attestedCredentialId = (string)$authenticatorData->getCredentialId();
+                $publicKey = (string)$authenticatorData->getPublicKeyPem();
+                if ($attestedCredentialId === '' || $publicKey === '' || !hash_equals($attestedCredentialId, $storedCredentialId)) {
+                    continue;
+                }
+                $aaguid = (string)$authenticatorData->getAAGUID();
+            } catch (Throwable $e) {
+                continue;
+            }
+
+            $credentialId = SecretsPortalSecurity::base64UrlEncode($attestedCredentialId);
+            $result[$credentialId] = [
+                'deviceKey'            => (string)$deviceKey,
+                'credentialPublicKey'  => $publicKey,
+                'attestationFormat'    => (string)$attestation->getAttestationFormatName(),
+                'aaguid'               => ($aaguid === '') ? '' : SecretsPortalSecurity::base64UrlEncode($aaguid)
+            ];
+        }
+
+        return $result;
+    }
+
+    private function DecodeLegacyStoredBinary(string $encoded): ?string
+    {
+        if ($encoded === '' || strlen($encoded) > 131072) {
+            return null;
+        }
+
+        $standard = base64_decode($encoded, true);
+        if ($standard !== false) {
+            return $standard;
+        }
+
+        return SecretsPortalSecurity::base64UrlDecode($encoded);
+    }
+
+    /**
+     * Store all pending ceremonies in one expiry-pruned, size-bounded buffer.
+     * This prevents unauthenticated portal page loads from creating an
+     * unbounded number of persistent IP-Symcon buffer names.
+     *
+     * @param array<string, mixed> $data
+     */
+    private function StorePortalChallenge(string $purpose, array $data): string
+    {
+        $now = time();
+        $challenges = json_decode($this->GetBuffer(self::PORTAL_CHALLENGE_BUFFER), true);
+        if (!is_array($challenges)) {
+            $challenges = [];
+        }
+
+        foreach ($challenges as $key => $entry) {
+            if (!is_array($entry) || (int)($entry['expires'] ?? 0) <= $now) {
+                unset($challenges[$key]);
+            }
+        }
+
+        if (count($challenges) >= self::PORTAL_CHALLENGE_MAX_ENTRIES) {
+            uasort($challenges, static function (array $a, array $b): int {
+                return ((int)($a['expires'] ?? 0)) <=> ((int)($b['expires'] ?? 0));
+            });
+            while (count($challenges) >= self::PORTAL_CHALLENGE_MAX_ENTRIES) {
+                array_shift($challenges);
+            }
+        }
+
+        $sid = SecretsPortalSecurity::base64UrlEncode(random_bytes(16));
+        $data['purpose'] = $purpose;
+        $data['expires'] = $now + self::PORTAL_CHALLENGE_TTL_SECONDS;
+        $challenges[$sid] = $data;
+        $this->SetBuffer(self::PORTAL_CHALLENGE_BUFFER, json_encode($challenges));
+
+        return $sid;
+    }
+
+    /**
+     * Consume a ceremony before validating its response. Invalid and replayed
+     * assertions therefore cannot retry the same server challenge.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function ConsumePortalChallenge(string $sid, string $purpose): ?array
+    {
+        $now = time();
+        $challenges = json_decode($this->GetBuffer(self::PORTAL_CHALLENGE_BUFFER), true);
+        if (!is_array($challenges)) {
+            return null;
+        }
+
+        $selected = $challenges[$sid] ?? null;
+        unset($challenges[$sid]);
+        foreach ($challenges as $key => $entry) {
+            if (!is_array($entry) || (int)($entry['expires'] ?? 0) <= $now) {
+                unset($challenges[$key]);
+            }
+        }
+        $this->SetBuffer(self::PORTAL_CHALLENGE_BUFFER, json_encode($challenges));
+
+        if (
+            !is_array($selected) ||
+            (string)($selected['purpose'] ?? '') !== $purpose ||
+            (int)($selected['expires'] ?? 0) <= $now
+        ) {
+            return null;
+        }
+
+        return $selected;
+    }
+
+    private function IsJsonRequest(): bool
+    {
+        return str_contains(strtolower((string)($_SERVER['CONTENT_TYPE'] ?? '')), 'application/json');
+    }
+
+    private function SendPortalSecurityHeaders(string $nonce): void
+    {
+        header('Cache-Control: no-store, max-age=0');
+        header('Pragma: no-cache');
+        header('Referrer-Policy: no-referrer');
+        header('X-Content-Type-Options: nosniff');
+        header('X-Frame-Options: DENY');
+        header("Content-Security-Policy: default-src 'none'; script-src 'nonce-" . $nonce . "'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function SendPortalJson(int $status, array $payload): void
+    {
+        http_response_code($status);
+        $this->SendPortalSecurityHeaders(SecretsPortalSecurity::base64UrlEncode(random_bytes(18)));
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode($payload, JSON_UNESCAPED_SLASHES);
+    }
+
+    private function SendPortalError(int $status, string $message): void
+    {
+        if ($this->IsJsonRequest()) {
+            $this->SendPortalJson($status, ['ok' => false, 'error' => $message]);
+            return;
+        }
+
+        http_response_code($status);
+        $nonce = SecretsPortalSecurity::base64UrlEncode(random_bytes(18));
+        $this->SendPortalSecurityHeaders($nonce);
+        header('Content-Type: text/html; charset=utf-8');
+        echo '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>SecretsManager</title></head><body><h2>SecretsManager</h2><p>' . htmlspecialchars($message, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</p></body></html>';
+    }
+
+    /**
+     * @param string[] $methods
+     */
+    private function SendMethodNotAllowed(array $methods): void
+    {
+        header('Allow: ' . implode(', ', $methods));
+        $this->SendPortalError(405, 'Method not allowed.');
+    }
+
+    private function RejectPortalRequest(string $reason): void
+    {
+        $this->LogPortalFailure($reason);
+        $this->SendPortalJson(401, ['ok' => false, 'error' => 'Authentication failed. Reload the page and try again.']);
+    }
+
+    private function LogPortalFailure(string $reason): void
+    {
+        $this->LogMessage('WebAuthn portal request rejected. Reason=' . $reason, KL_WARNING);
+    }
+
+    private function CheckPortalRateLimit(string $bucket, bool $consume): bool
+    {
+        $now = time();
+        $client = hash('sha256', (string)($_SERVER['REMOTE_ADDR'] ?? 'unknown'));
+        $limits = json_decode($this->GetBuffer(self::PORTAL_RATE_BUFFER), true);
+        if (!is_array($limits)) {
+            $limits = [];
+        }
+
+        $checks = [
+            'client:' . $bucket . ':' . $client => self::PORTAL_RATE_MAX_PER_CLIENT,
+            'global:' . $bucket                 => self::PORTAL_RATE_MAX_GLOBAL
+        ];
+
+        foreach ($checks as $key => $maximum) {
+            $entry = $limits[$key] ?? ['started' => $now, 'count' => 0, 'logged' => false];
+            if (!is_array($entry) || $now - (int)($entry['started'] ?? 0) >= self::PORTAL_RATE_WINDOW_SECONDS) {
+                $entry = ['started' => $now, 'count' => 0, 'logged' => false];
+            }
+
+            if ((int)$entry['count'] >= $maximum) {
+                if (!(bool)($entry['logged'] ?? false)) {
+                    $entry['logged'] = true;
+                    $this->LogMessage('WebAuthn portal rate limit reached. Bucket=' . $bucket, KL_WARNING);
+                }
+                $limits[$key] = $entry;
+                $this->SetBuffer(self::PORTAL_RATE_BUFFER, json_encode($limits));
+                return false;
+            }
+
+            if ($consume) {
+                $entry['count'] = (int)$entry['count'] + 1;
+            }
+            $limits[$key] = $entry;
+        }
+
+        $this->SetBuffer(self::PORTAL_RATE_BUFFER, json_encode($limits));
+        return true;
+    }
+
+    private function ResetPortalRateLimit(string $bucket): void
+    {
+        $client = hash('sha256', (string)($_SERVER['REMOTE_ADDR'] ?? 'unknown'));
+        $limits = json_decode($this->GetBuffer(self::PORTAL_RATE_BUFFER), true);
+        if (!is_array($limits)) {
+            return;
+        }
+        unset($limits['client:' . $bucket . ':' . $client]);
+        $this->SetBuffer(self::PORTAL_RATE_BUFFER, json_encode($limits));
+    }
+
     // INTERNAL CRYPTO HELPERS
     // =========================================================================
 

@@ -42,6 +42,40 @@
     },
 
     {
+      "type": "ExpansionPanel",
+      "name": "PortalSecurity",
+      "caption": "WebAuthn Portal Security",
+      "items": [
+        {
+          "type": "CheckBox",
+          "name": "PortalEnabled",
+          "caption": "Enable WebAuthn portal after configuration and verified migration"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "PortalOrigin",
+          "caption": "Primary exact HTTPS origin (e.g. https://symcon.example.com)"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "PortalBackupOrigin",
+          "caption": "Optional backup exact HTTPS origin (e.g. https://abc.ipmagic.de)"
+        },
+        {
+          "type": "NumberSpinner",
+          "name": "PortalSessionLifetimeMinutes",
+          "caption": "Portal session lifetime (minutes)",
+          "minimum": 5,
+          "maximum": 1440
+        },
+        {
+          "type": "Label",
+          "caption": "After upgrading, use verified migration in the admin dashboard. Existing passkeys are upgraded without creating new credentials."
+        }
+      ]
+    },
+
+    {
       "type": "Label",
       "name": "LabelSyncToken",
       "caption": "Synchronization Token (Stored encrypted in system.vault)"
@@ -248,7 +282,19 @@
       "caption": "🔁 Rotate Encryption Key",
       "onClick": "SEC_RotateKey($id);",
       "visible": false
+    },
+    {
+      "type": "Button",
+      "name": "BtnRevokePortalSessions",
+      "caption": "Revoke all portal sessions",
+      "onClick": "SEC_RevokePortalSessions($id);"
+    },
+    {
+      "type": "Button",
+      "name": "BtnRemovePasskeys",
+      "caption": "Remove all passkeys (re-enrolment required)",
+      "confirm": "Remove all registered and legacy passkeys? This cannot be undone.",
+      "onClick": "SEC_RemoveAllPasskeys($id);"
     }
   ]
 }
-

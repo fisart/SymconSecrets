@@ -81,6 +81,8 @@ Das Modul erkennt automatisch die Struktur Ihrer Daten:
 
 ## 7. 🔐 Biometrische Authentifizierung (Passkeys)
 
+> **Sicherheitsmigration auf Version 5.4.0:** Frühere Passkey-Einträge wurden nicht vollständig serverseitig geprüft und werden deshalb nicht mehr akzeptiert. Nach dem Update bleibt das Portal zunächst deaktiviert. Tragen Sie den primären `PortalOrigin` und bei Bedarf einen `PortalBackupOrigin` ein, melden Sie sich über jede konfigurierte URL am Admin-Dashboard mit dem Admin-Passwort an und starten Sie **Start verified migration**. Jeder vorhandene Passkey wird durch eine echte Signaturprüfung in das sichere Format übernommen; es wird kein neuer Passkey registriert.
+
 ### 7.1 Übersicht
 
 Die Passkey-Funktion ermöglicht es Ihnen, den Zugriff auf den Tresor oder eigene WebHook-Skripte durch biometrische Merkmale (Fingerabdruck, Gesichtserkennung oder Windows Hello) zu schützen. Dies ersetzt die manuelle Eingabe von Passwörtern durch einen sicheren kryptografischen Handshake (WebAuthn/FIDO2).
@@ -88,8 +90,8 @@ Die Passkey-Funktion ermöglicht es Ihnen, den Zugriff auf den Tresor oder eigen
 **Sicherheitsmerkmale:**
 
 - **Hardware-gebunden:** Der private Schlüssel verlässt niemals Ihr Gerät (Smartphone oder PC).
-- **Zero-Knowledge:** Im Tresor wird lediglich der öffentliche Schlüssel im versteckten Ordner `__AUTH__` gespeichert.
-- **Zustandslos:** Die Authentifizierung erfolgt im RAM-Buffer und ist an Ihre IP-Adresse und Ihren Browser gebunden.
+- **Serverseitig verifiziert:** Signatur, Challenge, Ceremony-Typ, exakter Origin, RP-ID, Benutzeranwesenheit und Benutzerverifikation werden geprüft.
+- **Sichere Sitzung:** Nach erfolgreicher Prüfung wird ein zufälliges `Secure`-/`HttpOnly`-/`SameSite=Strict`-Cookie ausgegeben. Im RAM wird nur dessen SHA-256-Hash gespeichert.
 
 ### 7.2 Einrichtung (Registrierung)
 
@@ -102,16 +104,22 @@ Bevor Sie ein Gerät nutzen können, muss es einmalig verknüpft werden. Dieser 
 3. Öffnen Sie diesen Record (⚙️) und fügen Sie ein Feld hinzu: Name: `PW`, Wert: Ein starkes Passwort Ihrer Wahl.
 4. Klicken Sie auf **💾 Speichern**.
 
-**Schritt 2: Gerät verknüpfen**
-Rufen Sie die Registrierungs-URL auf dem Gerät auf, das Sie hinzufügen möchten (Smartphone oder PC). **Wichtig: Dies funktioniert nur über eine verschlüsselte HTTPS-Verbindung!**
+**Schritt 2: Portal konfigurieren**
 
-- **URL-Format:** `https://[Ihre-Symcon-URL]/hook/secrets_[ID]?register=1&pass=[Ihr-PW]`
-- **Beispiel:** `https://08a32d3d...ipmagic.de/hook/secrets_59597?register=1&pass=mein-sicherer-schluessel`
-  Folgen Sie den Anweisungen im Browser und berühren Sie den Sensor Ihres Geräts. Nach der Meldung „✅ Gerät erfolgreich registriert!“ ist das Gerät hinterlegt.
+1. Tragen Sie den exakten primären HTTPS-Origin ohne abschließenden Schrägstrich in `PortalOrigin` ein.
+2. Optional können Sie einen zweiten, unabhängigen HTTPS-Origin in `PortalBackupOrigin` eintragen.
+3. Die RP-ID wird sicher aus dem jeweiligen Hostnamen abgeleitet. Lassen Sie `PortalEnabled` während der Migration ausgeschaltet.
+
+**Schritt 3: Vorhandene Passkeys übernehmen**
+
+Rufen Sie `https://[Ihre-Symcon-URL]/hook/secrets_[ID]?admin=1` auf, melden Sie sich mit dem Admin-Passwort an und wählen Sie **Start verified migration**. Berühren Sie jeden vorhandenen Passkey einmal. Wiederholen Sie dies über die Backup-URL, falls dort eigene Passkeys registriert wurden. Dabei wird kein neuer Passkey erstellt; nur der bereits gespeicherte öffentliche Schlüssel wird durch eine aktuelle Signatur bestätigt. Aktivieren Sie `PortalEnabled`, sobald alle vorhandenen Passkeys übernommen wurden.
+
+Die Seite `?register=1` wird nur benötigt, wenn Sie später tatsächlich ein neues Gerät hinzufügen möchten.
 
 ### 7.3 Nutzung im Alltag
 
 - **Login-Portal:** Sie können das Portal nutzen, um eine Sitzung für Ihren Browser zu starten. URL: `https://[Ihre-Symcon-URL]/hook/secrets_[ID]?portal=1`. Nach erfolgreichem Scan ist Ihr Browser für 60 Minuten autorisiert.
+- **Primär-/Backup-URL:** Passkeys und Sitzungs-Cookies bleiben jeweils an ihren exakten Origin gebunden. Bei einem Wechsel zur Backup-URL authentifizieren Sie sich dort erneut mit dem für diese URL registrierten Passkey.
 - **Integration in eigene Skripte:** Sie können die biometrische Prüfung in jedes WebHook-Skript einbauen:
 
 ```php
@@ -134,15 +142,15 @@ Das Admin-Dashboard ist eine zentrale Steuerseite, die über den WebHook aufgeru
 
 **Zugriffsschutz (Zweistufig):**
 
-- **Erst-Login:** Erfolgt über ein spezielles Admin-Passwort in der URL: `?admin=1&pass=[AdminPortal-Passwort]`
-- **Folge-Logins:** Sobald ein Gerät einmal per Passwort autorisiert wurde, erkennt das Modul die biometrische Sitzung. Zukünftige Aufrufe benötigen nur noch den Fingerabdruck/Passkey über `?admin=1`.
+- **Erst-Login:** Das Admin-Passwort wird über ein POST-Formular übermittelt und erscheint niemals in der URL.
+- **Folge-Logins:** Ein vollständig verifizierter Passkey erzeugt eine kurzlebige, widerrufbare Cookie-Sitzung.
 
 ### 8.2 Sicherheits-Architektur (Zwei-Passwort-Konzept)
 
 Um maximale Sicherheit zu gewährleisten, nutzt das System zwei getrennte Passwörter im Tresor:
 
 1.  **AdminPortal (Record `AdminPortal` -> Feld `PW`):** Schützt das Dashboard. Sollte niemals geteilt werden. Ermöglicht den Zugriff auf alle System-Links.
-2.  **RegistrationPassword (Record `RegistrationPassword` -> Feld `PW`):** Schützt den eigentlichen Registrierungs-Vorgang (`?register=1&pass=...`).
+2.  **RegistrationPassword (Record `RegistrationPassword` -> Feld `PW`):** Schützt das Registrierungsformular unter `?register=1`.
 
 ### 8.3 Passkeys in verteilten Systemen (Master/Slave)
 
@@ -248,6 +256,8 @@ The module automatically detects the structure of your data:
 
 ## 7. 🔐 Biometric Authentication (Passkeys)
 
+> **Security migration to version 5.4.0:** Earlier passkey records were not fully verified on the server and are no longer accepted. After upgrading, the portal remains disabled. Configure the primary `PortalOrigin` and, if needed, a `PortalBackupOrigin`; then sign in through each configured URL and choose **Start verified migration**. Each existing passkey is upgraded after a real signed assertion; no new passkey is registered.
+
 ### 7.1 Overview
 
 Protect access to your vault or custom WebHook scripts using biometrics (fingerprint, face recognition, or Windows Hello). This replaces manual password entry with a secure cryptographic handshake (WebAuthn/FIDO2).
@@ -255,8 +265,8 @@ Protect access to your vault or custom WebHook scripts using biometrics (fingerp
 **Security Features:**
 
 - **Hardware-Bound:** The private key never leaves your device (smartphone or PC).
-- **Zero-Knowledge:** Only the public key is stored in your vault within the hidden `__AUTH__` folder.
-- **Stateless:** Authentication is managed in a RAM buffer and is tied to your IP address and browser.
+- **Server-verified:** Signature, challenge, ceremony type, exact origin, RP ID, user presence, and user verification are checked.
+- **Secure session:** Successful verification creates a random `Secure`/`HttpOnly`/`SameSite=Strict` cookie. Only its SHA-256 hash is held in RAM.
 
 ### 7.2 Setup (Registration)
 
@@ -269,16 +279,22 @@ Before you can use a device, it must be linked once. This process is protected b
 3. Open this record (⚙️) and add a field: Name: `PW`, Value: A strong password of your choice.
 4. Click **💾 Save**.
 
-**Step 2: Link your Device**
-Open the registration URL on the device you want to add (HTTPS required).
+**Step 2: Configure the portal**
 
-- **URL Format:** `https://[Your-Symcon-URL]/hook/secrets_[ID]?register=1&pass=[Your-PW]`
-- **Example:** `https://08a32d3d...ipmagic.de/hook/secrets_59597?register=1&pass=my-secure-key`
-  Follow the instructions in the browser and touch your device's sensor. Once the message "✅ Device successfully registered!" appears, your device is linked.
+1. Enter the exact primary HTTPS origin without a trailing slash in `PortalOrigin`.
+2. Optionally enter a second independent HTTPS origin in `PortalBackupOrigin`.
+3. The RP ID is safely derived from each origin hostname. Leave `PortalEnabled` off during migration.
+
+**Step 3: Upgrade existing passkeys**
+
+Open `https://[Your-Symcon-URL]/hook/secrets_[ID]?admin=1`, sign in with the admin password, and choose **Start verified migration**. Touch each existing passkey once. Repeat this through the backup URL if separate passkeys were registered there. This does not create a new passkey; it proves possession of the already stored key with a current signed assertion. Enable `PortalEnabled` after all existing passkeys have been upgraded.
+
+Use `?register=1` only if you later choose to add a genuinely new device.
 
 ### 7.3 Daily Usage
 
 - **Login Portal:** `https://[Your-Symcon-URL]/hook/secrets_[ID]?portal=1`. After a successful scan, your browser is authorized for 60 minutes.
+- **Primary/backup URL:** Passkeys and session cookies remain bound to their exact origin. When switching to the backup URL, authenticate there with a passkey registered for that URL.
 - **Integration into Custom Scripts:** You can integrate biometric verification into any WebHook script:
 
 ```php
@@ -297,14 +313,14 @@ echo "Welcome! Your access has been biometrically verified.";
 
 ### 8.1 The Admin Dashboard
 
-The Admin Dashboard is a centralized management page accessible via WebHook (`?admin=1&pass=[AdminPortal-Password]`). It automatically generates registration links for all configured Master and Slave instances. After the first login, access is protected via Passkey biometrics via `?admin=1`.
+The Admin Dashboard is accessible through `?admin=1`. The admin password is submitted through a POST form and never appears in the URL. The dashboard generates password-free registration links for configured systems.
 
 ### 8.2 Security Architecture (Two-Password Concept)
 
 For maximum security, the system utilizes two distinct passwords stored within the vault:
 
 1.  **AdminPortal (Record `AdminPortal` -> Field `PW`):** Protects the Admin Dashboard. Should never be shared. Grants access to all system-wide registration links.
-2.  **RegistrationPassword (Record `RegistrationPassword` -> Field `PW`):** Protects the actual device enrollment process (`?register=1&pass=...`).
+2.  **RegistrationPassword (Record `RegistrationPassword` -> Field `PW`):** Protects the registration form at `?register=1`.
 
 ### 8.3 Passkeys in Distributed Environments (Master/Slave)
 
