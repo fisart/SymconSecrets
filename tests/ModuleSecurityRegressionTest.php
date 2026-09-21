@@ -115,6 +115,25 @@ if (!str_contains($sessionContext, 'PORTAL_REVOCATION_PENDING_BUFFER')) {
 if (!str_contains($sessionContext, 'IsPasskeySessionCredentialCurrent(')) {
     throw new RuntimeException('Passkey sessions are not bound to the current live credential');
 }
+if (!str_contains($sessionContext, "'credentialGeneration'")) {
+    throw new RuntimeException('Passkey credential generation is not rechecked at final session acceptance');
+}
+
+$vaultSaveStart = strpos($module, 'private function _encryptAndSave(');
+$vaultSaveEnd = strpos($module, 'private function _decryptVault()', $vaultSaveStart === false ? 0 : $vaultSaveStart);
+if ($vaultSaveStart === false || $vaultSaveEnd === false || $vaultSaveEnd <= $vaultSaveStart) {
+    throw new RuntimeException('Could not isolate _encryptAndSave');
+}
+$vaultSave = substr($module, $vaultSaveStart, $vaultSaveEnd - $vaultSaveStart);
+$credentialGenerationPublish = strpos($vaultSave, 'self::PORTAL_CREDENTIAL_GENERATION_BUFFER');
+$vaultPublish = strpos($vaultSave, '$this->SetValue("Vault", $vaultData)');
+if (
+    $credentialGenerationPublish === false ||
+    $vaultPublish === false ||
+    $credentialGenerationPublish >= $vaultPublish
+) {
+    throw new RuntimeException('Credential generation is not published before the changed vault');
+}
 
 $adminLoginStart = strpos($module, 'private function HandleAdminLogin(): void');
 $adminLoginEnd = strpos($module, 'protected function ProcessHookData(): void', $adminLoginStart === false ? 0 : $adminLoginStart);

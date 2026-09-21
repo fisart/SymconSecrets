@@ -3457,13 +3457,23 @@ class SecretsManager extends IPSModuleStrict
                 $this->SetBuffer(self::PORTAL_SESSION_BUFFER, (string)json_encode($sessions));
                 return null;
             }
+            if (!$this->PortalSessionMatchesRequirements($session, $profile['origin'], $requiredScopes, $allowedMethods, time())) {
+                return null;
+            }
+            if (
+                (string)($session['method'] ?? '') === 'passkey' &&
+                (int)($session['credentialGeneration'] ?? -1) !== $this->GetPortalCredentialGeneration()
+            ) {
+                unset($sessions[$tokenHash]);
+                $this->SetBuffer(self::PORTAL_SESSION_BUFFER, (string)json_encode($sessions));
+                return null;
+            }
             // Credential validation may wait for the vault lock. A revocation
-            // request publishes its pending marker without that lock, so check
-            // again at the final acceptance boundary.
+            // request publishes its pending marker without either lock, so this
+            // must remain the final state check before accepting the session.
             if (
                 $this->GetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER) === '1' ||
-                ($requireEnabled && !$this->ReadPropertyBoolean('PortalEnabled')) ||
-                !$this->PortalSessionMatchesRequirements($session, $profile['origin'], $requiredScopes, $allowedMethods, time())
+                ($requireEnabled && !$this->ReadPropertyBoolean('PortalEnabled'))
             ) {
                 return null;
             }
@@ -3493,13 +3503,6 @@ class SecretsManager extends IPSModuleStrict
         }
 
         if ($allowedMethods !== null && !in_array((string)($session['method'] ?? ''), $allowedMethods, true)) {
-            return false;
-        }
-
-        if (
-            (string)($session['method'] ?? '') === 'passkey' &&
-            (int)($session['credentialGeneration'] ?? -1) !== $this->GetPortalCredentialGeneration()
-        ) {
             return false;
         }
 
