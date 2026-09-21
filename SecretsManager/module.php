@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 59551)
-Total output lines: 5511
-
 <?php
 
 declare(strict_types=1);
@@ -2406,7 +2403,672 @@ class SecretsManager extends IPSModuleStrict
     }
 
 
-    private function normalize…9551 tokens truncated…           $currentLegacyId === null ||
+    private function normalizeFingerprint(string $fp): string
+    {
+        $fp = strtolower($fp);
+        // erlaubt Eingaben mit ":" oder Leerzeichen – wir nehmen nur hex
+        $fp = preg_replace('/[^0-9a-f]/', '', $fp) ?? '';
+        return $fp;
+    }
+
+    private function certSha256Fingerprint($x509Cert): string
+    {
+        // Export zu PEM
+        $pem = '';
+        if (!openssl_x509_export($x509Cert, $pem)) {
+            return '';
+        }
+
+        // PEM -> DER (Base64)
+        $pem = preg_replace('/-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----|\s+/', '', $pem) ?? '';
+        $der = base64_decode($pem, true);
+        if ($der === false) return '';
+
+        return hash('sha256', $der);
+    }
+
+    private function ServeAdminDashboard(): void
+    {
+        if (!$this->RequirePortalReady(false)) {
+            return;
+        }
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        if ($profile === null) {
+            $this->SendPortalError(503, $profileError);
+            return;
+        }
+
+        $vault = $this->_decryptVault();
+        if (!is_array($vault)) {
+            $this->SendPortalError(500, 'The vault could not be decrypted.');
+            return;
+        }
+
+        $origin = $profile['origin'];
+        $localUrl = $origin . '/hook/secrets_' . $this->InstanceID . '?register=1';
+        $migrationUrl = $origin . '/hook/secrets_' . $this->InstanceID . '?migrate=1';
+        $credentialStatus = $this->GetPortalCredentialStatus($profile['rpId'], $origin);
+        $legacyCount = $credentialStatus['migratable'];
+        $slaves = json_decode($this->ReadPropertyString('SlaveURLs'), true);
+        if (!is_array($slaves)) {
+            $slaves = [];
+        }
+
+        $nonce = SecretsPortalSecurity::base64UrlEncode(random_bytes(18));
+        $this->SendPortalSecurityHeaders($nonce);
+
+        echo '<html><head><title>Admin Dashboard</title><meta name="viewport" content="width=device-width, initial-scale=1">';
+        echo '<style>body{font-family:sans-serif;background:#f4f7f6;padding:20px;color:#333}.box{background:#fff;padding:25px;border-radius:12px;box-shadow:0 5px 20px rgba(0,0,0,.1);max-width:1000px;margin:auto}h1{border-bottom:2px solid #eee;padding-bottom:10px;color:#2c3e50}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{padding:12px;border-bottom:1px solid #eee;text-align:left}th{background:#f8f9fa;color:#666;font-size:13px;text-transform:uppercase}.link-cell{word-break:break-all;font-family:monospace;font-size:12px;background:#f9f9f9;padding:8px;border-radius:4px;display:block}a{color:#4a90e2;text-decoration:none}a:hover{text-decoration:underline}.tag{font-size:10px;padding:2px 6px;border-radius:10px;background:#eee;color:#777;margin-left:8px}</style></head><body>';
+        echo '<div class="box"><h1>🛠️ Admin Dashboard</h1>';
+        echo '<p>Current WebAuthn profile: <code>' . htmlspecialchars($origin, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</code></p>';
+        echo '<p>Registration links never contain long-term passwords. A target system asks for its registration password unless this browser already has an authenticated session there.</p>';
+        if ($legacyCount > 0) {
+            echo '<p><strong>' . $legacyCount . ' legacy passkey(s) can be upgraded without re-enrolment.</strong> <a href="' . htmlspecialchars($migrationUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">Start verified migration</a>.</p>';
+        }
+        if ($credentialStatus['incompatible'] > 0) {
+            echo '<p class="error"><strong>' . $credentialStatus['incompatible'] . ' legacy passkey record(s) require attention.</strong> They were preserved but cannot currently be migrated, so migration is not complete.</p>';
+        }
+        echo '<p>Verified for this origin: ' . $credentialStatus['verified'] . '; registered for another origin: ' . $credentialStatus['otherOrigin'] . '.</p>';
+        echo '<table><tr><th>System</th><th>Passkey registration URL</th></tr>';
+        echo '<tr><td><strong>LOCAL</strong><span class="tag">This server</span></td><td><a class="link-cell" href="' . htmlspecialchars($localUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">' . htmlspecialchars($localUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</a></td></tr>';
+
+        foreach ($slaves as $slave) {
+            if (!is_array($slave)) {
+                continue;
+            }
+            $url = trim((string)($slave['Url'] ?? ''));
+            if ($url === '') {
+                continue;
+            }
+            $baseUrl = explode('?', $url, 2)[0];
+            $registerUrl = $baseUrl . '?register=1';
+            $name = trim((string)($slave['Server'] ?? 'Remote system'));
+            echo '<tr><td><strong>' . htmlspecialchars($name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</strong><span class="tag">Remote</span></td>';
+            echo '<td><a class="link-cell" href="' . htmlspecialchars($registerUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">' . htmlspecialchars($registerUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</a></td></tr>';
+        }
+
+        echo '</table></div></body></html>';
+    }
+
+    private function ServeAdminLoginPage(string $error = ''): void
+    {
+        if (!$this->RequirePortalReady(false)) {
+            return;
+        }
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        if ($profile === null) {
+            $this->SendPortalError(503, $profileError);
+            return;
+        }
+
+        $nonce = SecretsPortalSecurity::base64UrlEncode(random_bytes(18));
+        $this->SendPortalSecurityHeaders($nonce);
+        echo '<html><head><title>Vault Admin Login</title><meta name="viewport" content="width=device-width, initial-scale=1">';
+        echo '<style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f4f7f6}.box{background:#fff;padding:32px;border-radius:12px;box-shadow:0 5px 20px rgba(0,0,0,.1);width:min(420px,90vw)}input,button,a{box-sizing:border-box;width:100%;padding:12px;margin-top:12px}a{display:block;text-align:center}.error{color:#b00020}</style></head><body><div class="box">';
+        echo '<h2>Vault administration</h2>';
+        if ($error !== '') {
+            echo '<p class="error">' . htmlspecialchars($error, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</p>';
+        }
+        echo '<form method="post" action="?admin=1"><input type="hidden" name="action" value="admin-login">';
+        echo '<label>Admin password<input type="password" name="password" autocomplete="current-password" required></label>';
+        echo '<button type="submit">Sign in with admin password</button></form>';
+        echo '</div></body></html>';
+    }
+
+    private function HandleAdminLogin(): void
+    {
+        if (!$this->RequirePortalReady(false)) {
+            return;
+        }
+        $authorizationGeneration = $this->GetPortalAuthorizationGeneration();
+        if ($authorizationGeneration === null) {
+            $this->SendPortalError(503, 'Portal security state changed. Reload the page and try again.');
+            return;
+        }
+        if (!$this->CheckPortalRateLimit('admin-password', true)) {
+            $this->SendPortalError(429, 'Too many attempts. Please try again later.');
+            return;
+        }
+
+        $vault = $this->_decryptVault();
+        $expected = is_array($vault) ? (string)($vault['AdminPortal']['PW'] ?? '') : '';
+        $submittedPassword = $_POST['password'] ?? null;
+        $provided = is_string($submittedPassword) ? $submittedPassword : '';
+
+        if ($expected === '' || $provided === '' || !hash_equals($expected, $provided)) {
+            $this->LogPortalFailure('admin-password');
+            http_response_code(401);
+            $this->ServeAdminLoginPage('Authentication failed.');
+            return;
+        }
+
+        $this->ResetPortalRateLimit('admin-password');
+        if (!$this->CreatePortalSession('admin-password', ['admin', 'register', 'migrate', 'portal'], null, $authorizationGeneration)) {
+            $this->SendPortalError(500, 'The session could not be created.');
+            return;
+        }
+
+        header('Location: /hook/secrets_' . $this->InstanceID . '?admin=1', true, 303);
+    }
+
+    /**
+     * WEBHOOK DATA PROCESSING
+     * This is called by IP-Symcon when data is posted to /hook/secrets_ID
+     */
+    protected function ProcessHookData(): void
+    {
+        $mode = $this->ReadPropertyInteger('OperationMode');
+        $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+        $isPortal = isset($_GET['portal']);
+        $isRegister = isset($_GET['register']);
+        $isAdmin = isset($_GET['admin']);
+        $isMigrate = isset($_GET['migrate']);
+        $formAction = $_POST['action'] ?? null;
+
+        if ($isAdmin) {
+            if ($method === 'GET') {
+                if ($this->IsPortalSessionValid(false, ['admin'], ['admin-password'])) {
+                    $this->ServeAdminDashboard();
+                } else {
+                    $this->ServeAdminLoginPage();
+                }
+                return;
+            }
+            if ($method === 'POST' && is_string($formAction) && $formAction === 'admin-login') {
+                $this->HandleAdminLogin();
+                return;
+            }
+            $this->SendMethodNotAllowed(['GET', 'POST']);
+            return;
+        }
+
+        if ($isRegister) {
+            if ($method === 'GET') {
+                $registrationSession = $this->GetPortalSessionContext(false, ['register'], ['admin-password']);
+                if ($registrationSession !== null) {
+                    $this->ServeRegistrationUI('admin-password', (string)$registrationSession['tokenHash']);
+                } else {
+                    $this->ServeRegistrationPasswordPage();
+                }
+                return;
+            }
+
+            if ($method === 'POST' && is_string($formAction) && $formAction === 'registration-login') {
+                $this->HandleRegistrationPassword();
+                return;
+            }
+
+            // IP-Symcon installations do not consistently expose the
+            // Content-Type header as $_SERVER['CONTENT_TYPE']. A WebAuthn
+            // JSON request has no form action, so route it to the strict JSON
+            // parser instead of rejecting a valid ceremony with HTTP 405.
+            if ($method === 'POST' && ($formAction === null || $this->IsJsonRequest())) {
+                $this->FinishRegistration();
+                return;
+            }
+
+            $this->SendMethodNotAllowed(['GET', 'POST']);
+            return;
+        }
+
+        if ($isMigrate) {
+            if ($method === 'GET') {
+                // ServeLegacyMigrationUI requires a live admin-password
+                // session and binds its server-side token hash into the
+                // one-time migration challenge.
+                $this->ServeLegacyMigrationUI();
+                return;
+            }
+            if ($method === 'POST') {
+                // Do not depend on the browser exposing the admin cookie to
+                // this JSON request. VerifyLegacyMigration consumes the
+                // unguessable, single-use challenge, verifies the passkey,
+                // and EnterAuthorizedCeremonyCommit revalidates the exact
+                // bound admin session immediately before the vault update.
+                try {
+                    $this->VerifyLegacyMigration();
+                } catch (Throwable $e) {
+                    $this->LogMessage('Unhandled WebAuthn migration exception. See the temporary diagnostic variable.', KL_ERROR);
+                    $this->SendPortalDiagnosticJson(
+                        500,
+                        'Migration failed because the server raised an unexpected exception.',
+                        'migration-unhandled-exception',
+                        $e
+                    );
+                }
+                return;
+            }
+            $this->SendMethodNotAllowed(['GET', 'POST']);
+            return;
+        }
+
+        if ($isPortal) {
+            if ($method === 'GET') {
+                if ($this->IsPortalAuthenticated()) {
+                    $returnUrl = SecretsPortalSecurity::sanitizeReturnUrl((string)($_GET['return'] ?? '/'));
+                    header('Location: ' . $returnUrl, true, 303);
+                } else {
+                    $this->ServePortalUI();
+                }
+                return;
+            }
+            if ($method === 'POST') {
+                $this->VerifyPortalAccess();
+                return;
+            }
+            $this->SendMethodNotAllowed(['GET', 'POST']);
+            return;
+        }
+
+        if ($mode !== 0) {
+            $this->SendPortalError(403, 'Access denied: this instance is not configured as a Slave.');
+            return;
+        }
+
+        if ($method !== 'POST') {
+            $this->SendMethodNotAllowed(['POST']);
+            return;
+        }
+
+        // Standard sync logic (Slave only)
+        $input = $this->ReadRequestBody(self::SYNC_MAX_REQUEST_BYTES);
+        if (!is_string($input)) {
+            http_response_code(413);
+            echo 'Sync payload too large';
+            return;
+        }
+        $data = json_decode((string)$input, true);
+        $expectedToken = $this->getAuthToken();
+        if (
+            $expectedToken === '' ||
+            !is_array($data) ||
+            !isset($data['auth']) ||
+            !is_string($data['auth']) ||
+            $data['auth'] === '' ||
+            !hash_equals($expectedToken, $data['auth'])
+        ) {
+            http_response_code(403);
+            echo 'Invalid Sync Token';
+            return;
+        }
+
+        if (isset($data['vault'])) {
+            if (!is_string($data['vault']) || !$this->EnterVaultLock()) {
+                http_response_code(503);
+                echo 'Vault sync state unavailable';
+                return;
+            }
+            try {
+                $vaultRevision = null;
+                $currentVault = $this->_decryptVaultWithRevision($vaultRevision);
+                if ($currentVault === false && $this->GetValue('Vault') !== '') {
+                    http_response_code(500);
+                    echo 'Current vault could not be decrypted';
+                    return;
+                }
+                $masterVault = $this->DecryptVaultJson((string)$data['vault']);
+                if (!is_array($masterVault)) {
+                    http_response_code(400);
+                    echo 'Incoming vault could not be authenticated';
+                    return;
+                }
+                $currentVault = is_array($currentVault) ? $currentVault : [];
+                $this->PreserveLocalVaultAreas($currentVault, $masterVault);
+                if (!$this->_encryptAndSave($masterVault, $vaultRevision)) {
+                    http_response_code(500);
+                    echo 'Incoming vault could not be saved';
+                    return;
+                }
+            } finally {
+                $this->LeaveVaultLock();
+            }
+        }
+        echo 'OK';
+    }
+
+    private function ServeRegistrationPasswordPage(string $error = ''): void
+    {
+        if (!$this->RequirePortalReady(false)) {
+            return;
+        }
+
+        $nonce = SecretsPortalSecurity::base64UrlEncode(random_bytes(18));
+        $this->SendPortalSecurityHeaders($nonce);
+        echo '<html><head><title>Register Passkey</title><meta name="viewport" content="width=device-width, initial-scale=1">';
+        echo '<style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f4f7f6}.box{background:#fff;padding:32px;border-radius:12px;box-shadow:0 5px 20px rgba(0,0,0,.1);width:min(420px,90vw)}input,button{box-sizing:border-box;width:100%;padding:12px;margin-top:12px}.error{color:#b00020}</style></head><body><div class="box"><h2>Register a passkey</h2>';
+        if ($error !== '') {
+            echo '<p class="error">' . htmlspecialchars($error, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</p>';
+        }
+        echo '<form method="post" action="?register=1"><input type="hidden" name="action" value="registration-login">';
+        echo '<label>Registration password<input type="password" name="password" autocomplete="one-time-code" required></label>';
+        echo '<button type="submit">Continue</button></form></div></body></html>';
+    }
+
+    private function HandleRegistrationPassword(): void
+    {
+        if (!$this->RequirePortalReady(false)) {
+            return;
+        }
+        $authorizationGeneration = $this->GetPortalAuthorizationGeneration();
+        if ($authorizationGeneration === null) {
+            $this->SendPortalError(503, 'Portal security state changed. Reload the page and try again.');
+            return;
+        }
+        if (!$this->CheckPortalRateLimit('registration-password', true)) {
+            $this->SendPortalError(429, 'Too many attempts. Please try again later.');
+            return;
+        }
+
+        $vault = $this->_decryptVault();
+        $expected = is_array($vault) ? (string)($vault['RegistrationPassword']['PW'] ?? '') : '';
+        $submittedPassword = $_POST['password'] ?? null;
+        $provided = is_string($submittedPassword) ? $submittedPassword : '';
+
+        if ($expected === '' || $provided === '' || !hash_equals($expected, $provided)) {
+            $this->LogPortalFailure('registration-password');
+            http_response_code(401);
+            $this->ServeRegistrationPasswordPage('Authentication failed.');
+            return;
+        }
+
+        $this->ResetPortalRateLimit('registration-password');
+        $this->ServeRegistrationUI('registration-password', null, $authorizationGeneration);
+    }
+
+    private function ServeLegacyMigrationUI(): void
+    {
+        if (!$this->RequirePortalReady(false)) {
+            return;
+        }
+        $adminSession = $this->GetPortalSessionContext(false, ['migrate'], ['admin-password']);
+        if ($adminSession === null) {
+            $this->SendPortalError(403, 'A current admin-password session is required.');
+            return;
+        }
+        $profileError = '';
+        $profile = $this->GetCurrentPortalProfile($profileError);
+        if ($profile === null) {
+            $this->SendPortalError(503, $profileError);
+            return;
+        }
+
+        $legacyCredentials = $this->GetMigratableLegacyCredentials($profile['rpId']);
+        $credentialStatus = $this->GetPortalCredentialStatus($profile['rpId'], $profile['origin']);
+        if (count($legacyCredentials) === 0) {
+            $nonce = SecretsPortalSecurity::base64UrlEncode(random_bytes(18));
+            $this->SendPortalSecurityHeaders($nonce);
+            if ($credentialStatus['incompatible'] > 0) {
+                echo '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Passkey migration</title></head><body><h2>Passkey migration requires attention</h2><p>' . $credentialStatus['incompatible'] . ' legacy passkey record(s) for this origin could not be parsed or verified. They were preserved and the migration is not complete.</p><p><a href="?admin=1">Return to the admin dashboard</a></p></body></html>';
+            } elseif ($credentialStatus['verified'] > 0) {
+                echo '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Passkey migration</title></head><body><h2>Passkey migration complete for this origin</h2><p>' . $credentialStatus['verified'] . ' verified passkey(s) are available. Repeat migration through any configured backup origin before enabling the portal.</p><p><a href="?admin=1">Return to the admin dashboard</a></p></body></html>';
+            } else {
+                echo '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Passkey migration</title></head><body><h2>No passkeys found for this origin</h2><p>No verified or safely migratable passkeys were found. This is not confirmation that migration succeeded.</p><p><a href="?admin=1">Return to the admin dashboard</a></p></body></html>';
+            }
+            return;
+        }
+
+        $challenge = random_bytes(32);
+        $rpId = $profile['rpId'];
+        $origin = $profile['origin'];
+        $allowedIds = array_keys($legacyCredentials);
+
+        $sid = $this->StorePortalChallenge('migration', [
+            'challenge'            => SecretsPortalSecurity::base64UrlEncode($challenge),
+            'rpId'                 => $rpId,
+            'origin'               => $origin,
+            'allowedCredentialIds' => $allowedIds,
+            'authorizationMethod'  => 'admin-password',
+            'authorizationSessionHash' => (string)$adminSession['tokenHash']
+        ]);
+        if ($sid === null) {
+            $this->SendPortalError(503, 'Migration state is busy. Please try again.');
+            return;
+        }
+
+        $this->RecordPortalDebug('migration-page-ready');
+
+        $allowCredentials = [];
+        foreach ($allowedIds as $credentialId) {
+            $allowCredentials[] = ['type' => 'public-key', 'id' => $credentialId];
+        }
+        $configJson = json_encode([
+            'sid'              => $sid,
+            'challenge'        => SecretsPortalSecurity::base64UrlEncode($challenge),
+            'rpId'             => $rpId,
+            'remaining'        => count($legacyCredentials),
+            'allowCredentials' => $allowCredentials,
+            'debugEnabled'     => $this->ReadPropertyBoolean('PortalDebugEnabled'),
+            'moduleVersion'    => self::MODULE_VERSION,
+            'expectedOrigin'   => $origin
+        ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
+
+        $nonce = SecretsPortalSecurity::base64UrlEncode(random_bytes(18));
+        $this->SendPortalSecurityHeaders($nonce);
+        echo '<html><head><title>Passkey migration</title><meta name="viewport" content="width=device-width, initial-scale=1">';
+        echo '<style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f4f7f6}.box{background:#fff;padding:32px;border-radius:12px;box-shadow:0 5px 20px rgba(0,0,0,.1);text-align:center;max-width:760px}button,a{padding:12px 20px}.ok{color:#087f23}.error{color:#b00020;white-space:pre-wrap;word-break:break-word;text-align:left}.debug{font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;text-align:left}</style></head><body>';
+        echo '<div class="box"><h2>Upgrade existing passkey</h2><p>A new passkey will not be created. Touch the authenticator once to prove possession and upgrade its stored public key.</p>';
+        echo '<p>' . count($legacyCredentials) . ' migratable credential(s) remain.</p><button id="migrateButton" type="button">Verify and upgrade one passkey</button><p id="status" role="status"></p><p><a href="?admin=1">Admin dashboard</a></p></div>';
+        echo '<script nonce="' . htmlspecialchars($nonce, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">';
+        echo 'const config=' . $configJson . ';';
+        echo 'const fromB64u=v=>{v=v.replace(/-/g,"+").replace(/_/g,"/");while(v.length%4)v+="=";const b=atob(v);return Uint8Array.from(b,c=>c.charCodeAt(0));};';
+        echo 'const toB64u=v=>{let s="";new Uint8Array(v).forEach(b=>s+=String.fromCharCode(b));return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");};';
+        echo 'let phase="page-ready";';
+        echo 'const debugFacts=()=>"module="+config.moduleVersion+", phase="+phase+", browserOrigin="+location.origin+", expectedOrigin="+config.expectedOrigin+", rpId="+config.rpId+", secureContext="+window.isSecureContext+", allowedCredentials="+config.allowCredentials.length;';
+        echo 'if(config.debugEnabled){const p=document.createElement("p");p.className="debug";p.textContent="Debug facts: "+debugFacts();document.querySelector(".box").insertBefore(p,document.getElementById("migrateButton"));}';
+        echo 'async function migrate(){const status=document.getElementById("status");status.className="";status.textContent="";try{phase="browser-assertion";';
+        echo 'if(!window.isSecureContext)throw new Error("WebAuthn requires a secure browser context.");';
+        echo 'const publicKey={challenge:fromB64u(config.challenge),rpId:config.rpId,timeout:60000,userVerification:"required",allowCredentials:config.allowCredentials.map(i=>({type:i.type,id:fromB64u(i.id)}))};';
+        echo 'const cred=await navigator.credentials.get({publicKey});';
+        echo 'const payload={sid:config.sid,type:cred.type,rawId:toB64u(cred.rawId),response:{clientDataJSON:toB64u(cred.response.clientDataJSON),authenticatorData:toB64u(cred.response.authenticatorData),signature:toB64u(cred.response.signature),userHandle:cred.response.userHandle===null?null:toB64u(cred.response.userHandle)}};';
+        echo 'phase="server-request";';
+        echo 'const res=await fetch(location.pathname+"?migrate=1&json=1",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(payload)});';
+        echo 'const responseText=await res.text();let body=null;try{body=JSON.parse(responseText);}catch(parseError){throw new Error("HTTP "+res.status+": invalid JSON response; contentType="+(res.headers.get("content-type")||"missing")+", responseLength="+responseText.length);}';
+        echo 'if(!res.ok||!body.ok){let detail="HTTP "+res.status+": "+(body.error||"Migration failed.");if(config.debugEnabled){if(body.diagnosticCode)detail+="\\nFailure code: "+body.diagnosticCode;if(body.diagnosticCause)detail+="\\nCause: "+body.diagnosticCause;if(body.diagnosticFacts)detail+="\\nChecked values:\\n"+JSON.stringify(body.diagnosticFacts,null,2);if(body.diagnosticException)detail+="\\nServer exception:\\n"+JSON.stringify(body.diagnosticException,null,2);if(!body.diagnosticCode&&body.diagnostic)detail+="\\nDiagnostic: "+body.diagnostic;}throw new Error(detail);}';
+        echo 'phase="complete";status.className="ok";status.innerHTML="✅ Passkey upgraded. <a href=\\"?migrate=1\\">Continue with the next passkey</a>.";';
+        echo '}catch(e){status.className="error";const name=e&&e.name?e.name+": ":"";let message="Migration failed during "+phase+": "+name+(e&&e.message?e.message:"Unknown error");if(config.debugEnabled)message+=" | "+debugFacts();status.textContent=message;}}';
+        echo 'document.getElementById("migrateButton").addEventListener("click",migrate);';
+        echo '</script></body></html>';
+    }
+
+    private function VerifyLegacyMigration(): void
+    {
+        $this->RecordPortalDebug('migration-request-received');
+        if (!$this->RequirePortalReady(false)) {
+            $this->RecordPortalDebug('migration-portal-not-ready');
+            return;
+        }
+        if (!$this->CheckPortalRateLimit('migration', true)) {
+            $this->SendPortalDiagnosticJson(429, 'Too many attempts. Please try again later.', 'migration-rate-limited');
+            return;
+        }
+
+        $requestBody = $this->ReadRequestBody(self::PORTAL_JSON_MAX_REQUEST_BYTES);
+        if (!is_string($requestBody)) {
+            $this->SendPortalDiagnosticJson(413, 'Request payload too large.', 'migration-request-body-invalid');
+            return;
+        }
+        $data = SecretsPortalSecurity::decodeJsonRequest($requestBody);
+        $submittedSid = is_array($data) ? ($data['sid'] ?? null) : null;
+        $sid = is_string($submittedSid) ? $submittedSid : '';
+        if (preg_match('/^[A-Za-z0-9_-]{20,64}$/D', $sid) !== 1) {
+            $this->RejectPortalRequest('migration-request', null, [
+                'jsonObject' => is_array($data),
+                'sidType'    => gettype($submittedSid),
+                'sidLength'  => is_string($submittedSid) ? strlen($submittedSid) : null
+            ]);
+            return;
+        }
+
+        $challengeFailure = '';
+        $buffer = $this->ConsumePortalChallenge($sid, 'migration', $challengeFailure);
+        if ($buffer === null) {
+            $this->RejectPortalRequest('migration-expired', null, [
+                'challengeFailure' => $challengeFailure
+            ]);
+            return;
+        }
+        if (!$this->ChallengeMatchesCurrentPortalProfile($buffer)) {
+            $profileError = '';
+            $currentProfile = $this->GetCurrentPortalProfile($profileError);
+            $this->RejectPortalRequest('migration-expired', null, [
+                'challengeFailure' => 'current-profile-mismatch',
+                'challengeOrigin'  => (string)($buffer['origin'] ?? ''),
+                'currentOrigin'    => is_array($currentProfile) ? (string)$currentProfile['origin'] : '',
+                'challengeRpId'    => (string)($buffer['rpId'] ?? ''),
+                'currentRpId'      => is_array($currentProfile) ? (string)$currentProfile['rpId'] : '',
+                'profileError'     => $profileError
+            ]);
+            return;
+        }
+
+        $response = is_array($data) && isset($data['response']) && is_array($data['response'])
+            ? $data['response']
+            : [];
+        $challenge = SecretsPortalSecurity::base64UrlDecode((string)($buffer['challenge'] ?? ''));
+        $rawIdValue = is_array($data) ? ($data['rawId'] ?? null) : null;
+        $rawId = is_string($rawIdValue) ? SecretsPortalSecurity::base64UrlDecode($rawIdValue) : null;
+        $clientDataValue = $response['clientDataJSON'] ?? null;
+        $authenticatorDataValue = $response['authenticatorData'] ?? null;
+        $signatureValue = $response['signature'] ?? null;
+        $clientDataJson = is_string($clientDataValue) ? SecretsPortalSecurity::base64UrlDecode($clientDataValue) : null;
+        $authenticatorData = is_string($authenticatorDataValue) ? SecretsPortalSecurity::base64UrlDecode($authenticatorDataValue) : null;
+        $signature = is_string($signatureValue) ? SecretsPortalSecurity::base64UrlDecode($signatureValue) : null;
+        if (($data['type'] ?? null) !== 'public-key' || $challenge === null || $rawId === null || $clientDataJson === null || $authenticatorData === null || $signature === null) {
+            $this->RejectPortalRequest('migration-payload', null, [
+                'responseObject'          => isset($data['response']) && is_array($data['response']),
+                'receivedType'            => is_string($data['type'] ?? null) ? (string)$data['type'] : gettype($data['type'] ?? null),
+                'expectedType'            => 'public-key',
+                'challengeDecoded'        => $challenge !== null,
+                'credentialIdDecoded'     => $rawId !== null,
+                'clientDataDecoded'       => $clientDataJson !== null,
+                'authenticatorDataDecoded'=> $authenticatorData !== null,
+                'signatureDecoded'        => $signature !== null
+            ]);
+            return;
+        }
+
+        $credentialId = SecretsPortalSecurity::base64UrlEncode($rawId);
+        $allowed = $buffer['allowedCredentialIds'] ?? [];
+        $rpId = (string)($buffer['rpId'] ?? '');
+        $origin = (string)($buffer['origin'] ?? '');
+        $legacyCredentials = $this->GetMigratableLegacyCredentials($rpId);
+        if (!is_array($allowed) || !in_array($credentialId, $allowed, true) || !isset($legacyCredentials[$credentialId])) {
+            $this->RejectPortalRequest('migration-credential', null, [
+                'allowListValid'       => is_array($allowed),
+                'credentialAllowed'    => is_array($allowed) && in_array($credentialId, $allowed, true),
+                'legacyRecordFound'    => isset($legacyCredentials[$credentialId]),
+                'allowListCount'       => is_array($allowed) ? count($allowed) : 0,
+                'migratableRecordCount'=> count($legacyCredentials)
+            ]);
+            return;
+        }
+
+        $legacy = $legacyCredentials[$credentialId];
+        $submittedUserHandle = $response['userHandle'] ?? null;
+        if ($submittedUserHandle !== null) {
+            $userHandle = is_string($submittedUserHandle) ? SecretsPortalSecurity::base64UrlDecode($submittedUserHandle) : null;
+            $expectedUserHandle = 'user' . $this->InstanceID;
+            if ($userHandle === null || !hash_equals($expectedUserHandle, $userHandle)) {
+                $this->RejectPortalRequest('migration-user-handle', null, [
+                    'userHandlePresent' => true,
+                    'userHandleDecoded' => $userHandle !== null,
+                    'userHandleMatches' => $userHandle !== null && hash_equals($expectedUserHandle, $userHandle)
+                ]);
+                return;
+            }
+        }
+        if (SecretsPortalSecurity::validateClientData($clientDataJson, 'webauthn.get', $challenge, $origin) === null) {
+            $clientData = json_decode($clientDataJson, true);
+            $receivedChallenge = is_array($clientData) && is_string($clientData['challenge'] ?? null)
+                ? SecretsPortalSecurity::base64UrlDecode((string)$clientData['challenge'])
+                : null;
+            $this->RejectPortalRequest('migration-client-data', null, [
+                'clientDataJsonValid' => is_array($clientData),
+                'expectedType'        => 'webauthn.get',
+                'receivedType'        => is_array($clientData) && is_string($clientData['type'] ?? null) ? (string)$clientData['type'] : gettype(is_array($clientData) ? ($clientData['type'] ?? null) : null),
+                'expectedOrigin'      => $origin,
+                'receivedOrigin'      => is_array($clientData) && is_string($clientData['origin'] ?? null) ? (string)$clientData['origin'] : gettype(is_array($clientData) ? ($clientData['origin'] ?? null) : null),
+                'challengePresent'    => is_array($clientData) && is_string($clientData['challenge'] ?? null),
+                'challengeDecoded'    => $receivedChallenge !== null,
+                'challengeMatches'    => $receivedChallenge !== null && hash_equals($challenge, $receivedChallenge),
+                'crossOrigin'         => is_array($clientData) ? ($clientData['crossOrigin'] ?? null) : null,
+                'topOriginPresent'    => is_array($clientData) && array_key_exists('topOrigin', $clientData)
+            ]);
+            return;
+        }
+
+        $cryptoFacts = [
+            'expectedRpId'        => $rpId,
+            'expectedOrigin'      => $origin,
+            'publicKeyAvailable'  => (string)$legacy['credentialPublicKey'] !== '',
+            'signatureLength'     => strlen($signature),
+            'authenticatorLength' => strlen($authenticatorData)
+        ];
+        try {
+            $verifiedAuthenticatorData = new \lbuchs\WebAuthn\Attestation\AuthenticatorData($authenticatorData);
+            $cryptoFacts['rpIdHashMatches'] = hash_equals(hash('sha256', $rpId, true), (string)$verifiedAuthenticatorData->getRpIdHash());
+            $cryptoFacts['userPresent'] = (bool)$verifiedAuthenticatorData->getUserPresent();
+            $cryptoFacts['userVerified'] = (bool)$verifiedAuthenticatorData->getUserVerified();
+            $cryptoFacts['receivedSignatureCounter'] = (int)$verifiedAuthenticatorData->getSignCount();
+            $cryptoFacts['backupEligible'] = (bool)$verifiedAuthenticatorData->getIsBackupEligible();
+            $cryptoFacts['backedUp'] = (bool)$verifiedAuthenticatorData->getIsBackup();
+            $webAuthn = $this->CreateWebAuthnVerifier($rpId);
+            $webAuthn->processGet(
+                $clientDataJson,
+                $authenticatorData,
+                $signature,
+                (string)$legacy['credentialPublicKey'],
+                $challenge,
+                null,
+                true,
+                true
+            );
+            $newCounter = $webAuthn->getSignatureCounter();
+            $backupEligible = (bool)$verifiedAuthenticatorData->getIsBackupEligible();
+            $backedUp = (bool)$verifiedAuthenticatorData->getIsBackup();
+            if (!SecretsPortalSecurity::validateBackupFlags($backupEligible, $backedUp)) {
+                throw new RuntimeException('Credential backup flags are inconsistent.');
+            }
+        } catch (Throwable $e) {
+            $this->RejectPortalRequest('migration-cryptographic-verification', $e, $cryptoFacts);
+            return;
+        }
+
+        $deviceKey = (string)$legacy['deviceKey'];
+        $authorizationFailure = '';
+        $authorizationFacts = [];
+        if (!$this->EnterAuthorizedCeremonyCommit($buffer, 'migrate', $authorizationFailure, $authorizationFacts)) {
+            $authorizationFacts['authorizationFailure'] = $authorizationFailure;
+            $this->RejectPortalRequest('migration-authorization', null, $authorizationFacts);
+            return;
+        }
+        if (!$this->EnterVaultLock()) {
+            $this->LeavePortalStateLock();
+            $this->SendPortalDiagnosticJson(503, 'The vault is busy. Please try again.', 'migration-vault-busy');
+            return;
+        }
+
+        try {
+            $challengeCredentialGeneration = (int)($buffer['credentialGeneration'] ?? -1);
+            $currentCredentialGeneration = $this->GetPortalCredentialGeneration();
+            if ($challengeCredentialGeneration !== $currentCredentialGeneration) {
+                $this->RejectPortalRequest('migration-credential-state', null, [
+                    'challengeCredentialGeneration' => $challengeCredentialGeneration,
+                    'currentCredentialGeneration'   => $currentCredentialGeneration,
+                    'generationMatches'             => false
+                ]);
+                return;
+            }
+            $vaultRevision = null;
+            $vaultData = $this->_decryptVaultWithRevision($vaultRevision);
+            $old = is_array($vaultData) ? ($vaultData[self::LOCAL_AUTH_KEY][$deviceKey] ?? null) : null;
+            $currentLegacyId = is_array($old) ? $this->DecodeLegacyStoredBinary((string)($old['credentialId'] ?? '')) : null;
+            if (
+                !is_array($old) ||
+                (int)($old['schemaVersion'] ?? 0) === SecretsPortalSecurity::CREDENTIAL_SCHEMA_VERSION ||
+                $currentLegacyId === null ||
                 !hash_equals($rawId, $currentLegacyId)
             ) {
                 $this->RejectPortalRequest('migration-state', null, [
