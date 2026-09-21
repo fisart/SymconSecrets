@@ -12,7 +12,7 @@ if (!defined('KL_MESSAGE')) {
 
 function IPS_SemaphoreEnter(string $name, int $milliseconds): bool
 {
-    if (str_contains($name, '.Portal.') && ($GLOBALS['portalSemaphoreFailures'] ?? 0) > 0) {
+    if (str_contains($name, '.PortalState.') && ($GLOBALS['portalSemaphoreFailures'] ?? 0) > 0) {
         $GLOBALS['portalSemaphoreFailures']--;
         return false;
     }
