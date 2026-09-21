@@ -629,7 +629,8 @@ class SecretsManager extends IPSModuleStrict
         }
 
         $challenge = random_bytes(32);
-        $returnUrl = SecretsPortalSecurity::sanitizeReturnUrl((string)($_GET['return'] ?? '/'));
+        $requestedReturnUrl = $_GET['return'] ?? '/';
+        $returnUrl = SecretsPortalSecurity::sanitizeReturnUrl(is_string($requestedReturnUrl) ? $requestedReturnUrl : '/');
         $rpId = $profile['rpId'];
         $origin = $profile['origin'];
 
@@ -2521,7 +2522,8 @@ class SecretsManager extends IPSModuleStrict
 
         $vault = $this->_decryptVault();
         $expected = is_array($vault) ? (string)($vault['AdminPortal']['PW'] ?? '') : '';
-        $provided = (string)($_POST['password'] ?? '');
+        $submittedPassword = $_POST['password'] ?? null;
+        $provided = is_string($submittedPassword) ? $submittedPassword : '';
 
         if ($expected === '' || $provided === '' || !hash_equals($expected, $provided)) {
             $this->LogPortalFailure('admin-password');
@@ -2551,6 +2553,7 @@ class SecretsManager extends IPSModuleStrict
         $isRegister = isset($_GET['register']);
         $isAdmin = isset($_GET['admin']);
         $isMigrate = isset($_GET['migrate']);
+        $formAction = $_POST['action'] ?? null;
 
         if ($isAdmin) {
             if ($method === 'GET') {
@@ -2561,7 +2564,7 @@ class SecretsManager extends IPSModuleStrict
                 }
                 return;
             }
-            if ($method === 'POST' && (string)($_POST['action'] ?? '') === 'admin-login') {
+            if ($method === 'POST' && is_string($formAction) && $formAction === 'admin-login') {
                 $this->HandleAdminLogin();
                 return;
             }
@@ -2585,7 +2588,7 @@ class SecretsManager extends IPSModuleStrict
                 return;
             }
 
-            if ($method === 'POST' && (string)($_POST['action'] ?? '') === 'registration-login') {
+            if ($method === 'POST' && is_string($formAction) && $formAction === 'registration-login') {
                 $this->HandleRegistrationPassword();
                 return;
             }
@@ -2730,7 +2733,8 @@ class SecretsManager extends IPSModuleStrict
 
         $vault = $this->_decryptVault();
         $expected = is_array($vault) ? (string)($vault['RegistrationPassword']['PW'] ?? '') : '';
-        $provided = (string)($_POST['password'] ?? '');
+        $submittedPassword = $_POST['password'] ?? null;
+        $provided = is_string($submittedPassword) ? $submittedPassword : '';
 
         if ($expected === '' || $provided === '' || !hash_equals($expected, $provided)) {
             $this->LogPortalFailure('registration-password');
@@ -2929,6 +2933,10 @@ class SecretsManager extends IPSModuleStrict
         }
 
         try {
+            if ((int)($buffer['credentialGeneration'] ?? -1) !== $this->GetPortalCredentialGeneration()) {
+                $this->RejectPortalRequest('migration-credential-state');
+                return;
+            }
             $vaultRevision = null;
             $vaultData = $this->_decryptVaultWithRevision($vaultRevision);
             $old = is_array($vaultData) ? ($vaultData[self::LOCAL_AUTH_KEY][$deviceKey] ?? null) : null;
@@ -3134,6 +3142,10 @@ class SecretsManager extends IPSModuleStrict
 
         $deviceKey = '';
         try {
+            if ((int)($buffer['credentialGeneration'] ?? -1) !== $this->GetPortalCredentialGeneration()) {
+                $this->RejectPortalRequest('registration-credential-state');
+                return;
+            }
             $vaultRevision = null;
             $vaultData = $this->_decryptVaultWithRevision($vaultRevision);
             if (!is_array($vaultData)) {
@@ -3303,6 +3315,10 @@ class SecretsManager extends IPSModuleStrict
         }
         $createdSession = null;
         try {
+            if ((int)($buffer['credentialGeneration'] ?? -1) !== $this->GetPortalCredentialGeneration()) {
+                $this->RejectPortalRequest('assertion-credential-state');
+                return;
+            }
             $vaultRevision = null;
             $vaultData = $this->_decryptVaultWithRevision($vaultRevision);
             $current = is_array($vaultData) ? ($vaultData[self::LOCAL_AUTH_KEY][$deviceKey] ?? null) : null;
@@ -3594,16 +3610,33 @@ class SecretsManager extends IPSModuleStrict
     private function GetPortalCredentialStateHash(array $vault): string
     {
         $bindings = [];
+        $securityFields = [
+            'schemaVersion',
+            'credentialId',
+            'credentialIdV2',
+            'credentialPublicKey',
+            'rpId',
+            'origin',
+            'userHandle',
+            'attestation',
+            'backupEligible',
+            'backupEligibilityVerified'
+        ];
         $credentials = $vault[self::LOCAL_AUTH_KEY] ?? [];
         if (is_array($credentials)) {
             foreach ($credentials as $deviceKey => $credential) {
                 if ($deviceKey === '__folder' || !is_array($credential)) {
                     continue;
                 }
-                $binding = $this->GetCredentialSessionBinding($credential);
-                if ($binding !== '') {
-                    $bindings[(string)$deviceKey] = $binding;
+                $securityState = [];
+                foreach ($securityFields as $field) {
+                    $securityState[$field] = $credential[$field] ?? null;
                 }
+                // Exclude assertion counters, backup-state observations, and
+                // timestamps because they legitimately change during login.
+                // Legacy ID/attestation material remains included so deleting
+                // and restoring an old credential also advances the generation.
+                $bindings[(string)$deviceKey] = hash('sha256', serialize($securityState));
             }
         }
         ksort($bindings, SORT_STRING);
@@ -4241,6 +4274,7 @@ class SecretsManager extends IPSModuleStrict
             $data['purpose'] = $purpose;
             $data['expires'] = $now + self::PORTAL_CHALLENGE_TTL_SECONDS;
             $data['generation'] = $generation;
+            $data['credentialGeneration'] = $this->GetPortalCredentialGeneration();
             $data['userAgentHash'] = $this->GetCurrentUserAgentHash();
             $data['bucket'] = $bucket;
             $challenges[$sid] = $data;
@@ -4322,6 +4356,7 @@ class SecretsManager extends IPSModuleStrict
         $valid =
             $this->GetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER) !== '1' &&
             (int)($challenge['generation'] ?? -1) === $this->GetPortalRevocationGenerationUnlocked() &&
+            (int)($challenge['credentialGeneration'] ?? -1) === $this->GetPortalCredentialGeneration() &&
             hash_equals((string)($challenge['userAgentHash'] ?? ''), $this->GetCurrentUserAgentHash());
 
         if ($valid && $requiredScope !== '') {

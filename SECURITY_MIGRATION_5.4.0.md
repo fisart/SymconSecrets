@@ -51,8 +51,12 @@ the portal-state lock and again after any wait for the vault lock. Passkey
 sessions are bound to the exact live local credential record and to a monotonic
 credential generation. Deleting or modifying a credential through any vault
 editing path invalidates existing sessions, and restoring the identical record
-cannot revive them. Temporary vault contention denies the current request
-without deleting an otherwise valid session.
+cannot revive them. Assertion, registration, and migration challenges carry the
+same generation and recheck it after acquiring the vault lock, so an in-flight
+ceremony cannot cross a delete-and-restore operation. Legacy credential ID and
+attestation material participates in this generation as well. Temporary vault
+contention denies the current request without deleting an otherwise valid
+session.
 
 Use Remove all passkeys only if you intentionally want a clean reset. Use the
 registration page only when adding a genuinely new device.

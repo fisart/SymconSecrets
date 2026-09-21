@@ -191,6 +191,28 @@ $module->testSetProperty('PortalSessionLifetimeMinutes', 60);
 $module->testSetProperty('PortalOrigin', 'https://primary.example.com');
 $module->testSetProperty('PortalBackupOrigin', 'https://backup.example.net');
 
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_GET = ['admin' => '1'];
+$_POST = ['action' => ['admin-login']];
+ob_start();
+invokePrivate($module, 'ProcessHookData');
+ob_end_clean();
+$_GET = ['register' => '1'];
+$_POST = ['action' => ['registration-login']];
+ob_start();
+invokePrivate($module, 'ProcessHookData');
+ob_end_clean();
+$_GET = [];
+$_POST = ['password' => ['invalid']];
+ob_start();
+invokePrivate($module, 'HandleAdminLogin');
+ob_end_clean();
+ob_start();
+invokePrivate($module, 'HandleRegistrationPassword');
+ob_end_clean();
+$_POST = [];
+unset($_SERVER['REQUEST_METHOD']);
+
 $sid = invokePrivate($module, 'StorePortalChallenge', ['assertion', ['origin' => 'https://primary.example.com']]);
 stateCheck(is_string($sid) && $sid !== '', 'challenge was not stored');
 $challenge = invokePrivate($module, 'ConsumePortalChallenge', [$sid, 'assertion']);
@@ -464,6 +486,19 @@ stateCheck(
     'passkey session did not recover after the pending revocation was cleared'
 );
 
+$inFlightSid = invokePrivate($module, 'StorePortalChallenge', ['assertion', [
+    'challenge'            => SecretsPortalSecurity::base64UrlEncode('in-flight-challenge'),
+    'rpId'                 => 'primary.example.com',
+    'origin'               => 'https://primary.example.com',
+    'allowedCredentialIds' => [SecretsPortalSecurity::base64UrlEncode($credentialId)]
+]]);
+stateCheck(is_string($inFlightSid), 'could not create credential-generation-bound assertion challenge');
+$inFlightChallenge = invokePrivate($module, 'ConsumePortalChallenge', [$inFlightSid, 'assertion']);
+stateCheck(
+    is_array($inFlightChallenge) && array_key_exists('credentialGeneration', $inFlightChallenge),
+    'assertion challenge was not bound to the credential generation'
+);
+
 $credentialRecord = $credentialVault['__AUTH__']['device_race'];
 $generationBeforeDelete = (int)$module->testGetBuffer('PortalCredentialGenerationV2');
 $module->testSetBuffer('CurrentPath', '__AUTH__');
@@ -483,6 +518,10 @@ stateCheck(
     'credential restoration test did not restore the identical credential binding'
 );
 stateCheck(
+    !invokePrivate($module, 'EnterAuthorizedCeremonyCommit', [$inFlightChallenge]),
+    'credential delete-and-restore left a previously consumed assertion ceremony committable'
+);
+stateCheck(
     invokePrivate($module, 'GetPortalSessionContext', [true, ['portal'], ['passkey']]) === null,
     'restoring an identical deleted credential revived its old passkey session'
 );
@@ -490,6 +529,38 @@ $remainingSessions = json_decode($module->testGetBuffer('PortalSessionsV2'), tru
 stateCheck(
     is_array($remainingSessions) && !array_key_exists((string)$session['tokenHash'], $remainingSessions),
     'stale passkey session was not removed after explorer credential deletion'
+);
+
+$legacyRecord = [
+    'credentialId'   => base64_encode('legacy-credential'),
+    'attestation'    => base64_encode('legacy-attestation'),
+    'RegisteredHost' => 'primary.example.com'
+];
+$legacyVault = invokePrivate($module, '_decryptVault');
+stateCheck(is_array($legacyVault), 'could not read vault for legacy credential generation test');
+$legacyVault['__AUTH__']['device_legacy'] = $legacyRecord;
+stateCheck(invokePrivate($module, '_encryptAndSave', [$legacyVault]), 'could not add legacy credential generation test record');
+$legacySid = invokePrivate($module, 'StorePortalChallenge', ['migration', [
+    'challenge'            => SecretsPortalSecurity::base64UrlEncode('legacy-in-flight'),
+    'rpId'                 => 'primary.example.com',
+    'origin'               => 'https://primary.example.com',
+    'allowedCredentialIds' => [SecretsPortalSecurity::base64UrlEncode('legacy-credential')]
+]]);
+stateCheck(is_string($legacySid), 'could not create legacy credential generation challenge');
+$legacyChallenge = invokePrivate($module, 'ConsumePortalChallenge', [$legacySid, 'migration']);
+stateCheck(is_array($legacyChallenge), 'could not consume legacy credential generation challenge');
+$legacyGenerationBeforeDelete = (int)$module->testGetBuffer('PortalCredentialGenerationV2');
+unset($legacyVault['__AUTH__']['device_legacy']);
+stateCheck(invokePrivate($module, '_encryptAndSave', [$legacyVault]), 'could not delete legacy credential generation test record');
+$legacyVault['__AUTH__']['device_legacy'] = $legacyRecord;
+stateCheck(invokePrivate($module, '_encryptAndSave', [$legacyVault]), 'could not restore legacy credential generation test record');
+stateCheck(
+    (int)$module->testGetBuffer('PortalCredentialGenerationV2') >= $legacyGenerationBeforeDelete + 2,
+    'legacy credential delete-and-restore did not advance the credential generation'
+);
+stateCheck(
+    !invokePrivate($module, 'EnterAuthorizedCeremonyCommit', [$legacyChallenge]),
+    'legacy credential delete-and-restore left a consumed migration ceremony committable'
 );
 
 $allowed = 0;

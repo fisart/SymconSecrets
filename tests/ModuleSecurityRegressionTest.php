@@ -49,6 +49,7 @@ $required = [
     'GetPortalCredentialStateHash(',
     "'credentialBinding'",
     "'credentialGeneration'",
+    "\$data['credentialGeneration'] = \$this->GetPortalCredentialGeneration()",
     'GetPortalAuthorizationGeneration(',
     "PORTAL_CREDENTIAL_GENERATION_BUFFER = 'PortalCredentialGenerationV2'",
     "PORTAL_REVOCATION_PENDING_BUFFER = 'PortalRevocationPendingV2'",
@@ -64,6 +65,15 @@ foreach ($required as $needle) {
     if (!str_contains($module, $needle)) {
         throw new RuntimeException('Required security control missing: ' . $needle);
     }
+}
+
+foreach (['is_string($formAction)', 'is_string($submittedPassword)'] as $needle) {
+    if (!str_contains($module, $needle)) {
+        throw new RuntimeException('Malformed form input is cast before validation: ' . $needle);
+    }
+}
+if (substr_count($module, "['credentialGeneration'] ?? -1") < 6) {
+    throw new RuntimeException('Credential generation is not checked at every ceremony/session commit boundary');
 }
 
 $forbidden = [

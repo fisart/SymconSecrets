@@ -94,7 +94,7 @@ Die Passkey-Funktion ermöglicht es Ihnen, den Zugriff auf den Tresor oder eigen
 - **Sichere Sitzung:** Nach erfolgreicher Prüfung wird ein zufälliges `Secure`-/`HttpOnly`-/`SameSite=Strict`-Cookie ausgegeben. Im RAM wird nur dessen SHA-256-Hash gespeichert.
 - **Getrennte Berechtigungen:** Eine Passkey-Sitzung erlaubt nur den Portalzugriff. Migration und Administration erfordern das Admin-Passwort.
 - **Sicherer Widerruf:** Ein laufender Widerruf blockiert neue Portal-Sitzungen und Passkey-Änderungen, ohne den normalen Zugriff auf gespeicherte Secrets zu unterbrechen. Passwort-Anmeldungen und Sitzungsprüfungen sind an dieselbe Widerrufs-Generation gebunden.
-- **An den Passkey gebundene Sitzung:** Eine Passkey-Sitzung wird bei jedem Zugriff gegen den unveränderten lokalen Credential-Datensatz und eine nur aufwärts zählende Credential-Generation geprüft. Löschen oder Ändern über Explorer, Import oder Geräteverwaltung beendet damit bestehende Sitzungen; auch das Wiederherstellen desselben Datensatzes belebt sie nicht wieder. Ist der Tresor kurzzeitig belegt, wird nur der aktuelle Zugriff abgewiesen und die Sitzung bleibt für einen späteren Versuch erhalten.
+- **An den Passkey gebundene Sitzung und Anmeldung:** Sitzungen und bereits gestartete WebAuthn-Vorgänge werden gegen eine nur aufwärts zählende Credential-Generation geprüft. Löschen oder Ändern über Explorer, Import oder Geräteverwaltung beendet bestehende Sitzungen und laufende Anmeldungen; auch das Wiederherstellen desselben Datensatzes belebt sie nicht wieder. Dies gilt ebenfalls für noch nicht migrierte Passkeys. Ist der Tresor kurzzeitig belegt, wird nur der aktuelle Zugriff abgewiesen und die Sitzung bleibt für einen späteren Versuch erhalten.
 
 ### 7.2 Einrichtung (Registrierung)
 
@@ -275,7 +275,7 @@ Protect access to your vault or custom WebHook scripts using biometrics (fingerp
 - **Immediate revocation:** Disabling the portal or revoking sessions also invalidates pending login, migration, and registration challenges.
 - **Runtime availability:** A pending portal revocation blocks portal sessions and credential changes while ordinary vault reads remain available.
 - **Generation-bound password authorization:** Password login and session validation cannot cross a concurrent completed or pending revocation.
-- **Live credential binding:** Every passkey session is checked against the unchanged local credential record and a monotonic credential generation. Deletion or modification through the explorer, import, or device management invalidates existing sessions, and restoring the same record cannot revive them. Temporary vault contention denies only the current request and preserves the session for a later retry.
+- **Live credential binding:** Passkey sessions and ceremonies already in progress are checked against a monotonic credential generation. Deletion or modification through the explorer, import, or device management invalidates existing sessions and pending ceremonies, and restoring the same record cannot revive them. This also covers legacy credentials awaiting migration. Temporary vault contention denies only the current request and preserves the session for a later retry.
 
 ### 7.2 Setup (Registration)
 
