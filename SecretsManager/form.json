@@ -69,6 +69,11 @@
           "maximum": 1440
         },
         {
+          "type": "CheckBox",
+          "name": "PortalDebugEnabled",
+          "caption": "Enable sanitized portal diagnostics (temporary troubleshooting only)"
+        },
+        {
           "type": "Label",
           "caption": "After upgrading, use verified migration in the admin dashboard. Existing passkeys are upgraded without creating new credentials."
         }
