@@ -188,13 +188,30 @@ if ($migrationStart === false || $migrationEnd === false || $migrationEnd <= $mi
     throw new RuntimeException('Could not isolate VerifyLegacyMigration');
 }
 $migration = substr($module, $migrationStart, $migrationEnd - $migrationStart);
-foreach (['$migrated[\'credentialIdV2\']', '$vaultData[self::LOCAL_AUTH_KEY][$deviceKey] = $migrated'] as $needle) {
+foreach ([
+    '$migrated[\'credentialIdV2\']',
+    '$vaultData[self::LOCAL_AUTH_KEY][$deviceKey] = $migrated',
+    "EnterAuthorizedCeremonyCommit(\$buffer, 'migrate')"
+] as $needle) {
     if (!str_contains($migration, $needle)) {
         throw new RuntimeException('Rollback-compatible migration control missing: ' . $needle);
     }
 }
 if (str_contains($migration, "'credentialId' => \$credentialId")) {
     throw new RuntimeException('Migration overwrites the legacy rollback credential ID');
+}
+if (str_contains($migration, 'IsPortalSessionValid(')) {
+    throw new RuntimeException('Migration POST incorrectly depends on the browser resending the admin cookie');
+}
+
+$migrationRouteStart = strpos($module, '        if ($isMigrate) {');
+$migrationRouteEnd = strpos($module, '        if ($isPortal) {', $migrationRouteStart === false ? 0 : $migrationRouteStart);
+if ($migrationRouteStart === false || $migrationRouteEnd === false || $migrationRouteEnd <= $migrationRouteStart) {
+    throw new RuntimeException('Could not isolate migration route');
+}
+$migrationRoute = substr($module, $migrationRouteStart, $migrationRouteEnd - $migrationRouteStart);
+if (str_contains($migrationRoute, 'IsPortalSessionValid(')) {
+    throw new RuntimeException('Migration route performs a redundant cookie check before challenge authorization');
 }
 
 $debugStart = strpos($module, 'private function RecordPortalDebug(');
