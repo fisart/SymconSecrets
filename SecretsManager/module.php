@@ -5,7 +5,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/libs/PortalSecurity.php';
 require_once __DIR__ . '/libs/WebAuthn/src/WebAuthn.php';
 
-// Version 5.4.0
+// Version 5.4.1
 class SecretsManager extends IPSModuleStrict
 {
 
@@ -63,6 +63,7 @@ class SecretsManager extends IPSModuleStrict
         $this->RegisterPropertyString("PortalOrigin", "");
         $this->RegisterPropertyString("PortalBackupOrigin", "");
         $this->RegisterPropertyInteger("PortalSessionLifetimeMinutes", 60);
+        $this->RegisterPropertyBoolean("PortalDebugEnabled", false);
 
         // IMPORTANT: AuthToken / HookPass werden NICHT mehr als Property gespeichert
 
@@ -76,6 +77,7 @@ class SecretsManager extends IPSModuleStrict
         $this->RegisterPropertyString("SlaveURLs", "[]");
 
         $this->RegisterVariableString("Vault", "Encrypted Vault");
+        $this->RegisterVariableString("PortalDebugMessage", "Portal debug (last event)");
     }
 
 
@@ -526,6 +528,15 @@ class SecretsManager extends IPSModuleStrict
         $vaultID = @$this->GetIDForIdent("Vault");
         if ($vaultID) {
             IPS_SetHidden($vaultID, true);
+        }
+
+        $portalDebugID = @$this->GetIDForIdent("PortalDebugMessage");
+        $portalDebugEnabled = $this->ReadPropertyBoolean('PortalDebugEnabled');
+        if ($portalDebugID) {
+            IPS_SetHidden($portalDebugID, !$portalDebugEnabled);
+            if (!$portalDebugEnabled) {
+                $this->SetValue('PortalDebugMessage', '');
+            }
         }
 
         // 2. Aktuelle Rolle prüfen
@@ -2599,6 +2610,7 @@ class SecretsManager extends IPSModuleStrict
 
         if ($isMigrate) {
             if (!$this->IsPortalSessionValid(false, ['migrate'], ['admin-password'])) {
+                $this->RecordPortalDebug('migration-admin-authentication-required');
                 $this->SendPortalError(403, 'Admin authentication is required before legacy passkeys can be migrated.');
                 return;
             }
@@ -2607,7 +2619,13 @@ class SecretsManager extends IPSModuleStrict
                 return;
             }
             if ($method === 'POST' && $this->IsJsonRequest()) {
-                $this->VerifyLegacyMigration();
+                try {
+                    $this->VerifyLegacyMigration();
+                } catch (Throwable $e) {
+                    $this->RecordPortalDebug('migration-unhandled-exception', $e);
+                    $this->LogMessage('Unhandled WebAuthn migration exception. See the temporary diagnostic variable.', KL_ERROR);
+                    $this->SendPortalJson(500, ['ok' => false, 'error' => 'Migration failed. Review the module diagnostic variable.']);
+                }
                 return;
             }
             $this->SendMethodNotAllowed(['GET', 'POST']);
@@ -2833,19 +2851,24 @@ class SecretsManager extends IPSModuleStrict
     private function VerifyLegacyMigration(): void
     {
         if (!$this->IsPortalSessionValid(false, ['migrate'], ['admin-password'])) {
+            $this->RecordPortalDebug('migration-admin-authentication-required');
             $this->SendPortalJson(403, ['ok' => false, 'error' => 'Admin authentication is required.']);
             return;
         }
+        $this->RecordPortalDebug('migration-request-received');
         if (!$this->RequirePortalReady(false)) {
+            $this->RecordPortalDebug('migration-portal-not-ready');
             return;
         }
         if (!$this->CheckPortalRateLimit('migration', true)) {
+            $this->RecordPortalDebug('migration-rate-limited');
             $this->SendPortalJson(429, ['ok' => false, 'error' => 'Too many attempts. Please try again later.']);
             return;
         }
 
         $requestBody = $this->ReadRequestBody(self::PORTAL_JSON_MAX_REQUEST_BYTES);
         if (!is_string($requestBody)) {
+            $this->RecordPortalDebug('migration-request-body-invalid');
             $this->SendPortalJson(413, ['ok' => false, 'error' => 'Request payload too large.']);
             return;
         }
@@ -2917,7 +2940,7 @@ class SecretsManager extends IPSModuleStrict
                 throw new RuntimeException('Credential backup flags are inconsistent.');
             }
         } catch (Throwable $e) {
-            $this->RejectPortalRequest('migration-cryptographic-verification');
+            $this->RejectPortalRequest('migration-cryptographic-verification', $e);
             return;
         }
 
@@ -2928,6 +2951,7 @@ class SecretsManager extends IPSModuleStrict
         }
         if (!$this->EnterVaultLock()) {
             $this->LeavePortalStateLock();
+            $this->RecordPortalDebug('migration-vault-busy');
             $this->SendPortalJson(503, ['ok' => false, 'error' => 'The vault is busy. Please try again.']);
             return;
         }
@@ -2973,6 +2997,7 @@ class SecretsManager extends IPSModuleStrict
             $vaultData[self::LOCAL_AUTH_KEY][$deviceKey] = $migrated;
 
             if (!$this->_encryptAndSave($vaultData, $vaultRevision, true)) {
+                $this->RecordPortalDebug('migration-vault-save-failed');
                 $this->SendPortalJson(500, ['ok' => false, 'error' => 'The verified migrated credential could not be saved.']);
                 return;
             }
@@ -2983,6 +3008,7 @@ class SecretsManager extends IPSModuleStrict
 
         $this->ResetPortalRateLimit('migration');
         $this->LogMessage('Legacy WebAuthn credential upgraded after live signature verification. DeviceKey=' . $deviceKey, KL_MESSAGE);
+        $this->RecordPortalDebug('migration-success');
         $this->SendPortalJson(200, ['ok' => true]);
     }
 
@@ -4454,10 +4480,31 @@ class SecretsManager extends IPSModuleStrict
         $this->SendPortalError(405, 'Method not allowed.');
     }
 
-    private function RejectPortalRequest(string $reason): void
+    private function RejectPortalRequest(string $reason, ?Throwable $exception = null): void
     {
+        $this->RecordPortalDebug($reason, $exception);
         $this->LogPortalFailure($reason);
         $this->SendPortalJson(401, ['ok' => false, 'error' => 'Authentication failed. Reload the page and try again.']);
+    }
+
+    private function RecordPortalDebug(string $event, ?Throwable $exception = null): void
+    {
+        if (!$this->ReadPropertyBoolean('PortalDebugEnabled')) {
+            return;
+        }
+
+        $event = preg_replace('/[^A-Za-z0-9_.:-]+/', '-', $event) ?? 'invalid-event';
+        $message = gmdate('Y-m-d\\TH:i:s\\Z') . ' event=' . substr($event, 0, 128);
+        if ($exception !== null) {
+            // Store only bounded, sanitized exception metadata. Do not copy
+            // any request or authentication payload into the object tree.
+            $exceptionMessage = preg_replace('/[\\x00-\\x1F\\x7F]+/', ' ', $exception->getMessage()) ?? '';
+            $message .= ' exception=' . get_class($exception)
+                . ' location=' . basename($exception->getFile()) . ':' . $exception->getLine()
+                . ' message=' . substr($exceptionMessage, 0, 768);
+        }
+
+        $this->SetValue('PortalDebugMessage', $message);
     }
 
     private function LogPortalFailure(string $reason): void
