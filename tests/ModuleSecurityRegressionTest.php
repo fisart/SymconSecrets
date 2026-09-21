@@ -18,6 +18,9 @@ $required = [
     "'webauthn.create'",
     'SecretsPortalSecurity::validateClientData',
     "RegisterPropertyString(\"PortalBackupOrigin\", \"\")",
+    "RegisterPropertyBoolean(\"PortalDebugEnabled\", false)",
+    "RegisterVariableString(\"PortalDebugMessage\", \"Portal debug (last event)\")",
+    "RecordPortalDebug('migration-unhandled-exception', \$e)",
     'SecretsPortalSecurity::normalizeRpProfile',
     'SecretsPortalSecurity::selectRpProfile',
     'ChallengeMatchesCurrentPortalProfile(',
@@ -192,6 +195,23 @@ foreach (['$migrated[\'credentialIdV2\']', '$vaultData[self::LOCAL_AUTH_KEY][$de
 }
 if (str_contains($migration, "'credentialId' => \$credentialId")) {
     throw new RuntimeException('Migration overwrites the legacy rollback credential ID');
+}
+
+$debugStart = strpos($module, 'private function RecordPortalDebug(');
+$debugEnd = strpos($module, 'private function LogPortalFailure(', $debugStart === false ? 0 : $debugStart);
+if ($debugStart === false || $debugEnd === false || $debugEnd <= $debugStart) {
+    throw new RuntimeException('Could not isolate sanitized portal diagnostics');
+}
+$debug = substr($module, $debugStart, $debugEnd - $debugStart);
+foreach (['PortalDebugEnabled', 'get_class($exception)', 'basename($exception->getFile())', 'substr($exceptionMessage, 0, 768)'] as $needle) {
+    if (!str_contains($debug, $needle)) {
+        throw new RuntimeException('Portal diagnostics control missing: ' . $needle);
+    }
+}
+foreach (['clientDataJSON', 'authenticatorData', 'credentialPublicKey', 'HTTP_COOKIE', 'getTrace'] as $needle) {
+    if (str_contains($debug, $needle)) {
+        throw new RuntimeException('Sensitive data source present in portal diagnostics: ' . $needle);
+    }
 }
 
 echo "ModuleSecurityRegressionTest: OK\n";
