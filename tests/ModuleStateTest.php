@@ -12,10 +12,18 @@ if (!defined('KL_MESSAGE')) {
 
 function IPS_SemaphoreEnter(string $name, int $milliseconds): bool
 {
+    if (str_contains($name, '.Portal.') && ($GLOBALS['portalSemaphoreFailures'] ?? 0) > 0) {
+        $GLOBALS['portalSemaphoreFailures']--;
+        return false;
+    }
     return true;
 }
 
 function IPS_SemaphoreLeave(string $name): void
+{
+}
+
+function IPS_SetHidden(int $id, bool $hidden): void
 {
 }
 
@@ -29,9 +37,18 @@ class IPSModuleStrict
     /** @var array<string, bool|int|string> */
     private array $properties = [];
 
+    /** @var array<string, string> */
+    private array $values = ['Vault' => ''];
+
+    private int $status = 104;
+
     public function __construct(int $instanceId = 1234)
     {
         $this->InstanceID = $instanceId;
+    }
+
+    public function ApplyChanges(): void
+    {
     }
 
     protected function GetBuffer(string $name): string
@@ -63,9 +80,63 @@ class IPSModuleStrict
     {
     }
 
+    protected function GetValue(string $ident): string
+    {
+        return $this->values[$ident] ?? '';
+    }
+
+    protected function SetValue(string $ident, string $value): void
+    {
+        $this->values[$ident] = $value;
+    }
+
+    protected function GetStatus(): int
+    {
+        return $this->status;
+    }
+
+    protected function SetStatus(int $status): void
+    {
+        $this->status = $status;
+    }
+
+    protected function GetIDForIdent(string $ident): int
+    {
+        return 0;
+    }
+
+    protected function RegisterHook(string $ident): void
+    {
+    }
+
+    protected function UpdateFormField(string $name, string $property, $value): void
+    {
+    }
+
     public function testGetBuffer(string $name): string
     {
         return $this->buffers[$name] ?? '';
+    }
+
+    /** @param bool|int|string $value */
+    public function testSetProperty(string $name, $value): void
+    {
+        $this->properties[$name] = $value;
+    }
+
+    public function testSetBuffer(string $name, string $value): void
+    {
+        $this->buffers[$name] = $value;
+    }
+
+    public function testGetValue(string $ident): string
+    {
+        return $this->values[$ident] ?? '';
+    }
+
+    public function testGetStatus(): int
+    {
+        return $this->status;
     }
 }
 
@@ -92,8 +163,16 @@ function invokePrivate(object $object, string $method, array $arguments = [])
 $_SERVER['HTTP_USER_AGENT'] = 'SymconSecrets security test';
 $_SERVER['HTTP_HOST'] = 'primary.example.com';
 $_SERVER['REMOTE_ADDR'] = '192.0.2.1';
+$GLOBALS['portalSemaphoreFailures'] = 0;
 
 $module = new SecretsManager(77);
+$temporaryKeyFolder = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'symcon-secrets-test-' . bin2hex(random_bytes(8));
+stateCheck(mkdir($temporaryKeyFolder, 0700), 'could not create temporary key folder');
+$module->testSetProperty('KeyFolderPath', $temporaryKeyFolder);
+$module->testSetProperty('OperationMode', 2);
+$module->testSetProperty('PortalSessionLifetimeMinutes', 60);
+$module->testSetProperty('PortalOrigin', 'https://primary.example.com');
+$module->testSetProperty('PortalBackupOrigin', 'https://backup.example.net');
 
 $sid = invokePrivate($module, 'StorePortalChallenge', ['assertion', ['origin' => 'https://primary.example.com']]);
 stateCheck(is_string($sid) && $sid !== '', 'challenge was not stored');
@@ -107,6 +186,24 @@ ob_start();
 $module->RevokePortalSessions();
 ob_end_clean();
 stateCheck(invokePrivate($module, 'ConsumePortalChallenge', [$sid, 'registration']) === null, 'revocation left a registration challenge usable');
+
+$migrationSid = invokePrivate($module, 'StorePortalChallenge', ['migration', ['origin' => 'https://primary.example.com']]);
+$backupSid = invokePrivate($module, 'StorePortalChallenge', ['assertion', ['origin' => 'https://backup.example.net']]);
+stateCheck(is_string($migrationSid) && is_string($backupSid), 'protected challenge buckets could not be created');
+for ($i = 0; $i < 80; $i++) {
+    stateCheck(
+        is_string(invokePrivate($module, 'StorePortalChallenge', ['assertion', ['origin' => 'https://primary.example.com']])),
+        'primary assertion challenge bucket rejected bounded replacement'
+    );
+}
+stateCheck(
+    is_array(invokePrivate($module, 'ConsumePortalChallenge', [$migrationSid, 'migration'])),
+    'public assertion traffic evicted a privileged migration challenge'
+);
+stateCheck(
+    is_array(invokePrivate($module, 'ConsumePortalChallenge', [$backupSid, 'assertion'])),
+    'primary-origin assertion traffic evicted the backup-origin challenge'
+);
 
 $now = time();
 $commonSession = [
@@ -159,6 +256,74 @@ stateCheck(
 );
 stateCheck($normalized['backupEligibilityVerified'] === false, 'pre-hardening backup eligibility was incorrectly trusted');
 
+$module->testSetProperty('PortalEnabled', false);
+$module->testSetBuffer('PortalEnabledLastV2', '1');
+$generationBeforePendingRevocation = (int)$module->testGetBuffer('PortalRevocationGenerationV2');
+$GLOBALS['portalSemaphoreFailures'] = 1;
+$module->ApplyChanges();
+stateCheck($module->testGetBuffer('PortalRevocationPendingV2') === '1', 'failed disable revocation was not persisted');
+
+$module->testSetProperty('PortalEnabled', true);
+$GLOBALS['portalSemaphoreFailures'] = 1;
+$module->ApplyChanges();
+stateCheck($module->testGetBuffer('PortalRevocationPendingV2') === '1', 'portal reopened while revocation remained pending');
+stateCheck($module->testGetStatus() === 202, 'pending revocation did not place the instance in error state');
+
+$module->ApplyChanges();
+stateCheck($module->testGetBuffer('PortalRevocationPendingV2') === '0', 'pending revocation was not retried');
+stateCheck(
+    (int)$module->testGetBuffer('PortalRevocationGenerationV2') === $generationBeforePendingRevocation + 1,
+    'retried revocation did not advance the session generation'
+);
+
+$initialVault = ['record' => ['value' => 'initial']];
+stateCheck(invokePrivate($module, '_encryptAndSave', [$initialVault]), 'could not create test vault');
+$vaultRevision = null;
+$revisionArguments = [&$vaultRevision];
+$staleSnapshot = invokePrivate($module, '_decryptVaultWithRevision', $revisionArguments);
+stateCheck(is_array($staleSnapshot) && is_string($vaultRevision), 'could not obtain vault snapshot and separate revision');
+stateCheck(!array_key_exists('__SEC_INTERNAL_REVISION__', $staleSnapshot), 'vault revision leaked into editable vault data');
+
+$replacementVault = ['record' => ['value' => 'replacement']];
+stateCheck(invokePrivate($module, '_encryptAndSave', [$replacementVault]), 'could not write concurrent replacement vault');
+$staleSnapshot['record']['value'] = 'stale';
+stateCheck(
+    !invokePrivate($module, '_encryptAndSave', [$staleSnapshot, $vaultRevision]),
+    'stale vault snapshot overwrote a concurrent change'
+);
+$currentVault = invokePrivate($module, '_decryptVault');
+stateCheck(is_array($currentVault) && ($currentVault['record']['value'] ?? '') === 'replacement', 'stale-save rejection changed the vault');
+
+$vaultBeforeOversize = $module->testGetValue('Vault');
+$oversizedVault = ['blob' => str_repeat('x', 13 * 1024 * 1024)];
+stateCheck(!invokePrivate($module, '_encryptAndSave', [$oversizedVault]), 'oversized encrypted vault was accepted');
+stateCheck($module->testGetValue('Vault') === $vaultBeforeOversize, 'oversized save damaged the prior vault');
+unset($oversizedVault);
+
+$credentialId = "race-credential";
+$credentialVault = [
+    '__AUTH__' => [
+        'device_race' => [
+            'credentialId' => base64_encode($credentialId)
+        ]
+    ]
+];
+stateCheck(invokePrivate($module, '_encryptAndSave', [$credentialVault]), 'could not create credential deletion test vault');
+$session = invokePrivate($module, 'CreatePortalSessionStateLocked', [
+    'passkey',
+    ['portal'],
+    'https://primary.example.com',
+    'device_race',
+    (int)$module->testGetBuffer('PortalRevocationGenerationV2')
+]);
+stateCheck(is_array($session), 'could not create credential-bound session');
+stateCheck(invokePrivate($module, 'DeleteLocalPasskey', ['device_race']), 'credential deletion failed');
+$remainingSessions = json_decode($module->testGetBuffer('PortalSessionsV2'), true);
+stateCheck(
+    is_array($remainingSessions) && !array_key_exists((string)$session['tokenHash'], $remainingSessions),
+    'credential deletion left its authenticated session active'
+);
+
 $allowed = 0;
 for ($i = 0; $i < 180; $i++) {
     $_SERVER['REMOTE_ADDR'] = '198.51.100.' . $i;
@@ -170,5 +335,7 @@ stateCheck($allowed === 100, 'global rate limit did not stop at the configured m
 $rateState = json_decode($module->testGetBuffer('PortalRateLimitsV2'), true);
 stateCheck(is_array($rateState) && count($rateState) <= 256, 'rate-limit state exceeded its hard capacity');
 
-echo "ModuleStateTest: OK\n";
+@unlink($temporaryKeyFolder . DIRECTORY_SEPARATOR . 'master.key');
+@rmdir($temporaryKeyFolder);
 
+echo "ModuleStateTest: OK\n";

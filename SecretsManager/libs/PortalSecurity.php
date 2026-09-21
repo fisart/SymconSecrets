@@ -248,4 +248,35 @@ final class SecretsPortalSecurity
         $data = json_decode($input, true);
         return is_array($data) ? $data : null;
     }
+
+    /**
+     * Read at most maxBytes from a request-like stream. Reading one extra byte
+     * distinguishes an exactly-full valid request from an oversized request.
+     *
+     * @param resource $stream
+     */
+    public static function readStreamLimited($stream, int $maxBytes): ?string
+    {
+        if (!is_resource($stream) || $maxBytes < 1) {
+            return null;
+        }
+
+        $input = stream_get_contents($stream, $maxBytes + 1);
+        if (!is_string($input) || strlen($input) > $maxBytes) {
+            return null;
+        }
+        return $input;
+    }
+
+    /**
+     * WebAuthn requires BS to imply BE. Once BE has been observed for a
+     * credential, it is immutable and must match later assertions.
+     */
+    public static function validateBackupFlags(bool $backupEligible, bool $backedUp, ?bool $expectedBackupEligible = null): bool
+    {
+        if (!$backupEligible && $backedUp) {
+            return false;
+        }
+        return $expectedBackupEligible === null || $backupEligible === $expectedBackupEligible;
+    }
 }

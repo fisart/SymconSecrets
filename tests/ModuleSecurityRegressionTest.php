@@ -22,7 +22,9 @@ $required = [
     'SecretsPortalSecurity::selectRpProfile',
     'ChallengeMatchesCurrentPortalProfile(',
     "PORTAL_CHALLENGE_BUFFER = 'PortalChallengesV2'",
-    'PORTAL_CHALLENGE_MAX_ENTRIES = 100',
+    'PORTAL_CHALLENGE_MAX_ENTRIES = 192',
+    'PORTAL_ASSERTION_CHALLENGES_PER_ORIGIN = 64',
+    'PORTAL_PRIVILEGED_CHALLENGES_PER_ORIGIN = 16',
     'StorePortalChallenge(',
     'ConsumePortalChallenge(',
     'GetMigratableLegacyCredentials',
@@ -38,9 +40,15 @@ $required = [
     "['portal']",
     "['admin-password']",
     'backupEligibilityVerified',
+    'SecretsPortalSecurity::validateBackupFlags',
     'NormalizeCredentialRecordsForRollback(',
-    'VAULT_REVISION_KEY',
-    'SYNC_MAX_REQUEST_BYTES'
+    '_decryptVaultWithRevision(',
+    'CreatePortalSessionStateLocked(',
+    "PORTAL_REVOCATION_PENDING_BUFFER = 'PortalRevocationPendingV2'",
+    'ReadRequestBody(',
+    'SYNC_MAX_REQUEST_BYTES',
+    'PORTAL_JSON_MAX_REQUEST_BYTES',
+    'VAULT_MAX_BYTES'
 ];
 foreach ($required as $needle) {
     if (!str_contains($module, $needle)) {
@@ -57,7 +65,8 @@ $forbidden = [
     'addslashes($returnUrl)',
     "'PortalAuthChallengeV2_' . \$sid",
     "'PortalRegistrationChallengeV2_' . \$sid",
-    "'PortalMigrationChallengeV2_' . \$sid"
+    "'PortalMigrationChallengeV2_' . \$sid",
+    'VAULT_REVISION_KEY'
 ];
 foreach ($forbidden as $needle) {
     if (str_contains($module, $needle)) {
@@ -75,6 +84,12 @@ foreach (['authenticatorData', 'signature', 'credentialPublicKey', 'processGet('
     if (!str_contains($verify, $needle)) {
         throw new RuntimeException('Assertion verifier does not use ' . $needle);
     }
+}
+
+$sessionInsert = strpos($verify, 'CreatePortalSessionStateLocked(');
+$portalUnlock = strpos($verify, '$this->LeavePortalStateLock();', $sessionInsert === false ? 0 : $sessionInsert);
+if ($sessionInsert === false || $portalUnlock === false || $portalUnlock <= $sessionInsert) {
+    throw new RuntimeException('Passkey session is not committed while the portal-state lock is held');
 }
 
 $migrationStart = strpos($module, 'private function VerifyLegacyMigration(): void');

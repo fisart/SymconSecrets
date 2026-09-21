@@ -108,29 +108,41 @@ try {
 }
 expect($rejected, 'wrong origin was accepted');
 
-$rejected = false;
-try {
-    // BS without BE is forbidden by WebAuthn. The module performs this
-    // application-level invariant check after cryptographic verification.
-    $invalidBackupData = hash('sha256', $rpId, true) . chr(0x15) . pack('N', 2);
-    $invalidBackupSignature = '';
-    expect(
-        openssl_sign(
-            $invalidBackupData . hash('sha256', (string)$clientDataJson, true),
-            $invalidBackupSignature,
-            $privateKey,
-            OPENSSL_ALGO_SHA256
-        ),
-        'could not sign invalid-backup assertion'
-    );
-    $parsed = new \lbuchs\WebAuthn\Attestation\AuthenticatorData($invalidBackupData);
-    if (!$parsed->getIsBackupEligible() && $parsed->getIsBackup()) {
-        throw new RuntimeException('invalid backup flags');
-    }
-} catch (Throwable $e) {
-    $rejected = true;
-}
-expect($rejected, 'BS without BE was accepted');
+// BS without BE is forbidden by WebAuthn. The cryptographic library accepts
+// the correctly signed assertion, then the module's production helper must
+// reject the invalid flag relationship.
+$invalidBackupData = hash('sha256', $rpId, true) . chr(0x15) . pack('N', 2);
+$invalidBackupSignature = '';
+expect(
+    openssl_sign(
+        $invalidBackupData . hash('sha256', (string)$clientDataJson, true),
+        $invalidBackupSignature,
+        $privateKey,
+        OPENSSL_ALGO_SHA256
+    ),
+    'could not sign invalid-backup assertion'
+);
+expect(
+    (new WebAuthn('Symcon Vault', $rpId, ['none'], true))->processGet(
+        (string)$clientDataJson,
+        $invalidBackupData,
+        $invalidBackupSignature,
+        $publicKey,
+        $challenge,
+        0,
+        true,
+        true
+    ),
+    'cryptographically valid backup-flag test assertion was rejected too early'
+);
+$parsedBackupData = new \lbuchs\WebAuthn\Attestation\AuthenticatorData($invalidBackupData);
+expect(
+    !SecretsPortalSecurity::validateBackupFlags(
+        (bool)$parsedBackupData->getIsBackupEligible(),
+        (bool)$parsedBackupData->getIsBackup()
+    ),
+    'BS without BE was accepted by the module backup-flag validator'
+);
 
 $rejected = false;
 try {

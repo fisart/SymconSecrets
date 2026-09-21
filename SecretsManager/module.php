@@ -22,10 +22,13 @@ class SecretsManager extends IPSModuleStrict
     private const PORTAL_RATE_MAX_GLOBAL = 100;
     private const PORTAL_RATE_MAX_ENTRIES = 256;
     private const PORTAL_CHALLENGE_BUFFER = 'PortalChallengesV2';
-    private const PORTAL_CHALLENGE_MAX_ENTRIES = 100;
+    private const PORTAL_CHALLENGE_MAX_ENTRIES = 192;
+    private const PORTAL_ASSERTION_CHALLENGES_PER_ORIGIN = 64;
+    private const PORTAL_PRIVILEGED_CHALLENGES_PER_ORIGIN = 16;
     private const PORTAL_SESSION_BUFFER = 'PortalSessionsV2';
     private const PORTAL_RATE_BUFFER = 'PortalRateLimitsV2';
     private const PORTAL_REVOCATION_BUFFER = 'PortalRevocationGenerationV2';
+    private const PORTAL_REVOCATION_PENDING_BUFFER = 'PortalRevocationPendingV2';
     private const PORTAL_ENABLED_BUFFER = 'PortalEnabledLastV2';
     private const PORTAL_COOKIE_PREFIX = 'SEC_PORTAL_V2_';
     private const PORTAL_SESSION_MAX_ENTRIES = 50;
@@ -33,8 +36,8 @@ class SecretsManager extends IPSModuleStrict
     // Keep sync bounded without rejecting vaults that were valid before this
     // hardening release. The encrypted vault itself remains capped at 16 MiB.
     private const SYNC_MAX_REQUEST_BYTES = 18874368;
+    private const PORTAL_JSON_MAX_REQUEST_BYTES = 131072;
     private const VAULT_MAX_BYTES = 16777216;
-    private const VAULT_REVISION_KEY = '__SEC_INTERNAL_REVISION__';
 
     private int $vaultLockDepth = 0;
 
@@ -532,13 +535,18 @@ class SecretsManager extends IPSModuleStrict
 
         $portalEnabled = $this->ReadPropertyBoolean('PortalEnabled');
         $previousPortalEnabled = $this->GetBuffer(self::PORTAL_ENABLED_BUFFER);
-        if ($previousPortalEnabled === '1' && !$portalEnabled && $this->EnterPortalStateLock()) {
-            try {
-                $this->SetBuffer(self::PORTAL_REVOCATION_BUFFER, (string)($this->GetPortalRevocationGenerationUnlocked() + 1));
-                $this->SetBuffer(self::PORTAL_SESSION_BUFFER, '{}');
-                $this->SetBuffer(self::PORTAL_CHALLENGE_BUFFER, '{}');
-            } finally {
-                $this->LeavePortalStateLock();
+        $revocationPending = $this->GetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER) === '1';
+        if ($revocationPending || ($previousPortalEnabled === '1' && !$portalEnabled)) {
+            if ($this->EnterPortalStateLock()) {
+                try {
+                    $this->RevokeAllPortalStateUnlocked();
+                    $revocationPending = false;
+                } finally {
+                    $this->LeavePortalStateLock();
+                }
+            } else {
+                $this->SetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER, '1');
+                $revocationPending = true;
             }
         }
         $this->SetBuffer(self::PORTAL_ENABLED_BUFFER, $portalEnabled ? '1' : '0');
@@ -561,6 +569,11 @@ class SecretsManager extends IPSModuleStrict
         } else {
             $this->SetStatus(102); // IS_ACTIVE
             $this->NormalizeStoredCredentialEncodings();
+        }
+
+        if ($portalEnabled && $revocationPending) {
+            $errorMessage = 'Portal remains blocked because session revocation is pending. Apply the configuration again.';
+            $this->SetStatus(202);
         }
 
         $this->UpdateFormLayout($errorMessage);
@@ -599,6 +612,10 @@ class SecretsManager extends IPSModuleStrict
         $profile = $this->GetCurrentPortalProfile($profileError);
         if ($profile === null) {
             $this->SendPortalError(503, $profileError);
+            return;
+        }
+        if (!$this->CheckPortalRateLimit('challenge-issuance', true, 30, 300)) {
+            $this->SendPortalError(429, 'Too many login page requests. Please try again later.');
             return;
         }
         $credentials = $this->GetVerifiedPortalCredentials($profile['rpId'], $profile['origin']);
@@ -793,13 +810,12 @@ class SecretsManager extends IPSModuleStrict
     public function RevokePortalSessions(): void
     {
         if (!$this->EnterPortalStateLock()) {
+            $this->SetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER, '1');
             echo "❌ Portal security state is busy. Try again.";
             return;
         }
         try {
-            $this->SetBuffer(self::PORTAL_REVOCATION_BUFFER, (string)($this->GetPortalRevocationGenerationUnlocked() + 1));
-            $this->SetBuffer(self::PORTAL_SESSION_BUFFER, '{}');
-            $this->SetBuffer(self::PORTAL_CHALLENGE_BUFFER, '{}');
+            $this->RevokeAllPortalStateUnlocked();
         } finally {
             $this->LeavePortalStateLock();
         }
@@ -822,7 +838,8 @@ class SecretsManager extends IPSModuleStrict
 
         $removed = 0;
         try {
-            $vaultData = $this->_decryptVault(true);
+            $vaultRevision = null;
+            $vaultData = $this->_decryptVaultWithRevision($vaultRevision);
             if (!is_array($vaultData)) {
                 echo "❌ The vault could not be decrypted. No passkeys were changed.";
                 return;
@@ -837,14 +854,12 @@ class SecretsManager extends IPSModuleStrict
             }
             $vaultData[self::LOCAL_AUTH_KEY] = [];
 
-            if (!$this->_encryptAndSave($vaultData)) {
+            if (!$this->_encryptAndSave($vaultData, $vaultRevision)) {
                 echo "❌ Passkeys could not be removed because the encrypted vault save failed.";
                 return;
             }
 
-            $this->SetBuffer(self::PORTAL_REVOCATION_BUFFER, (string)($this->GetPortalRevocationGenerationUnlocked() + 1));
-            $this->SetBuffer(self::PORTAL_SESSION_BUFFER, '{}');
-            $this->SetBuffer(self::PORTAL_CHALLENGE_BUFFER, '{}');
+            $this->RevokeAllPortalStateUnlocked();
             $this->SetBuffer(self::PORTAL_RATE_BUFFER, '{}');
         } finally {
             $this->LeaveVaultLock();
@@ -929,7 +944,8 @@ class SecretsManager extends IPSModuleStrict
             return false;
         }
 
-        $vaultData = $this->_decryptVault(true);
+        $vaultRevision = null;
+        $vaultData = $this->_decryptVaultWithRevision($vaultRevision);
         if ($vaultData === false) {
             if ($this->GetValue("Vault") === "") {
                 $vaultData = [];
@@ -944,7 +960,7 @@ class SecretsManager extends IPSModuleStrict
             return false;
         }
 
-        if (!$this->_encryptAndSave($vaultData)) {
+        if (!$this->_encryptAndSave($vaultData, $vaultRevision)) {
             $this->LogMessage("SetRecordFields aborted: encrypted save failed for path '" . $normalizedPath . "'.", KL_ERROR);
             return false;
         }
@@ -998,7 +1014,8 @@ class SecretsManager extends IPSModuleStrict
             return false;
         }
 
-        $vaultData = $this->_decryptVault(true);
+        $vaultRevision = null;
+        $vaultData = $this->_decryptVaultWithRevision($vaultRevision);
         if ($vaultData === false) {
             if ($this->GetValue("Vault") === "") {
                 $vaultData = [];
@@ -1013,7 +1030,7 @@ class SecretsManager extends IPSModuleStrict
             return false;
         }
 
-        if (!$this->_encryptAndSave($vaultData)) {
+        if (!$this->_encryptAndSave($vaultData, $vaultRevision)) {
             $this->LogMessage("ImportLocalSecrets aborted: encrypted save failed.", KL_ERROR);
             return false;
         }
@@ -1283,7 +1300,8 @@ class SecretsManager extends IPSModuleStrict
             return;
         }
 
-        $vaultData = $this->_decryptVault(true);
+        $vaultRevision = null;
+        $vaultData = $this->_decryptVaultWithRevision($vaultRevision);
         if ($vaultData === false) {
             return;
         }
@@ -1314,7 +1332,7 @@ class SecretsManager extends IPSModuleStrict
             unset($temp[$old]);
 
             // 3. Verschlüsselt speichern
-            if ($this->_encryptAndSave($vaultData)) {
+            if ($this->_encryptAndSave($vaultData, $vaultRevision)) {
                 $this->LogMessage("Explorer: '$old' wurde in '$new' umbenannt.", KL_MESSAGE);
                 echo "✅ Umbenannt in '$new'";
 
@@ -1342,7 +1360,8 @@ class SecretsManager extends IPSModuleStrict
      */
     private function ProcessExplorerDelete(string $name): void
     {
-        $vaultData = $this->_decryptVault(true);
+        $vaultRevision = null;
+        $vaultData = $this->_decryptVaultWithRevision($vaultRevision);
         if ($vaultData === false) {
             return;
         }
@@ -1365,7 +1384,7 @@ class SecretsManager extends IPSModuleStrict
             unset($temp[$name]);
 
             // 3. Verschlüsselt speichern
-            if ($this->_encryptAndSave($vaultData)) {
+            if ($this->_encryptAndSave($vaultData, $vaultRevision)) {
                 $this->LogMessage("Explorer: '" . $name . "' an Position '$currentPath' gelöscht.", KL_MESSAGE);
                 echo "🗑️ '" . $name . "' wurde gelöscht.";
 
@@ -1379,7 +1398,8 @@ class SecretsManager extends IPSModuleStrict
 
     private function ProcessExplorerSave(string $ident, array $fieldList): void
     {
-        $vaultData = $this->_decryptVault(true) ?: [];
+        $vaultRevision = null;
+        $vaultData = $this->_decryptVaultWithRevision($vaultRevision) ?: [];
 
         // Path calculation: Handle empty ident for current level (Hybrid)
         $currentPath = (string)$this->GetBuffer("CurrentPath");
@@ -1410,7 +1430,7 @@ class SecretsManager extends IPSModuleStrict
             $temp[$k] = $v;
         }
 
-        if ($this->_encryptAndSave($vaultData)) {
+        if ($this->_encryptAndSave($vaultData, $vaultRevision)) {
             echo ($ident === "") ? "✅ Ordner-Felder aktualisiert!" : "✅ Eintrag '$ident' aktualisiert!";
             if ($this->ReadPropertyInteger("OperationMode") === 1) $this->SyncSlaves();
         }
@@ -1609,7 +1629,8 @@ class SecretsManager extends IPSModuleStrict
         }
 
         try {
-            $vaultData = $this->_decryptVault(true);
+            $vaultRevision = null;
+            $vaultData = $this->_decryptVaultWithRevision($vaultRevision);
             if ($vaultData === false) {
                 if ($this->GetValue("Vault") === "") {
                     $vaultData = [];
@@ -1650,7 +1671,7 @@ class SecretsManager extends IPSModuleStrict
                 unset($vaultData[self::LOCAL_AUTH_KEY]);
             }
 
-            if (!$this->_encryptAndSave($vaultData)) {
+            if (!$this->_encryptAndSave($vaultData, $vaultRevision)) {
                 $this->LogMessage("DeleteLocalPasskey aborted: encrypted save failed for device key '" . $deviceKey . "'.", KL_ERROR);
                 return false;
             }
@@ -2104,7 +2125,8 @@ class SecretsManager extends IPSModuleStrict
             return;
         }
 
-        $vaultData = $this->_decryptVault(true) ?: [];
+        $vaultRevision = null;
+        $vaultData = $this->_decryptVaultWithRevision($vaultRevision) ?: [];
         $currentPath = (string)$this->GetBuffer("CurrentPath");
 
         // 3. Navigiere zum aktuellen Pfad im Array (Deep Navigation)
@@ -2139,7 +2161,7 @@ class SecretsManager extends IPSModuleStrict
         }
 
         // 6. Alles verschlüsselt speichern und UI aktualisieren
-        if ($this->_encryptAndSave($vaultData)) {
+        if ($this->_encryptAndSave($vaultData, $vaultRevision)) {
             $this->ReloadForm();
             // Falls Master-Rolle, Slaves informieren
             if ($this->ReadPropertyInteger("OperationMode") === 1) {
@@ -2190,7 +2212,8 @@ class SecretsManager extends IPSModuleStrict
     }
     private function HandleExplorerSave(array $inputList): void
     {
-        $vaultData = $this->_decryptVault(true) ?: [];
+        $vaultRevision = null;
+        $vaultData = $this->_decryptVaultWithRevision($vaultRevision) ?: [];
         $selected = $this->GetSelected();
         $fullPath = ($this->GetNavPath() === "") ? $selected : $this->GetNavPath() . "/" . $selected;
 
@@ -2208,7 +2231,7 @@ class SecretsManager extends IPSModuleStrict
         }
         $temp = $newFields;
 
-        if ($this->_encryptAndSave($vaultData)) {
+        if ($this->_encryptAndSave($vaultData, $vaultRevision)) {
             echo "✅ Tresor aktualisiert!";
             if ($this->ReadPropertyInteger("OperationMode") === 1) $this->SyncSlaves();
         }
@@ -2608,8 +2631,8 @@ class SecretsManager extends IPSModuleStrict
         }
 
         // Standard sync logic (Slave only)
-        $input = file_get_contents('php://input');
-        if (!is_string($input) || strlen($input) > self::SYNC_MAX_REQUEST_BYTES) {
+        $input = $this->ReadRequestBody(self::SYNC_MAX_REQUEST_BYTES);
+        if (!is_string($input)) {
             http_response_code(413);
             echo 'Sync payload too large';
             return;
@@ -2636,7 +2659,8 @@ class SecretsManager extends IPSModuleStrict
                 return;
             }
             try {
-                $currentVault = $this->_decryptVault();
+                $vaultRevision = null;
+                $currentVault = $this->_decryptVaultWithRevision($vaultRevision);
                 if ($currentVault === false && $this->GetValue('Vault') !== '') {
                     http_response_code(500);
                     echo 'Current vault could not be decrypted';
@@ -2650,7 +2674,7 @@ class SecretsManager extends IPSModuleStrict
                 }
                 $currentVault = is_array($currentVault) ? $currentVault : [];
                 $this->PreserveLocalVaultAreas($currentVault, $masterVault);
-                if (!$this->_encryptAndSave($masterVault)) {
+                if (!$this->_encryptAndSave($masterVault, $vaultRevision)) {
                     http_response_code(500);
                     echo 'Incoming vault could not be saved';
                     return;
@@ -2802,7 +2826,12 @@ class SecretsManager extends IPSModuleStrict
             return;
         }
 
-        $data = SecretsPortalSecurity::decodeJsonRequest((string)file_get_contents('php://input'));
+        $requestBody = $this->ReadRequestBody(self::PORTAL_JSON_MAX_REQUEST_BYTES);
+        if (!is_string($requestBody)) {
+            $this->SendPortalJson(413, ['ok' => false, 'error' => 'Request payload too large.']);
+            return;
+        }
+        $data = SecretsPortalSecurity::decodeJsonRequest($requestBody);
         $sid = is_array($data) ? (string)($data['sid'] ?? '') : '';
         if (preg_match('/^[A-Za-z0-9_-]{20,64}$/D', $sid) !== 1) {
             $this->RejectPortalRequest('migration-request');
@@ -2866,7 +2895,7 @@ class SecretsManager extends IPSModuleStrict
             $verifiedAuthenticatorData = new \lbuchs\WebAuthn\Attestation\AuthenticatorData($authenticatorData);
             $backupEligible = (bool)$verifiedAuthenticatorData->getIsBackupEligible();
             $backedUp = (bool)$verifiedAuthenticatorData->getIsBackup();
-            if (!$backupEligible && $backedUp) {
+            if (!SecretsPortalSecurity::validateBackupFlags($backupEligible, $backedUp)) {
                 throw new RuntimeException('Credential backup flags are inconsistent.');
             }
         } catch (Throwable $e) {
@@ -2886,7 +2915,8 @@ class SecretsManager extends IPSModuleStrict
         }
 
         try {
-            $vaultData = $this->_decryptVault(true);
+            $vaultRevision = null;
+            $vaultData = $this->_decryptVaultWithRevision($vaultRevision);
             $old = is_array($vaultData) ? ($vaultData[self::LOCAL_AUTH_KEY][$deviceKey] ?? null) : null;
             $currentLegacyId = is_array($old) ? $this->DecodeLegacyStoredBinary((string)($old['credentialId'] ?? '')) : null;
             if (
@@ -2920,7 +2950,7 @@ class SecretsManager extends IPSModuleStrict
             $migrated['UserAgent'] = substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 512);
             $vaultData[self::LOCAL_AUTH_KEY][$deviceKey] = $migrated;
 
-            if (!$this->_encryptAndSave($vaultData)) {
+            if (!$this->_encryptAndSave($vaultData, $vaultRevision)) {
                 $this->SendPortalJson(500, ['ok' => false, 'error' => 'The verified migrated credential could not be saved.']);
                 return;
             }
@@ -3008,7 +3038,12 @@ class SecretsManager extends IPSModuleStrict
             return;
         }
 
-        $data = SecretsPortalSecurity::decodeJsonRequest((string)file_get_contents('php://input'));
+        $requestBody = $this->ReadRequestBody(self::PORTAL_JSON_MAX_REQUEST_BYTES);
+        if (!is_string($requestBody)) {
+            $this->SendPortalJson(413, ['ok' => false, 'error' => 'Request payload too large.']);
+            return;
+        }
+        $data = SecretsPortalSecurity::decodeJsonRequest($requestBody);
         $sid = is_array($data) ? (string)($data['sid'] ?? '') : '';
         if (preg_match('/^[A-Za-z0-9_-]{20,64}$/D', $sid) !== 1) {
             $this->RejectPortalRequest('registration-request');
@@ -3062,7 +3097,7 @@ class SecretsManager extends IPSModuleStrict
             $verifiedCredentialId === '' ||
             !hash_equals($verifiedCredentialId, $rawId) ||
             $publicKey === '' ||
-            (!$backupEligible && $backedUp)
+            !SecretsPortalSecurity::validateBackupFlags($backupEligible, $backedUp)
         ) {
             $this->RejectPortalRequest('registration-credential');
             return;
@@ -3081,7 +3116,8 @@ class SecretsManager extends IPSModuleStrict
 
         $deviceKey = '';
         try {
-            $vaultData = $this->_decryptVault(true);
+            $vaultRevision = null;
+            $vaultData = $this->_decryptVaultWithRevision($vaultRevision);
             if (!is_array($vaultData)) {
                 $this->SendPortalJson(500, ['ok' => false, 'error' => 'The vault could not be decrypted.']);
                 return;
@@ -3126,7 +3162,7 @@ class SecretsManager extends IPSModuleStrict
                 'UserAgent'           => substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 512)
             ];
 
-            if (!$this->_encryptAndSave($vaultData)) {
+            if (!$this->_encryptAndSave($vaultData, $vaultRevision)) {
                 $this->SendPortalJson(500, ['ok' => false, 'error' => 'The verified passkey could not be saved.']);
                 return;
             }
@@ -3150,7 +3186,12 @@ class SecretsManager extends IPSModuleStrict
             return;
         }
 
-        $data = SecretsPortalSecurity::decodeJsonRequest((string)file_get_contents('php://input'));
+        $requestBody = $this->ReadRequestBody(self::PORTAL_JSON_MAX_REQUEST_BYTES);
+        if (!is_string($requestBody)) {
+            $this->SendPortalJson(413, ['ok' => false, 'error' => 'Request payload too large.']);
+            return;
+        }
+        $data = SecretsPortalSecurity::decodeJsonRequest($requestBody);
         $sid = is_array($data) ? (string)($data['sid'] ?? '') : '';
         if (preg_match('/^[A-Za-z0-9_-]{20,64}$/D', $sid) !== 1) {
             $this->RejectPortalRequest('assertion-request');
@@ -3221,10 +3262,10 @@ class SecretsManager extends IPSModuleStrict
             $verifiedAuthenticatorData = new \lbuchs\WebAuthn\Attestation\AuthenticatorData($authenticatorData);
             $backupEligible = (bool)$verifiedAuthenticatorData->getIsBackupEligible();
             $backedUp = (bool)$verifiedAuthenticatorData->getIsBackup();
-            if (
-                (!$backupEligible && $backedUp) ||
-                ((bool)($credential['backupEligibilityVerified'] ?? false) && $backupEligible !== (bool)($credential['backupEligible'] ?? false))
-            ) {
+            $expectedBackupEligible = (bool)($credential['backupEligibilityVerified'] ?? false)
+                ? (bool)($credential['backupEligible'] ?? false)
+                : null;
+            if (!SecretsPortalSecurity::validateBackupFlags($backupEligible, $backedUp, $expectedBackupEligible)) {
                 throw new RuntimeException('Credential backup flags are inconsistent.');
             }
         } catch (Throwable $e) {
@@ -3242,8 +3283,10 @@ class SecretsManager extends IPSModuleStrict
             $this->SendPortalJson(503, ['ok' => false, 'error' => 'Authentication state is busy. Please try again.']);
             return;
         }
+        $createdSession = null;
         try {
-            $vaultData = $this->_decryptVault(true);
+            $vaultRevision = null;
+            $vaultData = $this->_decryptVaultWithRevision($vaultRevision);
             $current = is_array($vaultData) ? ($vaultData[self::LOCAL_AUTH_KEY][$deviceKey] ?? null) : null;
             if (
                 !is_array($current) ||
@@ -3269,16 +3312,32 @@ class SecretsManager extends IPSModuleStrict
             $vaultData[self::LOCAL_AUTH_KEY][$deviceKey]['backupEligibilityVerified'] = true;
             $vaultData[self::LOCAL_AUTH_KEY][$deviceKey]['LastUsedAt'] = time();
 
-            if (!$this->_encryptAndSave($vaultData)) {
+            if (!$this->_encryptAndSave($vaultData, $vaultRevision)) {
                 $this->SendPortalJson(500, ['ok' => false, 'error' => 'Authentication state could not be saved.']);
+                return;
+            }
+
+            // The portal lock is still held here. Deleting this credential
+            // therefore either happens before the re-read above (and fails
+            // authentication) or after this session exists (and removes it).
+            $createdSession = $this->CreatePortalSessionStateLocked(
+                'passkey',
+                ['portal'],
+                $origin,
+                $deviceKey,
+                (int)$buffer['generation']
+            );
+            if ($createdSession === null) {
+                $this->SendPortalJson(500, ['ok' => false, 'error' => 'Authentication session could not be saved.']);
                 return;
             }
         } finally {
             $this->LeaveVaultLock();
             $this->LeavePortalStateLock();
         }
-        if (!$this->CreatePortalSession('passkey', ['portal'], $deviceKey, (int)$buffer['generation'])) {
-            $this->RejectPortalRequest('assertion-revoked');
+        if (!$this->SetPortalSessionCookie($createdSession)) {
+            $this->RemovePortalSessionByHash((string)$createdSession['tokenHash']);
+            $this->SendPortalJson(500, ['ok' => false, 'error' => 'Authentication cookie could not be created.']);
             return;
         }
 
@@ -3406,64 +3465,122 @@ class SecretsManager extends IPSModuleStrict
             return false;
         }
 
-        $token = SecretsPortalSecurity::base64UrlEncode(random_bytes(32));
-        $tokenHash = hash('sha256', $token);
-        $now = time();
-        $expiry = $now + ($this->GetPortalSessionLifetimeMinutes() * 60);
-
         if (!$this->EnterPortalStateLock()) {
             return false;
         }
         try {
-            $generation = $this->GetPortalRevocationGenerationUnlocked();
-            if ($expectedGeneration !== null && $generation !== $expectedGeneration) {
-                return false;
-            }
-
-            $sessions = json_decode($this->GetBuffer(self::PORTAL_SESSION_BUFFER), true);
-            if (!is_array($sessions)) {
-                $sessions = [];
-            }
-            foreach ($sessions as $key => $session) {
-                if (!is_array($session) || (int)($session['expires'] ?? 0) <= $now) {
-                    unset($sessions[$key]);
-                }
-            }
-            if (count($sessions) >= self::PORTAL_SESSION_MAX_ENTRIES) {
-                uasort($sessions, static function (array $a, array $b): int {
-                    return ((int)($a['expires'] ?? 0)) <=> ((int)($b['expires'] ?? 0));
-                });
-                $sessions = array_slice($sessions, -(self::PORTAL_SESSION_MAX_ENTRIES - 1), null, true);
-            }
-
-            $sessions[$tokenHash] = [
-                'expires'             => $expiry,
-                'created'             => $now,
-                'method'              => $authenticationMethod,
-                'scopes'              => array_values(array_unique($scopes)),
-                'origin'              => $profile['origin'],
-                'generation'          => $generation,
-                'credentialDeviceKey' => $credentialDeviceKey,
-                'userAgentHash'       => $this->GetCurrentUserAgentHash()
-            ];
-
-            $encoded = json_encode($sessions);
-            if ($encoded === false) {
-                return false;
-            }
-            $this->SetBuffer(self::PORTAL_SESSION_BUFFER, $encoded);
+            $createdSession = $this->CreatePortalSessionStateLocked(
+                $authenticationMethod,
+                $scopes,
+                $profile['origin'],
+                $credentialDeviceKey,
+                $expectedGeneration
+            );
         } finally {
             $this->LeavePortalStateLock();
         }
 
-        $secure = str_starts_with($profile['origin'], 'https://');
-        return setcookie(self::PORTAL_COOKIE_PREFIX . $this->InstanceID, $token, [
-            'expires'  => $expiry,
+        if ($createdSession === null) {
+            return false;
+        }
+        if (!$this->SetPortalSessionCookie($createdSession)) {
+            $this->RemovePortalSessionByHash((string)$createdSession['tokenHash']);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * The caller must hold the portal-state lock.
+     *
+     * @param string[] $scopes
+     * @return array{token:string,tokenHash:string,expires:int,secure:bool}|null
+     */
+    private function CreatePortalSessionStateLocked(
+        string $authenticationMethod,
+        array $scopes,
+        string $origin,
+        ?string $credentialDeviceKey = null,
+        ?int $expectedGeneration = null
+    ): ?array {
+        $generation = $this->GetPortalRevocationGenerationUnlocked();
+        if ($expectedGeneration !== null && $generation !== $expectedGeneration) {
+            return null;
+        }
+
+        $token = SecretsPortalSecurity::base64UrlEncode(random_bytes(32));
+        $tokenHash = hash('sha256', $token);
+        $now = time();
+        $expiry = $now + ($this->GetPortalSessionLifetimeMinutes() * 60);
+        $sessions = json_decode($this->GetBuffer(self::PORTAL_SESSION_BUFFER), true);
+        if (!is_array($sessions)) {
+            $sessions = [];
+        }
+        foreach ($sessions as $key => $session) {
+            if (!is_array($session) || (int)($session['expires'] ?? 0) <= $now) {
+                unset($sessions[$key]);
+            }
+        }
+        if (count($sessions) >= self::PORTAL_SESSION_MAX_ENTRIES) {
+            uasort($sessions, static function (array $a, array $b): int {
+                return ((int)($a['expires'] ?? 0)) <=> ((int)($b['expires'] ?? 0));
+            });
+            $sessions = array_slice($sessions, -(self::PORTAL_SESSION_MAX_ENTRIES - 1), null, true);
+        }
+
+        $sessions[$tokenHash] = [
+            'expires'             => $expiry,
+            'created'             => $now,
+            'method'              => $authenticationMethod,
+            'scopes'              => array_values(array_unique($scopes)),
+            'origin'              => $origin,
+            'generation'          => $generation,
+            'credentialDeviceKey' => $credentialDeviceKey,
+            'userAgentHash'       => $this->GetCurrentUserAgentHash()
+        ];
+        $encoded = json_encode($sessions);
+        if ($encoded === false) {
+            return null;
+        }
+        $this->SetBuffer(self::PORTAL_SESSION_BUFFER, $encoded);
+
+        return [
+            'token'     => $token,
+            'tokenHash' => $tokenHash,
+            'expires'   => $expiry,
+            'secure'    => str_starts_with($origin, 'https://')
+        ];
+    }
+
+    /**
+     * @param array{token:string,tokenHash:string,expires:int,secure:bool} $session
+     */
+    private function SetPortalSessionCookie(array $session): bool
+    {
+        return setcookie(self::PORTAL_COOKIE_PREFIX . $this->InstanceID, $session['token'], [
+            'expires'  => $session['expires'],
             'path'     => '/',
-            'secure'   => $secure,
+            'secure'   => $session['secure'],
             'httponly' => true,
             'samesite' => 'Strict'
         ]);
+    }
+
+    private function RemovePortalSessionByHash(string $tokenHash): void
+    {
+        if ($tokenHash === '' || !$this->EnterPortalStateLock()) {
+            return;
+        }
+        try {
+            $sessions = json_decode($this->GetBuffer(self::PORTAL_SESSION_BUFFER), true);
+            if (!is_array($sessions)) {
+                return;
+            }
+            unset($sessions[$tokenHash]);
+            $this->SetBuffer(self::PORTAL_SESSION_BUFFER, (string)json_encode($sessions));
+        } finally {
+            $this->LeavePortalStateLock();
+        }
     }
 
     private function ClearPortalSessionCookie(): void
@@ -3491,6 +3608,10 @@ class SecretsManager extends IPSModuleStrict
 
     private function RequirePortalReady(bool $requireEnabled = true): bool
     {
+        if ($this->GetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER) === '1') {
+            $this->SendPortalError(503, 'The portal is blocked until pending session revocation completes. Apply the module configuration again.');
+            return false;
+        }
         if ($requireEnabled && !$this->ReadPropertyBoolean('PortalEnabled')) {
             $this->SendPortalError(503, 'The WebAuthn portal is disabled until credential migration is complete.');
             return false;
@@ -3850,6 +3971,14 @@ class SecretsManager extends IPSModuleStrict
         return max(0, (int)$this->GetBuffer(self::PORTAL_REVOCATION_BUFFER));
     }
 
+    private function RevokeAllPortalStateUnlocked(): void
+    {
+        $this->SetBuffer(self::PORTAL_REVOCATION_BUFFER, (string)($this->GetPortalRevocationGenerationUnlocked() + 1));
+        $this->SetBuffer(self::PORTAL_SESSION_BUFFER, '{}');
+        $this->SetBuffer(self::PORTAL_CHALLENGE_BUFFER, '{}');
+        $this->SetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER, '0');
+    }
+
     private function GetCurrentUserAgentHash(): string
     {
         return hash('sha256', (string)($_SERVER['HTTP_USER_AGENT'] ?? ''));
@@ -3890,13 +4019,28 @@ class SecretsManager extends IPSModuleStrict
                 }
             }
 
-            if (count($challenges) >= self::PORTAL_CHALLENGE_MAX_ENTRIES) {
-                uasort($challenges, static function (array $a, array $b): int {
-                    return ((int)($a['expires'] ?? 0)) <=> ((int)($b['expires'] ?? 0));
-                });
-                while (count($challenges) >= self::PORTAL_CHALLENGE_MAX_ENTRIES) {
-                    array_shift($challenges);
+            $bucket = $this->GetPortalChallengeBucket($purpose, $data);
+            $bucketLimit = $purpose === 'assertion'
+                ? self::PORTAL_ASSERTION_CHALLENGES_PER_ORIGIN
+                : self::PORTAL_PRIVILEGED_CHALLENGES_PER_ORIGIN;
+            $bucketEntries = [];
+            foreach ($challenges as $key => $entry) {
+                if (is_array($entry) && (string)($entry['bucket'] ?? '') === $bucket) {
+                    $bucketEntries[$key] = $entry;
                 }
+            }
+            uasort($bucketEntries, static function (array $a, array $b): int {
+                return ((int)($a['expires'] ?? 0)) <=> ((int)($b['expires'] ?? 0));
+            });
+            while (count($bucketEntries) >= $bucketLimit) {
+                $oldestKey = array_key_first($bucketEntries);
+                if ($oldestKey === null) {
+                    break;
+                }
+                unset($bucketEntries[$oldestKey], $challenges[$oldestKey]);
+            }
+            if (count($challenges) >= self::PORTAL_CHALLENGE_MAX_ENTRIES) {
+                return null;
             }
 
             $sid = SecretsPortalSecurity::base64UrlEncode(random_bytes(16));
@@ -3904,6 +4048,7 @@ class SecretsManager extends IPSModuleStrict
             $data['expires'] = $now + self::PORTAL_CHALLENGE_TTL_SECONDS;
             $data['generation'] = $this->GetPortalRevocationGenerationUnlocked();
             $data['userAgentHash'] = $this->GetCurrentUserAgentHash();
+            $data['bucket'] = $bucket;
             $challenges[$sid] = $data;
             $encoded = json_encode($challenges);
             if ($encoded === false) {
@@ -3915,6 +4060,15 @@ class SecretsManager extends IPSModuleStrict
         } finally {
             $this->LeavePortalStateLock();
         }
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private function GetPortalChallengeBucket(string $purpose, array $data): string
+    {
+        $origin = strtolower((string)($data['origin'] ?? 'unknown'));
+        return $purpose . ':' . hash('sha256', $origin);
     }
 
     /**
@@ -4004,6 +4158,28 @@ class SecretsManager extends IPSModuleStrict
         return str_contains(strtolower((string)($_SERVER['CONTENT_TYPE'] ?? '')), 'application/json');
     }
 
+    /**
+     * @return string|false
+     */
+    private function ReadRequestBody(int $maxBytes)
+    {
+        $declaredLength = (string)($_SERVER['CONTENT_LENGTH'] ?? '');
+        if ($declaredLength !== '' && ctype_digit($declaredLength) && (int)$declaredLength > $maxBytes) {
+            return false;
+        }
+
+        $stream = @fopen('php://input', 'rb');
+        if ($stream === false) {
+            return false;
+        }
+        try {
+            $input = SecretsPortalSecurity::readStreamLimited($stream, $maxBytes);
+            return $input === null ? false : $input;
+        } finally {
+            fclose($stream);
+        }
+    }
+
     private function SendPortalSecurityHeaders(string $nonce): void
     {
         header('Cache-Control: no-store, max-age=0');
@@ -4059,7 +4235,12 @@ class SecretsManager extends IPSModuleStrict
         $this->LogMessage('WebAuthn portal request rejected. Reason=' . $reason, KL_WARNING);
     }
 
-    private function CheckPortalRateLimit(string $bucket, bool $consume): bool
+    private function CheckPortalRateLimit(
+        string $bucket,
+        bool $consume,
+        int $perClientMaximum = self::PORTAL_RATE_MAX_PER_CLIENT,
+        int $globalMaximum = self::PORTAL_RATE_MAX_GLOBAL
+    ): bool
     {
         $now = time();
         $client = hash('sha256', (string)($_SERVER['REMOTE_ADDR'] ?? 'unknown'));
@@ -4080,8 +4261,8 @@ class SecretsManager extends IPSModuleStrict
             }
 
             $checks = [
-                'global:' . $origin . ':' . $bucket => self::PORTAL_RATE_MAX_GLOBAL,
-                'client:' . $origin . ':' . $bucket . ':' . $client => self::PORTAL_RATE_MAX_PER_CLIENT
+                'global:' . $origin . ':' . $bucket => $globalMaximum,
+                'client:' . $origin . ':' . $bucket . ':' . $client => $perClientMaximum
             ];
 
             foreach ($checks as $key => $maximum) {
@@ -4448,12 +4629,13 @@ class SecretsManager extends IPSModuleStrict
             return;
         }
         try {
-            $vault = $this->_decryptVault(true);
+            $vaultRevision = null;
+            $vault = $this->_decryptVaultWithRevision($vaultRevision);
             if (!is_array($vault)) {
                 return;
             }
             if ($this->NormalizeCredentialRecordsForRollback($vault)) {
-                $this->_encryptAndSave($vault);
+                $this->_encryptAndSave($vault, $vaultRevision);
             }
         } finally {
             $this->LeaveVaultLock();
@@ -4509,15 +4691,13 @@ class SecretsManager extends IPSModuleStrict
         return $changed;
     }
 
-    private function _encryptAndSave(array $dataArray): bool
+    private function _encryptAndSave(array $dataArray, ?string $expectedRevision = null): bool
     {
         if (!$this->EnterVaultLock()) {
             return false;
         }
         try {
-            $expectedRevision = $dataArray[self::VAULT_REVISION_KEY] ?? null;
-            unset($dataArray[self::VAULT_REVISION_KEY]);
-            if (is_string($expectedRevision)) {
+            if ($expectedRevision !== null) {
                 $currentVaultJson = (string)$this->GetValue('Vault');
                 if (!hash_equals($expectedRevision, hash('sha256', $currentVaultJson))) {
                     $this->LogMessage('Vault save rejected because the encrypted state changed concurrently.', KL_WARNING);
@@ -4530,7 +4710,11 @@ class SecretsManager extends IPSModuleStrict
 
         $this->NormalizeCredentialRecordsForRollback($dataArray);
         $newKeyBin = hex2bin($keyHex);
-        $plain = str_replace(['"__folder":true,', ',"__folder":true', '"__folder":true'], '', json_encode($dataArray));
+        $encodedPlain = json_encode($dataArray);
+        if ($newKeyBin === false || $encodedPlain === false) {
+            return false;
+        }
+        $plain = str_replace(['"__folder":true,', ',"__folder":true', '"__folder":true'], '', $encodedPlain);
 
         $cipher = "aes-128-gcm";
         $iv = random_bytes(openssl_cipher_iv_length($cipher));
@@ -4546,6 +4730,11 @@ class SecretsManager extends IPSModuleStrict
             'data'   => $cipherText
         ]);
 
+        if (!is_string($vaultData) || strlen($vaultData) > self::VAULT_MAX_BYTES) {
+            $this->LogMessage('Vault save rejected because the encrypted result exceeds the configured size limit.', KL_WARNING);
+            return false;
+        }
+
         $this->SetValue("Vault", $vaultData);
 
         // (ENTFÄLLT) Disk-clean: kein Klartext-Cache
@@ -4558,17 +4747,24 @@ class SecretsManager extends IPSModuleStrict
     }
 
 
-    private function _decryptVault(bool $includeRevision = false)
+    private function _decryptVault()
     {
         $vaultJson = $this->GetValue("Vault");
         if (!is_string($vaultJson)) {
             return false;
         }
-        $data = $this->DecryptVaultJson($vaultJson);
-        if ($includeRevision && is_array($data)) {
-            $data[self::VAULT_REVISION_KEY] = hash('sha256', $vaultJson);
+        return $this->DecryptVaultJson($vaultJson);
+    }
+
+    private function _decryptVaultWithRevision(?string &$revision)
+    {
+        $vaultJson = $this->GetValue("Vault");
+        if (!is_string($vaultJson)) {
+            $revision = null;
+            return false;
         }
-        return $data;
+        $revision = hash('sha256', $vaultJson);
+        return $this->DecryptVaultJson($vaultJson);
     }
 
     private function DecryptVaultJson(string $vaultJson)

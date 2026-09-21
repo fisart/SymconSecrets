@@ -157,4 +157,25 @@ check(SecretsPortalSecurity::sanitizeReturnUrl('//evil.example/') === '/', 'sche
 check(SecretsPortalSecurity::sanitizeReturnUrl('/safe\\evil') === '/', 'backslash return URL was accepted');
 check(SecretsPortalSecurity::sanitizeReturnUrl('/safe</script>') === '/safe</script>', 'local return URL changed unexpectedly');
 
+$exactStream = fopen('php://temp', 'w+b');
+check(is_resource($exactStream), 'could not create exact-size request stream');
+fwrite($exactStream, str_repeat('a', 32));
+rewind($exactStream);
+check(SecretsPortalSecurity::readStreamLimited($exactStream, 32) === str_repeat('a', 32), 'exact-size request was rejected');
+fclose($exactStream);
+
+$oversizedStream = fopen('php://temp', 'w+b');
+check(is_resource($oversizedStream), 'could not create oversized request stream');
+fwrite($oversizedStream, str_repeat('b', 33));
+rewind($oversizedStream);
+check(SecretsPortalSecurity::readStreamLimited($oversizedStream, 32) === null, 'oversized request was accepted');
+fclose($oversizedStream);
+
+check(SecretsPortalSecurity::validateBackupFlags(false, false), 'valid non-backup credential flags were rejected');
+check(SecretsPortalSecurity::validateBackupFlags(true, false), 'valid backup-eligible credential flags were rejected');
+check(SecretsPortalSecurity::validateBackupFlags(true, true), 'valid backed-up credential flags were rejected');
+check(!SecretsPortalSecurity::validateBackupFlags(false, true), 'BS without BE was accepted');
+check(!SecretsPortalSecurity::validateBackupFlags(false, false, true), 'changed backup eligibility was accepted');
+check(SecretsPortalSecurity::validateBackupFlags(true, false, true), 'stable backup eligibility was rejected');
+
 echo "PortalSecurityTest: OK\n";
