@@ -1,343 +1,834 @@
-SymconSecrets – Dokumentation
-1. Warum benötigt man dieses Modul in IP-Symcon?
+# 🔐 SymconSecrets – Dokumentation (V 3.0)
 
-Standardmäßig speichert IP-Symcon alle Variableninhalte, Skripte und Konfigurationen in der Datei settings.json. Dies führt zu folgenden Sicherheitsproblemen:
+## 1. Warum benötigt man dieses Modul in IP-Symcon?
 
-Klartext-Speicherung: Passwörter für Dienste (Spotify, MQTT, Datenbanken, Kameras) stehen im Klartext in der Einstellungsdatei.
+Standardmäßig speichert IP-Symcon alle Variableninhalte, Skripte und Konfigurationen im Klartext in der Datei `settings.json`. Daraus ergeben sich folgende Sicherheitsprobleme:
 
-Unsichere Backups: Ein Backup des Systems enthält automatisch alle Passwörter. Wer Zugriff auf das Backup hat, hat Zugriff auf alle Ihre Konten.
+- **Klartext-Speicherung:** Passwörter für Dienste (Spotify, MQTT, Datenbanken, Kameras) stehen im Klartext in der Einstellungsdatei.
+- **Unsichere Backups:** Ein Backup des Systems enthält automatisch alle Passwörter. Wer Zugriff auf das Backup hat, hat Zugriff auf alle Ihre Konten.
+- **Sichtbarkeit:** Jeder Benutzer mit Zugriff auf die IP-Symcon Verwaltungskonsole kann die Passwörter in den Skripten oder Variablen lesen.
+- **Verwaltungsaufwand:** Bei verteilten Systemen müssen Passwörter auf jedem System manuell gepflegt werden.
 
-Sichtbarkeit: Jeder Benutzer mit Zugriff auf die IP-Symcon Verwaltungskonsole kann die Passwörter in den Skripten oder Variablen lesen.
+## 2. Wie werden diese Probleme beseitigt? (Zero-Knowledge-Konzept)
 
-Verwaltungsaufwand: Bei verteilten Systemen müssen Passwörter auf jedem System manuell gepflegt werden.
+Das Modul SymconSecrets adressiert diese Risiken durch ein konsequentes Sicherheitsdesign und bietet signifikante Vorteile im Betrieb:
 
-2. Wie werden diese Probleme beseitigt?
+- **Verschlüsselung (AES-128-GCM):** Alle Geheimnisse werden mit AES-128-GCM verschlüsselt (Authenticated Encryption). In der Datenbank liegt nur unlesbarer Datensalat („Blob“). Der Klartext landet niemals auf der Festplatte.
+- **Hardware-Trennung (Schlüssel-Isolation):** Der Entschlüsselungs-Key (`master.key`) liegt als physische Datei auf dem Betriebssystem (z.B. USB-Stick oder geschützter Ordner), getrennt von der Symcon-Datenbank.
+- **Stateless Editor (Zustandslosigkeit):** Im Gegensatz zu herkömmlichen Modulen speichert SymconSecrets die Passwörter während der Eingabe nicht in den Instanz-Eigenschaften ab. Die Daten werden direkt vom Browser in den Arbeitsspeicher (RAM) des Servers übertragen. Dadurch landen Passwörter zu keinem Zeitpunkt unverschlüsselt in der `settings.json`.
+- **Zentralisierte Verwaltung:** Änderungen (z. B. Passwort-Updates) werden an einer einzigen Stelle (Master) vorgenommen und stehen durch die automatische Synchronisation **sofort systemweit** auf allen Slaves zur Verfügung. Dies eliminiert manuelle Pflegeaufwände und verhindert Inkonsistenzen in verteilten Umgebungen.
+- **Zero-Convention Import:** Automatische Erkennung von Ordnern ohne technische Metadaten oder spezielle Syntax. Das Modul analysiert die Form Ihres JSONs eigenständig.
 
-Das Modul SymconSecrets adressiert diese Risiken durch ein „Zero-Knowledge“-Konzept:
-
-Verschlüsselung: Alle Geheimnisse werden mit AES-128-GCM verschlüsselt. In der Datenbank liegt nur unlesbarer Datensalat („Blob“).
-
-Hardware-Trennung (Schlüssel-Isolation): Der Entschlüsselungs-Key (master.key) liegt als physische Datei auf dem Betriebssystem (z.B. USB-Stick oder geschützter Ordner), getrennt von der Symcon-Datenbank.
-
-NEU: Stateless Editor (Sicherheits-Update): Im Gegensatz zu herkömmlichen Modulen speichert SymconSecrets die Passwörter während der Eingabe nicht in den Instanz-Eigenschaften ab. Die Daten werden direkt vom Browser in den Arbeitsspeicher (RAM) des Servers übertragen. Dadurch landen Passwörter zu keinem Zeitpunkt unverschlüsselt in der settings.json.
-
-3. Wie funktioniert das Modul?
+## 3. Wie funktioniert das Modul? (Funktionsweise)
 
 Das Modul arbeitet nach dem Tresor-Prinzip:
 
-Der Tresor (Vault): Eine String-Variable in IP-Symcon, die das verschlüsselte JSON-Paket enthält.
+- **Der Tresor (Vault):** Eine String-Variable in IP-Symcon, die das verschlüsselte JSON-Paket enthält.
+- **Der Schlüssel (Master Key):** Eine Datei (`master.key`), die lokal auf dem Server liegt.
+- **Der Zugriff (In-Memory):** Die Entschlüsselung findet ausschließlich im Arbeitsspeicher (RAM) statt.
+- **Stateless UI:** Wenn Sie den Editor öffnen, wird das JSON-Objekt im Browser angezeigt. Sobald Sie die Konsole schließen, wird der Klartext im RAM gelöscht. Es erfolgt keine Speicherung auf der Festplatte, solange die Daten nicht verschlüsselt wurden.
+- **Synchronisation (Master -> Slave):** Der Master sendet das verschlüsselte Paket über einen WebHook an die Slaves (abgesichert via HTTPS, Sync Token und optional Basic Auth).
 
-Der Schlüssel (Master Key): Eine Datei (master.key), die lokal auf dem Server liegt.
+## 4. Systemrollen (Operation Modes)
 
-Der Zugriff (In-Memory):
+- **Master (Sender):** Die zentrale Instanz ("Single Source of Truth"). Hier werden Daten verwaltet und sicher an Slaves verteilt.
+- **Slave (Receiver):** Empfängt verschlüsselte Updates. Lokale Änderungen am Tresor sind nicht vorgesehen und werden beim nächsten Sync überschrieben.
+- **Standalone:** Isolierter lokaler Tresor ohne Netzwerkfunktionen. Alle Synchronisations-Optionen (Token, Slaves) werden automatisch ausgeblendet.
 
-Die Entschlüsselung findet ausschließlich im Arbeitsspeicher (RAM) statt.
+## 5. Konfigurations-Leitfaden (Formular-Referenz)
 
-Stateless UI: Wenn Sie den Editor öffnen, wird das JSON-Objekt im Browser angezeigt. Sobald Sie die Konsole schließen, wird der Klartext im RAM gelöscht. Es erfolgt keine Speicherung auf der Festplatte, solange die Daten nicht verschlüsselt wurden.
+### 5.1 Sicherheitskonfiguration & Basis-Setup
 
-Synchronisation (Master -> Slave): Der Master sendet das verschlüsselte Paket über einen WebHook an die Slaves (abgesichert via HTTPS, Sync Token und optional Basic Auth).
+1.  **System Role:** Auswahl der Rolle (Master/Slave/Standalone).
+2.  **Directory Path:** Absoluter Pfad zum Verzeichnis des `master.key` (z. B. `/var/lib/symcon_keys/` oder `/secrets`).
+3.  **Check Directory Permissions:** Validiert, ob der Symcon-Dienst Lese- und Schreibrechte im Zielverzeichnis hat. Dies ist für die automatische Schlüsselerstellung zwingend erforderlich.
+4.  **Initialisierung:** Auf „Übernehmen“ klicken, um den `master.key` zu initialisieren.
 
-4. Wie wird es konfiguriert?
-Schritt A: Einrichtung des Masters (Sender)
+### 5.2 Synchronisation & Verknüpfung (Nur Master)
 
-Instanz SecretsManager erstellen und Rolle Master wählen.
+- **Sync Token (Shared Secret):** Der "Hausschlüssel" für die Kommunikation zwischen Master und Slave.
+  - **Generate Random Token:** Erzeugt ein sicheres, zufälliges 32-Byte Token.
+  - **Show/Copy Token:** Zeigt das Token im Klartext an, um es in der Slave-Instanz zu hinterlegen.
+  - **Save Token (Encrypted):** Speichert das Token verschlüsselt in der Datei `system.vault`. **Wichtig:** Ohne diesen Schritt ist keine Synchronisation möglich.
+- **Slave WebHooks (Tabelle):**
+  - **Server (Label):** Anzeigename für Ihre Übersicht (z. B. "Ferienhaus").
+  - **URL:** Ziel-WebHook des Slaves (Format: `https://[IP-oder-DNS]/hook/secrets_[ID]`).
+  - **TLS Mode:** _Strict_ (CA-validiert) oder _Pinned_ (validiert via SHA-256 Fingerprint, ideal für selbstsignierte Zertifikate im LAN).
+  - **Key Provisioning:** Legt fest, ob der `master.key` bei jedem Sync mitgesendet wird (_Sync Payload_).
+- **Basic-Auth Passwords:** Im ausklappbaren Bereich können Passwörter für die Slave-WebHooks verschlüsselt hinterlegt werden (integrierter Passwort-Manager für Slaves).
 
-Verzeichnispfad: Pfad für den master.key angeben (z.B. /var/lib/symcon_keys/).
+### 5.3 Actions & Wartung
 
-Sync Token: Generieren und kopieren.
+- **Manually Sync to Slaves:** Stößt sofort eine Übertragung an alle Slaves in der Liste an.
+- **Rotate Encryption Key:** Erzeugt einen neuen Master-Key und verschlüsselt den gesamten Tresor sowie alle System-Geheimnisse mit dem neuen Schlüssel um.
 
-Geheimnisse eingeben: JSON-Objekt in den Editor einfügen.
+## 6. Tresor-Explorer (Bedienung)
 
-Hinweis: Durch die Stateless-Technologie müssen Sie nach der Eingabe auf "Encrypt & Save Local" klicken. Wenn Sie das Formular ohne Speichern schließen, wird die Eingabe aus Sicherheitsgründen verworfen.
+### 6.1 Navigation & Hybride Strukturen
 
-Schritt B: Einrichtung eines Slaves (Empfänger)
+Das Modul erkennt automatisch die Struktur Ihrer Daten:
 
-Instanz auf dem Zielsystem erstellen, Rolle Slave wählen.
+- **Ordner (📁):** Knoten, die Unterelemente (Arrays) enthalten. Gruppieren von Zusammenhängen (z.B. Standorte, Gerätetypen).
+- **Datensätze (🔑):** Knoten mit reinen Datenfeldern (User, PW, IP, URL, etc.).
+- **Hybrid-Modus:** Ein Ordner kann eigene Felder besitzen (z. B. Standort-Informationen) **und** gleichzeitig Unterordner enthalten. Diese Felder erscheinen oben unter dem Bereich „🔑 FELDER DIESES ORDNER“.
+- **Navigation:** Per Klick auf Zeilen „hineinzoomen“ und per „ZURÜCK“-Button navigieren.
+- **⚙️ / 🗑️:** Symbole zum Öffnen des Detail-Editors (Popup) oder zum Löschen eines Elements.
 
-Pfad und denselben Sync Token wie beim Master hinterlegen.
+### 6.2 Erstellung & Import
 
-WebHook URL notieren.
+- **NEU AN DIESER POSITION:** Name für das Element eingeben und Typ wählen (+ UNTERORDNER oder + RECORD). Schrägstriche (/) sind im Namen verboten.
+- **JSON-Import:** Große Strukturen können über das Feld „JSON IMPORT“ direkt als String eingelesen werden. Dies setzt den Explorer automatisch auf „root“ zurück. Die Struktur wird automatisch analysiert und im Explorer korrekt "hydriert".
 
-Schritt C: Verknüpfung
+## 7. 🔐 Biometrische Authentifizierung (Passkeys)
 
-URL des Slaves im Master unter „Slave WebHooks“ eintragen.
+> **Sicherheitsmigration auf Version 5.4.0:** Frühere Passkey-Einträge wurden nicht vollständig serverseitig geprüft und werden deshalb nicht mehr akzeptiert. Nach dem Update bleibt das Portal zunächst deaktiviert. Tragen Sie den primären `PortalOrigin` und bei Bedarf einen `PortalBackupOrigin` ein, melden Sie sich über jede konfigurierte URL am Admin-Dashboard mit dem Admin-Passwort an und starten Sie **Start verified migration**. Jeder vorhandene Passkey wird durch eine echte Signaturprüfung in das sichere Format übernommen; es wird kein neuer Passkey registriert.
 
-„Manually Sync to Slaves“ anklicken.
+### 7.1 Übersicht
 
-Hier ist die detaillierte Ergänzung für Ihre Dokumentation, welche die neue **Passkey-Funktionalität** (Biometrie) umfassend beschreibt.
-
----
-
-# 🔐 Biometrische Authentifizierung (Passkeys)
-
-## 1. Übersicht
 Die Passkey-Funktion ermöglicht es Ihnen, den Zugriff auf den Tresor oder eigene WebHook-Skripte durch biometrische Merkmale (Fingerabdruck, Gesichtserkennung oder Windows Hello) zu schützen. Dies ersetzt die manuelle Eingabe von Passwörtern durch einen sicheren kryptografischen Handshake (WebAuthn/FIDO2).
 
-### Sicherheitsmerkmale:
-*   **Hardware-gebunden:** Der private Schlüssel verlässt niemals Ihr Gerät (Smartphone oder PC).
-*   **Zero-Knowledge:** Im Tresor wird lediglich der öffentliche Schlüssel im versteckten Ordner `__AUTH__` gespeichert.
-*   **Zustandslos:** Die Authentifizierung erfolgt im RAM-Buffer und ist an Ihre IP-Adresse und Ihren Browser gebunden.
+**Sicherheitsmerkmale:**
 
----
+- **Hardware-gebunden:** Der private Schlüssel verlässt niemals Ihr Gerät (Smartphone oder PC).
+- **Serverseitig verifiziert:** Signatur, Challenge, Ceremony-Typ, exakter Origin, RP-ID, Benutzeranwesenheit und Benutzerverifikation werden geprüft.
+- **Sichere Sitzung:** Nach erfolgreicher Prüfung wird ein zufälliges `Secure`-/`HttpOnly`-/`SameSite=Strict`-Cookie ausgegeben. Im RAM wird nur dessen SHA-256-Hash gespeichert.
+- **Getrennte Berechtigungen:** Eine Passkey-Sitzung erlaubt nur den Portalzugriff. Migration und Administration erfordern das Admin-Passwort.
+- **Sicherer Widerruf:** Ein laufender Widerruf blockiert neue Portal-Sitzungen und Passkey-Änderungen, ohne den normalen Zugriff auf gespeicherte Secrets zu unterbrechen. Passwort-Anmeldungen und Sitzungsprüfungen sind an dieselbe Widerrufs-Generation gebunden.
+- **An den Passkey gebundene Sitzung und Anmeldung:** Sitzungen und bereits gestartete WebAuthn-Vorgänge werden gegen eine nur aufwärts zählende Credential-Generation geprüft. Löschen oder Ändern über Explorer, Import oder Geräteverwaltung beendet bestehende Sitzungen und laufende Anmeldungen; auch das Wiederherstellen desselben Datensatzes belebt sie nicht wieder. Dies gilt ebenfalls für noch nicht migrierte Passkeys. Ist der Tresor kurzzeitig belegt, wird nur der aktuelle Zugriff abgewiesen und die Sitzung bleibt für einen späteren Versuch erhalten.
 
-## 2. Einrichtung (Registrierung)
+### 7.2 Einrichtung (Registrierung)
 
 Bevor Sie ein Gerät nutzen können, muss es einmalig verknüpft werden. Dieser Vorgang ist durch ein spezielles Passwort geschützt, das Sie selbst im Tresor festlegen.
 
-### Schritt 1: Registrierungs-Passwort festlegen
-1. Öffnen Sie den **Tresor-Explorer** in IP-Symcon.
-2. Erstellen Sie auf der obersten Ebene (**root**) einen neuen Record mit dem Namen: `RegistrationPassword`.
-3. Öffnen Sie diesen Record (⚙️) und fügen Sie ein Feld hinzu:
-   *   Name: `PW`
-   *   Wert: Ein starkes Passwort Ihrer Wahl (z. B. `mein-sicherer-schluessel`).
+**Schritt 1: Registrierungs-Passwort festlegen**
+
+1. Öffnen Sie den Tresor-Explorer in IP-Symcon.
+2. Erstellen Sie auf der obersten Ebene (root) einen neuen Record mit dem Namen: `RegistrationPassword`.
+3. Öffnen Sie diesen Record (⚙️) und fügen Sie ein Feld hinzu: Name: `PW`, Wert: Ein starkes Passwort Ihrer Wahl.
 4. Klicken Sie auf **💾 Speichern**.
 
-### Schritt 2: Gerät verknüpfen
-Rufen Sie die Registrierungs-URL auf dem Gerät auf, das Sie hinzufügen möchten (Smartphone oder PC). **Wichtig: Dies funktioniert nur über eine verschlüsselte HTTPS-Verbindung!**
+**Schritt 2: Portal konfigurieren**
 
-**URL-Format:**
-`https://[Ihre-Symcon-URL]/hook/secrets_[ID]?register=1&pass=[Ihr-PW]`
+1. Tragen Sie den exakten primären HTTPS-Origin ohne abschließenden Schrägstrich in `PortalOrigin` ein.
+2. Optional können Sie einen zweiten, unabhängigen HTTPS-Origin in `PortalBackupOrigin` eintragen.
+3. Die RP-ID wird sicher aus dem jeweiligen Hostnamen abgeleitet. Lassen Sie `PortalEnabled` während der Migration ausgeschaltet.
 
-**Beispiel:**
-`https://08a32d3d...ipmagic.de/hook/secrets_59597?register=1&pass=mein-sicherer-schluessel`
+**Schritt 3: Vorhandene Passkeys übernehmen**
 
-Folgen Sie den Anweisungen im Browser und berühren Sie den Sensor Ihres Geräts. Nach der Meldung „✅ Gerät erfolgreich registriert!“ ist das Gerät hinterlegt.
+Rufen Sie `https://[Ihre-Symcon-URL]/hook/secrets_[ID]?admin=1` auf, melden Sie sich mit dem Admin-Passwort an und wählen Sie **Start verified migration**. Berühren Sie jeden vorhandenen Passkey einmal. Wiederholen Sie dies über die Backup-URL, falls dort eigene Passkeys registriert wurden. Dabei wird kein neuer Passkey erstellt; nur der bereits gespeicherte öffentliche Schlüssel wird durch eine aktuelle Signatur bestätigt. Aktivieren Sie `PortalEnabled`, sobald alle vorhandenen Passkeys übernommen wurden.
 
----
+Schlägt die Migration fehl, kann `PortalDebugEnabled` vorübergehend aktiviert werden. Unter der Modulinstanz erscheint dann die String-Variable **Portal debug (last event)** mit der letzten bereinigten Diagnose. Sie enthält keine Request-Payloads oder Authentifizierungsdaten. Nach der Fehlersuche `PortalDebugEnabled` wieder ausschalten; die Variable wird verborgen und geleert.
 
-## 3. Nutzung im Alltag
+Die Seite `?register=1` wird nur benötigt, wenn Sie später tatsächlich ein neues Gerät hinzufügen möchten.
 
-### 3.1 Login-Portal
-Sie können das Portal nutzen, um eine Sitzung für Ihren Browser zu starten.
-**URL-Format:**
-`https://[Ihre-Symcon-URL]/hook/secrets_[ID]?portal=1`
+### 7.3 Nutzung im Alltag
 
-Nach erfolgreichem Scan ist Ihr Browser für 60 Minuten (Standard) autorisiert.
+- **Login-Portal:** Sie können das Portal nutzen, um eine Sitzung für Ihren Browser zu starten. URL: `https://[Ihre-Symcon-URL]/hook/secrets_[ID]?portal=1`. Nach erfolgreichem Scan ist Ihr Browser für 60 Minuten autorisiert.
+- **Primär-/Backup-URL:** Passkeys und Sitzungs-Cookies bleiben jeweils an ihren exakten Origin gebunden. Bei einem Wechsel zur Backup-URL authentifizieren Sie sich dort erneut mit dem für diese URL registrierten Passkey.
+- **Passwort-Alternative:** Eine Anmeldung am Admin-Dashboard mit dem Admin-Passwort berechtigt dieselbe Browser-Sitzung am gleichen Origin auch für Portal-geschützte Webseiten.
+- **Integration in eigene Skripte:** Sie können die biometrische Prüfung in jedes WebHook-Skript einbauen:
 
-### 3.2 Integration in eigene Skripte
-Sie können die biometrische Prüfung in jedes beliebige WebHook-Skript einbauen. Wenn ein Benutzer nicht eingeloggt ist, wird er automatisch zum Biometrie-Portal umgeleitet und kehrt nach dem Scan zu Ihrem Skript zurück.
-
-**Beispiel-Skript:**
 ```php
 <?php
 $instanceID = 59597; // ID Ihrer SecretsManager Instanz
-
-// Prüfen, ob der Browser biometrisch autorisiert ist
 if (!SEC_IsPortalAuthenticated($instanceID)) {
-    // Falls nicht, Weiterleitung zum Login-Portal mit Rücksprung-URL
     $currentUrl = $_SERVER['REQUEST_URI'];
     $loginUrl = "/hook/secrets_" . $instanceID . "?portal=1&return=" . urlencode($currentUrl);
-    
     header("Location: " . $loginUrl);
     exit;
 }
-
-// Ab hier ist der Zugriff sicher
 echo "Willkommen! Ihr Zugriff wurde biometrisch verifiziert.";
 ```
 
-# 🛠️ Fortgeschrittene Administration & Biometrie-Verbund
+## 8. 🛠️ Fortgeschrittene Administration & Biometrie-Verbund
 
-## 1. Das Admin-Dashboard
+### 8.1 Das Admin-Dashboard
+
 Das Admin-Dashboard ist eine zentrale Steuerseite, die über den WebHook aufgerufen werden kann. Es dient dazu, Registrierungs-Links für alle im System befindlichen Master- und Slave-Instanzen automatisch zu generieren.
 
-### 1.1 Zugriffsschutz (Zweistufig)
-Der Zugriff auf das Dashboard ist besonders geschützt:
-*   **Erst-Login:** Erfolgt über ein spezielles Admin-Passwort in der URL: 
-    `?admin=1&pass=[AdminPortal-Passwort]`
-*   **Folge-Logins:** Sobald ein Gerät einmal per Passwort autorisiert wurde, erkennt das Modul die biometrische Sitzung. Zukünftige Aufrufe benötigen nur noch den Fingerabdruck/Passkey über `?admin=1`.
+**Zugriffsschutz:**
 
----
+- **Erst-Login:** Das Admin-Passwort wird über ein POST-Formular übermittelt und erscheint niemals in der URL.
+- **Folgezugriffe:** Die erfolgreiche Anmeldung erzeugt eine kurzlebige, widerrufbare Cookie-Sitzung. Eine normale Passkey-Sitzung erhält keine Administratorrechte.
 
-## 2. Sicherheits-Architektur (Zwei-Passwort-Konzept)
+### 8.2 Sicherheits-Architektur (Zwei-Passwort-Konzept)
+
 Um maximale Sicherheit zu gewährleisten, nutzt das System zwei getrennte Passwörter im Tresor:
 
-1.  **AdminPortal (Record `AdminPortal` -> Feld `PW`):**
-    *   **Zweck:** Schützt das Dashboard.
-    *   **Sicherheit:** Sollte niemals geteilt werden. Ermöglicht den Zugriff auf alle System-Links.
-2.  **RegistrationPassword (Record `RegistrationPassword` -> Feld `PW`):**
-    *   **Zweck:** Schützt den eigentlichen Registrierungs-Vorgang eines neuen Geräts.
-    *   **Sicherheit:** Dieses Passwort ist Teil der Registrierungs-Links (`?register=1&pass=...`).
+1.  **AdminPortal (Record `AdminPortal` -> Feld `PW`):** Schützt das Dashboard. Sollte niemals geteilt werden. Ermöglicht den Zugriff auf alle System-Links und dient optional als Passwort-Alternative für Portal-geschützte Webseiten.
+2.  **RegistrationPassword (Record `RegistrationPassword` -> Feld `PW`):** Schützt das Registrierungsformular unter `?register=1`.
+
+### 8.3 Passkeys in verteilten Systemen (Master/Slave)
+
+- **Das Multi-Domain-Prinzip:** Passkeys sind kryptografisch an eine exakte Domain (URL) gebunden. Ein Gerät muss für jede URL einmal registriert werden. Ein Key für `master.com` wird niemals für `slave.com` funktionieren.
+- **Intelligente Synchronisation (Merging):** Damit der Master beim Synchronisieren nicht die mühsam registrierten Passkeys auf den Slaves löscht, verfügt das Modul über eine Merging-Logik. Lokale biometrische Schlüssel bleiben auf dem jeweiligen System erhalten, auch wenn der Master ein Update sendet.
+
+## 9. PHP API (Nutzung in Skripten)
+
+```php
+$id = 59597;
+// 1. Einfaches Secret auslesen (flache Struktur)
+$pw = SEC_GetSecret($id, "Spotify");
+// 2. Tief verschachteltes Secret auslesen (Pfad-Logik)
+$ip = SEC_GetSecret($id, "Standorte/Produktion/SPS_Passwort");
+// 3. Alle verfügbaren Schlüssel der aktuellen Ebene auflisten
+$keys = json_decode(SEC_GetKeys($id), true);
+```
 
 ---
 
-## 3. Passkeys in verteilten Systemen (Master/Slave)
-Passkeys sind aus Sicherheitsgründen kryptografisch an eine exakte **Domain (URL)** gebunden.
-
-### 3.1 Das Multi-Domain-Prinzip
-Wenn Sie einen Master und mehrere Slaves (mit unterschiedlichen URLs) betreiben, muss ein Gerät für **jede URL einmal registriert** werden. Ein Key für `master.ipmagic.de` wird vom Browser niemals für `slave.ipmagic.de` herausgegeben.
-
-### 3.2 Intelligente Synchronisation (Merging)
-Damit der Master beim Synchronisieren nicht die mühsam registrierten Passkeys auf den Slaves löscht, verfügt das Modul über eine **Merging-Logik**:
-*   Der Slave empfängt die Passwörter vom Master.
-*   Der Slave erkennt seine lokal registrierten Geräte (`__AUTH__`-Ordner).
-*   Das Modul führt beide Datensätze zusammen.
-*   **Ergebnis:** Lokale biometrische Schlüssel bleiben auf dem jeweiligen System dauerhaft erhalten, auch wenn der Master ein Update sendet.
-
 ---
 
-## 4. Nutzung im Betrieb
+# 🔐 SymconSecrets – Documentation (V 3.0)
 
-### Einbindung in Skripte
-Verwenden Sie die Funktion `SEC_IsPortalAuthenticated($id)`, um WebHook-Skripte zu schützen. Das Modul prüft automatisch die IP-Adresse und den Browser-Typ, um Sitzungshijacking zu verhindern.
+## 1. Why do you need this module in IP-Symcon?
 
-### Synchronisation der Passkeys
-Falls Sie einen Cloud-Passwortmanager (Google, Apple, Microsoft) nutzen, werden erstellte Passkeys automatisch zwischen Ihren Geräten synchronisiert. Eine erneute Registrierung für ein Tablet oder ein zweites Handy ist in diesem Fall oft nicht notwendig.
+By default, IP-Symcon stores all variable contents, scripts, and configurations in plaintext within the `settings.json` file. This leads to several security issues:
 
----
+- **Plaintext Storage:** Passwords for services (Spotify, MQTT, databases, cameras) are stored in plaintext in the configuration file.
+- **Unsafe Backups:** A system backup automatically contains all passwords. Anyone with access to the backup has access to all your accounts.
+- **Visibility:** Any user with access to the IP-Symcon management console can read passwords in scripts or variables.
+- **Maintenance Effort:** In distributed systems, passwords must be manually maintained on each system.
 
-English Summary (Updated)
+## 2. Solutions Provided (Zero-Knowledge Concept)
 
-SymconSecrets is a secure credential manager for IP-Symcon that encrypts secrets using AES-128-GCM.
+The SymconSecrets module addresses these risks through a consistent security-by-design approach and offers significant operational advantages:
 
-Key Features
+- **Encryption (AES-128-GCM):** All secrets are encrypted using AES-128-GCM (Authenticated Encryption). The database contains only unreadable "blob" data. Plaintext never hits the disk.
+- **Hardware Separation (Key Isolation):** The decryption key (`master.key`) is stored as a physical file on the operating system (e.g., USB stick or protected folder), separate from the Symcon database.
+- **Stateless Editor (Security Update):** Unlike traditional modules, SymconSecrets does not store passwords in the instance properties during input. Data is transmitted directly from the browser to the server's RAM. As a result, passwords never end up unencrypted in the `settings.json`.
+- **Centralized Management:** Changes (e.g., password updates) are made at a single point (Master) and are **immediately available system-wide** on all Slaves through automatic synchronization. This eliminates manual maintenance and prevents inconsistencies in distributed environments.
+- **Zero-Convention Import:** Automatic folder detection without technical metadata or special syntax. The module analyzes the shape of your JSON independently.
 
-Zero-Knowledge Storage: Encrypted blobs in the database; plaintext never hits the disk.
+## 3. How does the module work? (Functionality)
 
-Hardware Separation: Master Key is stored on the OS file system, not in the Symcon settings.
+The module operates according to the vault principle:
 
-Stateless Editor (New): Plaintext secrets are transmitted directly from the browser to the server's RAM. They are never stored as module properties, ensuring that settings.json remains free of sensitive cleartext even during the configuration phase.
+- **The Vault:** A string variable in IP-Symcon containing the encrypted JSON package.
+- **The Master Key:** A file (`master.key`) located locally on the server.
+- **In-Memory Access:** Decryption takes place exclusively in the random access memory (RAM).
+- **Stateless UI:** When the editor is opened, the JSON object is displayed in the browser. As soon as the console is closed, the plaintext in the RAM is deleted. No storage takes place on the hard disk as long as the data has not been encrypted.
+- **Synchronization (Master -> Slave):** The Master sends the encrypted package via a WebHook to the Slaves (secured via HTTPS, Sync Token, and optional Basic Auth).
 
-Auto-Sync: Automated, secure distribution from Master to multiple Slaves.
+## 4. System Roles (Operation Modes)
 
-Security Note on Stateless UI
+- **Master (Sender):** The central instance ("Single Source of Truth"). Manages data and pushes it securely to Slaves.
+- **Slave (Receiver):** Receives encrypted updates. Local edits to the vault are not intended and will be overwritten during the next sync.
+- **Standalone:** Isolated local vault without network features. All synchronization options (Token, Slaves) are automatically hidden.
 
-Because secrets are not stored in module properties, unsaved changes in the JSON editor will be lost if the management console is closed before clicking "Encrypt & Save". This is a deliberate security feature to prevent accidental cleartext leaks to the file system.
+## 5. Configuration Guide (Form Reference)
 
-PHP Usage (API)
-code
-PHP
-download
-content_copy
-expand_less
-$instanceID = 12345;
+### 5.1 Security Configuration & Initial Setup
 
-// Get a single password
-$password = SEC_GetSecret($instanceID, 'Spotify');
+1.  **System Role:** Choose Master, Slave, or Standalone.
+2.  **Directory Path:** Absolute OS path for the `master.key` (e.g., `/var/lib/symcon_keys/` or `/secrets`).
+3.  **Check Directory Permissions:** Validates that the Symcon service has R/W access to the target directory. This is mandatory for automatic key generation.
+4.  **Initialization:** Click "Apply" to initialize the `master.key`.
 
-// Get a complex configuration array
-$config = json_decode(SEC_GetSecret($instanceID, 'MySQL_Config'), true);
+### 5.2 Synchronization & Linking (Master Only)
 
-// List all available keys
-$keys = json_decode(SEC_GetKeys($instanceID), true);
----
----
+- **Sync Token (Shared Secret):** The "house key" for communication between Master and Slave.
+  - **Generate Random Token:** Creates a secure, random 32-byte token.
+  - **Show/Copy Token:** Displays the token in plaintext for entry into the Slave instance.
+  - **Save Token (Encrypted):** Stores the token encrypted in the `system.vault` file. **Important:** Synchronization is not possible without this step.
+- **Slave WebHooks (Table):** Define your remote targets.
+  - **Server (Label):** Display name for your overview (e.g., "Holiday Home").
+  - **URL:** The Slave's WebHook URL (Format: `https://[IP-or-DNS]/hook/secrets_[ID]`).
+  - **TLS Mode:** _Strict_ (CA-validated) or _Pinned_ (validated via SHA-256 fingerprint, ideal for self-signed certificates in a local network).
+  - **Key Provisioning:** Determines if the `master.key` is included in every sync (_Sync Payload_).
+- **Basic-Auth Passwords:** Passwords for the Slave WebHooks can be stored encrypted in the expansion panel (integrated password manager for Slaves).
 
-# 🔐 Biometric Authentication (Passkeys)
+### 5.3 Actions & Maintenance
 
-## 1. Overview
-The Passkey feature allows you to protect access to your vault or custom WebHook scripts using biometrics (fingerprint, face recognition, or Windows Hello). This replaces manual password entry with a secure cryptographic handshake (WebAuthn/FIDO2).
+- **Manually Sync:** Immediate push to all configured slaves.
+- **Rotate Encryption Key:** Generates a new master key and re-encrypts the entire vault and all system secrets with the new key.
 
-### Security Features:
-*   **Hardware-Bound:** The private key never leaves your device (smartphone or PC).
-*   **Zero-Knowledge:** Only the public key is stored in your vault within the hidden `__AUTH__` folder.
-*   **Stateless:** Authentication is managed in a RAM buffer and is tied to your IP address and browser.
+## 6. Vault Explorer (Usage)
 
----
+### 6.1 Navigation & Hybrid Structures
 
-## 2. Setup (Registration)
+The module automatically detects the structure of your data:
+
+- **Folders (📁):** Nodes containing sub-elements (arrays). For logical grouping (e.g., Locations, Categories).
+- **Records (🔑):** Nodes containing only data fields (User, PW, etc.).
+- **Hybrid Mode:** A folder can hold its own fields (e.g., location information) **and** simultaneously contain sub-folders. These fields appear at the top under the "🔑 FOLDER FIELDS" section.
+- **Navigation:** Click rows to drill down; use the "BACK" button to navigate up.
+- **⚙️ / 🗑️:** Icons to open the detail editor (popup) or delete an item.
+
+### 6.2 Creation & Import
+
+- **NEW AT THIS POSITION:** Enter a name for the element and select the type (+ FOLDER or + RECORD). Slashes (/) are forbidden in names.
+- **JSON Import:** Paste standard JSON structures into the "JSON IMPORT" field to overwrite and automatically "hydrate" the vault. This automatically resets the Explorer to "root".
+
+## 7. 🔐 Biometric Authentication (Passkeys)
+
+> **Security migration to version 5.4.0:** Earlier passkey records were not fully verified on the server and are no longer accepted. After upgrading, the portal remains disabled. Configure the primary `PortalOrigin` and, if needed, a `PortalBackupOrigin`; then sign in through each configured URL and choose **Start verified migration**. Each existing passkey is upgraded after a real signed assertion; no new passkey is registered.
+
+### 7.1 Overview
+
+Protect access to your vault or custom WebHook scripts using biometrics (fingerprint, face recognition, or Windows Hello). This replaces manual password entry with a secure cryptographic handshake (WebAuthn/FIDO2).
+
+**Security Features:**
+
+- **Hardware-Bound:** The private key never leaves your device (smartphone or PC).
+- **Server-verified:** Signature, challenge, ceremony type, exact origin, RP ID, user presence, and user verification are checked.
+- **Secure session:** Successful verification creates a random `Secure`/`HttpOnly`/`SameSite=Strict` cookie. Only its SHA-256 hash is held in RAM.
+- **Separated authority:** A normal passkey login grants portal access only. Migration and credential administration require a current admin-password session; the registration password authorizes only its single registration ceremony.
+- **Immediate revocation:** Disabling the portal or revoking sessions also invalidates pending login, migration, and registration challenges.
+- **Runtime availability:** A pending portal revocation blocks portal sessions and credential changes while ordinary vault reads remain available.
+- **Generation-bound password authorization:** Password login and session validation cannot cross a concurrent completed or pending revocation.
+- **Live credential binding:** Passkey sessions and ceremonies already in progress are checked against a monotonic credential generation. Deletion or modification through the explorer, import, or device management invalidates existing sessions and pending ceremonies, and restoring the same record cannot revive them. This also covers legacy credentials awaiting migration. Temporary vault contention denies only the current request and preserves the session for a later retry.
+
+### 7.2 Setup (Registration)
 
 Before you can use a device, it must be linked once. This process is protected by a special password that you define yourself within the vault.
 
-### Step 1: Define the Registration Password
-1. Open the **Vault Explorer** in IP-Symcon.
-2. At the top level (**root**), create a new record named: `RegistrationPassword`.
-3. Open this record (⚙️) and add a field:
-   *   Name: `PW`
-   *   Value: A strong password of your choice (e.g., `my-secure-key`).
+**Step 1: Define the Registration Password**
+
+1. Open the Vault Explorer in IP-Symcon.
+2. At the top level (root), create a new record named: `RegistrationPassword`.
+3. Open this record (⚙️) and add a field: Name: `PW`, Value: A strong password of your choice.
 4. Click **💾 Save**.
 
-### Step 2: Link your Device
-Open the registration URL on the device you want to add (smartphone or PC). **Important: This only works over an encrypted HTTPS connection!**
+**Step 2: Configure the portal**
 
-**URL Format:**
-`https://[Your-Symcon-URL]/hook/secrets_[ID]?register=1&pass=[Your-PW]`
+1. Enter the exact primary HTTPS origin without a trailing slash in `PortalOrigin`.
+2. Optionally enter a second independent HTTPS origin in `PortalBackupOrigin`.
+3. The RP ID is safely derived from each origin hostname. Leave `PortalEnabled` off during migration.
 
-**Example:**
-`https://08a32d3d...ipmagic.de/hook/secrets_59597?register=1&pass=my-secure-key`
+**Step 3: Upgrade existing passkeys**
 
-Follow the instructions in the browser and touch your device's sensor. Once the message "✅ Device successfully registered!" appears, your device is linked.
+Open `https://[Your-Symcon-URL]/hook/secrets_[ID]?admin=1`, sign in with the admin password, and choose **Start verified migration**. Touch each existing passkey once. Repeat this through the backup URL if separate passkeys were registered there. This does not create a new passkey; it proves possession of the already stored key with a current signed assertion. Enable `PortalEnabled` after all existing passkeys have been upgraded.
 
----
+Use `?register=1` only if you later choose to add a genuinely new device.
 
-## 3. Daily Usage
+Credential records retain the legacy padded-Base64 ID and attestation while
+the hardened verifier uses a canonical Base64URL ID. This keeps both migrated
+and newly registered passkeys readable by the rollback branch. Rolling back
+also restores that branch's original authentication vulnerability, so the old
+portal must not be exposed to untrusted networks.
 
-### 3.1 Login Portal
-You can use the portal to start a session for your browser.
-**URL Format:**
-`https://[Your-Symcon-URL]/hook/secrets_[ID]?portal=1`
+### 7.3 Daily Usage
 
-After a successful scan, your browser is authorized for 60 minutes (default).
+- **Login Portal:** `https://[Your-Symcon-URL]/hook/secrets_[ID]?portal=1`. After a successful scan, your browser is authorized for 60 minutes.
+- **Primary/backup URL:** Passkeys and session cookies remain bound to their exact origin. When switching to the backup URL, authenticate there with a passkey registered for that URL.
+- **Revocation:** Disabling the portal or using the revoke action invalidates current sessions and all pending passkey ceremonies.
+- **Password fallback:** Signing in to the admin dashboard with the admin password also authorizes that browser session for portal-protected websites on the same origin.
+- **Integration into Custom Scripts:** You can integrate biometric verification into any WebHook script:
 
-### 3.2 Integration into Custom Scripts
-You can integrate biometric verification into any WebHook script. If a user is not logged in, they will be automatically redirected to the Biometric Portal and returned to your script after the scan.
-
-**Example Script:**
 ```php
 <?php
 $instanceID = 59597; // ID of your SecretsManager instance
-
-// Check if the browser is biometrically authorized
 if (!SEC_IsPortalAuthenticated($instanceID)) {
-    // If not, redirect to the Login Portal with a return URL
     $currentUrl = $_SERVER['REQUEST_URI'];
     $loginUrl = "/hook/secrets_" . $instanceID . "?portal=1&return=" . urlencode($currentUrl);
-    
     header("Location: " . $loginUrl);
     exit;
 }
-
-// Access is secure beyond this point
 echo "Welcome! Your access has been biometrically verified.";
 ```
----
 
-# 🛠️ Advanced Administration & Biometric Federation (English)
+## 8. 🛠️ Advanced Administration & Biometric Federation
 
-## 1. The Admin Dashboard
-The Admin Dashboard is a centralized management page accessible via WebHook. It automatically generates registration links for all configured Master and Slave instances within your federation.
+### 8.1 The Admin Dashboard
 
-### 1.1 Access Control (Two-Tier)
-Access to the dashboard is strictly regulated:
-*   **First-time Access:** Authorized via a dedicated Admin password in the URL:
-    `?admin=1&pass=[AdminPortal-Password]`
-*   **Subsequent Access:** Once a device has been authorized via password, the module establishes a biometric link. Future visits only require a fingerprint/Passkey scan via `?admin=1`.
+The Admin Dashboard is accessible through `?admin=1`. The admin password is submitted through a POST form and never appears in the URL. The dashboard generates password-free registration links for configured systems.
 
----
+### 8.2 Security Architecture (Two-Password Concept)
 
-## 2. Security Architecture (Two-Password Concept)
 For maximum security, the system utilizes two distinct passwords stored within the vault:
 
-1.  **AdminPortal (Record `AdminPortal` -> Field `PW`):**
-    *   **Purpose:** Protects the Admin Dashboard.
-    *   **Security:** Should never be shared. Grants access to all system-wide registration links.
-2.  **RegistrationPassword (Record `RegistrationPassword` -> Field `PW`):**
-    *   **Purpose:** Protects the actual device enrollment process.
-    *   **Security:** This password is embedded in the enrollment links (`?register=1&pass=...`).
+1.  **AdminPortal (Record `AdminPortal` -> Field `PW`):** Protects the Admin Dashboard. Should never be shared. Grants access to all system-wide registration links and provides the optional password fallback for portal-protected websites.
+2.  **RegistrationPassword (Record `RegistrationPassword` -> Field `PW`):** Protects the registration form at `?register=1`.
+
+### 8.3 Passkeys in Distributed Environments (Master/Slave)
+
+- **Multi-Domain Principle:** Passkeys are cryptographically bound to a specific Domain (URL). A device must be registered once for every URL. A key for `master.com` will never work for `slave.com`.
+- **Intelligent Synchronization (Merging):** Merging Logic prevents the Master from overwriting locally registered Passkeys on Slaves during a sync. Local biometric keys are preserved on each system, even after a Master update.
+
+## 9. PHP API Reference
+
+````php
+$id = 59597;
+// 1. Access a simple secret
+$pw = SEC_GetSecret($id, "Spotify");
+// 2. Access a nested secret using path logic
+$pass = SEC_GetSecret($id, "Locations/Production/PLC_Password");
+// 3. List all identifiers at the current level
+$keys = json_decode(SEC_GetKeys($id), true);
+
+
+Hier ist eine kompakte Dokumentation der **neuen Funktionen** des `SecretsManager`-Moduls auf Basis des jetzt getesteten Stands `5.3.0`. Die neue Version ergänzt eine **scoped Write-API** sowie **Backup/Restore lokaler Secrets**, während bestehende Passkeys in `__AUTH__` und globale Secrets weiter kompatibel bleiben.
+
+# SecretsManager 5.3.0 – Dokumentation der neuen Funktionen
+
+## Überblick
+
+Mit Version **5.3.0** wurden drei zentrale Erweiterungen eingeführt:
+
+1. **Schreib-API mit Scope**
+
+   * Secrets können jetzt gezielt als `global` oder `local` geschrieben werden.
+
+2. **Backup/Restore lokaler Secrets**
+
+   * Lokale Daten eines Systems können exportiert und wieder importiert werden.
+
+3. **Slave-sicherer Sync**
+
+   * Bei einem Master-Sync bleiben auf dem Slave die lokalen Bereiche
+
+     * `__AUTH__`
+     * `__LOCAL__`
+       erhalten.
 
 ---
 
-## 3. Passkeys in Distributed Environments (Master/Slave)
-For anti-phishing security, Passkeys are cryptographically bound to a specific **Domain (URL)**.
+## Grundprinzip der Datenbereiche
 
-### 3.1 Multi-Domain Principle
-When operating a Master and multiple Slaves (using different URLs), a device must be **registered once for every URL**. A browser will never provide a key registered for `master.ipmagic.de` to the site `slave.ipmagic.de`.
+### Globaler Bereich
 
-### 3.2 Intelligent Synchronization (Merging)
-To prevent the Master from overwriting locally registered Passkeys on Slaves during a sync, the module implements **Merging Logic**:
-*   The Slave receives password updates from the Master.
-*   The Slave identifies its locally registered devices (stored in the `__AUTH__` folder).
-*   The module merges both datasets.
-*   **Result:** Local biometric keys are preserved on each specific system, even after a full sync from the Master.
+Der normale Vault-Root bleibt der **globale replizierte Bereich**.
+
+Beispiel:
+
+```text
+GoogleNest
+└── SharedConnection
+````
+
+Dieser Bereich wird auf dem **Master** geschrieben und auf **Slaves** synchronisiert.
+
+### Lokaler Bereich
+
+Der neue Bereich `__LOCAL__` ist für **lokale Secrets**, die **nicht** repliziert werden.
+
+Beispiel:
+
+```text
+__LOCAL__
+└── GoogleNest
+    └── SharedConnection
+```
+
+### Lokaler Auth-/Passkey-Bereich
+
+Der bestehende Bereich `__AUTH__` bleibt unverändert und enthält lokale Passkeys / Auth-Daten. Dieser Bereich wird weiterhin bei Sync erhalten.
 
 ---
 
-## 4. Operational Usage
+# Neue öffentliche Funktionen
 
-### Script Integration
-Use the `SEC_IsPortalAuthenticated($id)` function to protect your custom WebHook scripts. The module automatically validates the IP address and Browser Agent to prevent session hijacking.
+## 1. `SetRecordFields`
 
-### Passkey Synchronization
-If you use a cloud-based password manager (Google, Apple, Microsoft), your Passkeys are automatically synchronized across your devices. In such cases, re-registering for a tablet or a second smartphone is usually not required.
+### Signatur
+
+```php id="18prkq"
+SEC_SetRecordFields(int $instanceID, string $path, array $fields, string $scope): bool
+```
+
+Intern im Modul:
+
+```php id="dju4yv"
+public function SetRecordFields(string $path, array $fields, string $scope): bool
+```
+
+### Zweck
+
+Schreibt flache Feldwerte in einen Record-Pfad.
+
+### Parameter
+
+#### `instanceID`
+
+Instanz-ID des `SecretsManager`
+
+#### `path`
+
+Pfad des Ziel-Records, z. B.:
+
+```text id="edphz8"
+GoogleNest/SharedConnection
+Camera/Zone1
+Mail/Gmail
+```
+
+#### `fields`
+
+Assoziatives Array mit flachen Feldwerten.
+
+Beispiel:
+
+```php id="95gu9d"
+[
+    'ClientID'     => 'abc',
+    'ClientSecret' => 'xyz',
+    'ProjectID'    => 'my-project'
+]
+```
+
+#### `scope`
+
+Erlaubte Werte:
+
+- `global`
+- `local`
+
+### Verhalten je Scope
+
+#### `scope = 'global'`
+
+- **nur auf Master erlaubt**
+- schreibt in den normalen globalen Vault-Bereich
+- löst auf Master anschließend `SyncSlaves()` aus
+
+#### `scope = 'local'`
+
+- auf **Master**, **Standalone** und **Slave** erlaubt
+- schreibt in den lokalen Bereich `__LOCAL__`
+- löst **keinen** Sync aus
+
+### Rückgabewert
+
+- `true` bei Erfolg
+- `false` bei Fehler oder unzulässiger Scope/Rollen-Kombination
 
 ---
+
+## Beispiele für `SetRecordFields`
+
+### Beispiel 1 – Globalen Datensatz auf Master schreiben
+
+```php id="5fzv0q"
+$result = SEC_SetRecordFields(12345, 'GoogleNest/SharedConnection', [
+    'ClientID'     => 'MASTER_CLIENT_ID_001',
+    'ClientSecret' => 'MASTER_CLIENT_SECRET_001',
+    'ProjectID'    => 'MASTER_PROJECT_001',
+    'AccountEmail' => 'master@example.com'
+], 'global');
+```
+
+### Ergebnis
+
+- Daten landen im **globalen Root-Bereich**
+- nur auf **Master** erlaubt
+- werden auf Slaves repliziert
+
+---
+
+### Beispiel 2 – Lokalen Datensatz auf Slave schreiben
+
+```php id="6ec3dg"
+$result = SEC_SetRecordFields(23456, 'GoogleNest/SharedConnection', [
+    'RefreshToken' => 'SLAVE_LOCAL_REFRESH_001',
+    'AccessToken'  => 'SLAVE_LOCAL_ACCESS_001',
+    'UpdatedBy'    => 'slave-local-test'
+], 'local');
+```
+
+### Ergebnis
+
+- Daten landen unter `__LOCAL__/GoogleNest/SharedConnection`
+- keine Replikation
+- auf Slave erlaubt
+
+---
+
+### Beispiel 3 – Unerlaubter globaler Write auf Slave
+
+```php id="0ixxpm"
+$result = SEC_SetRecordFields(23456, 'GoogleNest/SharedConnection', [
+    'ShouldFail' => 'yes'
+], 'global');
+```
+
+### Ergebnis
+
+- Rückgabewert `false`
+- Änderung wird abgewiesen
+
+---
+
+# 2. `ExportLocalSecrets`
+
+### Signatur
+
+```php id="qex8bi"
+SEC_ExportLocalSecrets(int $instanceID): string
+```
+
+Intern im Modul:
+
+```php id="rr6gmf"
+public function ExportLocalSecrets(): string
+```
+
+### Zweck
+
+Exportiert die **lokalen** Daten eines Systems als JSON.
+
+### Exportierte Bereiche
+
+- `__AUTH__`
+- `__LOCAL__`
+
+### Nicht exportiert
+
+- globaler replizierter Root-Bereich
+
+### Rückgabe
+
+- JSON-String
+- leerer String bei Fehler
+
+---
+
+## Beispiel für `ExportLocalSecrets`
+
+```php id="1v80jj"
+$json = SEC_ExportLocalSecrets(23456);
+echo $json;
+```
+
+### Beispielausgabe
+
+```json id="1set69"
+{
+  "__AUTH__": {
+    "device_1771079664": {
+      "credentialId": "...",
+      "attestation": "..."
+    }
+  },
+  "__LOCAL__": {
+    "GoogleNest": {
+      "SharedConnection": {
+        "RefreshToken": "SLAVE_LOCAL_REFRESH_001",
+        "AccessToken": "SLAVE_LOCAL_ACCESS_001",
+        "UpdatedBy": "slave-local-test"
+      }
+    }
+  }
+}
+```
+
+---
+
+# 3. `ImportLocalSecrets`
+
+### Signatur
+
+```php id="762m4r"
+SEC_ImportLocalSecrets(int $instanceID, string $json): bool
+```
+
+Intern im Modul:
+
+```php id="pitk1j"
+public function ImportLocalSecrets(string $json): bool
+```
+
+### Zweck
+
+Importiert zuvor exportierte lokale Daten zurück in den Vault.
+
+### Importierte Bereiche
+
+- `__AUTH__`
+- `__LOCAL__`
+
+### Nicht verändert
+
+- globaler replizierter Root-Bereich
+
+### Sync-Verhalten
+
+- löst **keinen** `SyncSlaves()` aus
+
+### Rückgabewert
+
+- `true` bei Erfolg
+- `false` bei Fehler
+
+---
+
+## Beispiel für `ImportLocalSecrets`
+
+```php id="732l8g"
+$json = SEC_ExportLocalSecrets(23456);
+
+$result = SEC_ImportLocalSecrets(23456, $json);
+```
+
+### Ergebnis
+
+- lokale Passkeys in `__AUTH__` werden wiederhergestellt
+- lokale Secrets in `__LOCAL__` werden wiederhergestellt
+- globale Daten bleiben unangetastet
+
+---
+
+# Rollenlogik
+
+## Master
+
+### `global`
+
+- erlaubt
+- schreibt global
+- repliziert
+
+### `local`
+
+- erlaubt
+- schreibt nur lokal unter `__LOCAL__`
+- keine Replikation
+
+## Standalone
+
+### `global`
+
+- nicht erlaubt
+
+### `local`
+
+- erlaubt
+
+## Slave
+
+### `global`
+
+- nicht erlaubt
+
+### `local`
+
+- erlaubt
+
+Diese Rollenlogik ist in der neuen Scope-Validierung und Write-Logik implementiert.
+
+---
+
+# Sync-Verhalten
+
+## Master → Slave
+
+Wenn der Master globale Vault-Daten synchronisiert:
+
+- normaler globaler Bereich wird aktualisiert
+- auf dem Slave bleiben zusätzlich erhalten:
+  - `__AUTH__`
+  - `__LOCAL__`
+
+Das wird durch die neue Preserve-Logik im Slave-Sync sichergestellt.
+
+---
+
+# UI-Funktionen
+
+Zusätzlich zur API gibt es eine kleine UI-Erweiterung für manuelles Backup/Restore:
+
+## Neue UI-Sektion
+
+**LOCAL SECRETS BACKUP / RESTORE**
+
+### Funktionen
+
+- **Export Local Secrets**
+- Anzeige des Export-JSON
+- Eingabe eines JSON für Restore
+- **Import Local Secrets**
+
+### Zweck
+
+Manuelle Sicherung und Wiederherstellung lokaler Daten ohne externes Script. Diese UI wurde als additive Erweiterung eingebaut und nutzt intern dieselbe API-Logik.
+
+---
+
+# Wichtige Hinweise
+
+## 1. Feldstruktur
+
+`SetRecordFields()` erwartet **flache Felder**:
+
+- erlaubt: Strings, Zahlen, boolsche Werte, die zu String konvertiert werden
+- nicht erlaubt: Arrays / Objekte als Feldwert
+
+## 2. Interne Keys
+
+Feldnamen mit internem Präfix wie `__...` dürfen nicht als normale Record-Felder gesetzt werden.
+
+## 3. Upward Compatibility
+
+Bestehende Passkeys und bestehende globale Secrets bleiben kompatibel:
+
+- `__AUTH__` bleibt lokaler Auth-Bereich
+- normaler Vault-Root bleibt globaler Bereich
+- `__LOCAL__` ist neu und rein additiv
+
+---
+
+# Praktische Beispiele
+
+## A. Gemeinsame globale Nest-Verbindung auf Master
+
+```php id="07ah5r"
+SEC_SetRecordFields(12345, 'GoogleNest/SharedConnection', [
+    'ClientID'     => 'nest-client-id',
+    'ClientSecret' => 'nest-client-secret',
+    'ProjectID'    => 'nest-project',
+    'AccountEmail' => 'admin@example.com'
+], 'global');
+```
+
+## B. Lokaler Refresh-Token auf Slave
+
+```php id="7j2jm9"
+SEC_SetRecordFields(23456, 'GoogleNest/SharedConnection', [
+    'RefreshToken' => 'local-refresh-token',
+    'AccessToken'  => 'local-access-token'
+], 'local');
+```
+
+## C. Lokale Daten sichern
+
+```php id="8vazfc"
+$backup = SEC_ExportLocalSecrets(23456);
+file_put_contents('/tmp/slave_local_backup.json', $backup);
+```
+
+## D. Lokale Daten wiederherstellen
+
+```php id="t0f7if"
+$backup = file_get_contents('/tmp/slave_local_backup.json');
+SEC_ImportLocalSecrets(23456, $backup);
+```
+
+---
+
+# Zusammenfassung
+
+## Neue Funktionen
+
+- `SEC_SetRecordFields(..., $scope)`
+- `SEC_ExportLocalSecrets(...)`
+- `SEC_ImportLocalSecrets(...)`
+
+## Neue Bereiche
+
+- `__LOCAL__` für lokale Secrets
+- `__AUTH__` bleibt für lokale Passkeys/Auth
+
+## Zentrale Regeln
+
+- `global` nur auf Master
+- `local` lokal auf jeder Rolle
+- Slave-Sync erhält `__AUTH__` und `__LOCAL__`
+
+## Ergebnis
+
+Das Modul unterstützt jetzt gleichzeitig:
+
+- globale replizierte Secrets
+- lokale slave-spezifische Secrets
+- lokale Passkeys
+- Backup/Restore lokaler Daten

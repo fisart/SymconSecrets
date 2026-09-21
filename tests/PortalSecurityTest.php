@@ -1,0 +1,181 @@
+<?php
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/../SecretsManager/libs/PortalSecurity.php';
+
+function check(bool $condition, string $message): void
+{
+    if (!$condition) {
+        throw new RuntimeException($message);
+    }
+}
+
+$binary = random_bytes(64);
+$encoded = SecretsPortalSecurity::base64UrlEncode($binary);
+check(SecretsPortalSecurity::base64UrlDecode($encoded) === $binary, 'base64url round trip failed');
+check(SecretsPortalSecurity::base64UrlDecode('%%%') === null, 'invalid base64url was accepted');
+check(SecretsPortalSecurity::base64UrlDecode('') === null, 'empty base64url was accepted');
+
+$error = '';
+check(
+    SecretsPortalSecurity::validateRpConfiguration('symcon.example.com', 'https://symcon.example.com', $error),
+    'valid RP configuration was rejected: ' . $error
+);
+check(
+    SecretsPortalSecurity::validateRpConfiguration('example.com', 'https://symcon.example.com:8443', $error),
+    'valid subdomain RP configuration was rejected: ' . $error
+);
+check(
+    !SecretsPortalSecurity::validateRpConfiguration('example.com', 'http://example.com', $error),
+    'insecure non-local origin was accepted'
+);
+check(
+    !SecretsPortalSecurity::validateRpConfiguration('example.com', 'https://evil-example.com', $error),
+    'suffix-confusion origin was accepted'
+);
+check(
+    !SecretsPortalSecurity::validateRpConfiguration('example.com', 'https://example.com/path', $error),
+    'origin with a path was accepted'
+);
+check(
+    !SecretsPortalSecurity::validateRpConfiguration('example.com', 'https://example.com:443', $error),
+    'origin with an explicit default port was accepted'
+);
+
+$primary = SecretsPortalSecurity::normalizeRpProfile(
+    'primary.example.com',
+    'https://primary.example.com',
+    $error
+);
+$backup = SecretsPortalSecurity::normalizeRpProfile(
+    'backup.example.net',
+    'https://backup.example.net',
+    $error
+);
+check(is_array($primary) && is_array($backup), 'valid primary/backup profiles were rejected: ' . $error);
+$profiles = [$primary, $backup];
+check(
+    SecretsPortalSecurity::selectRpProfile($profiles, 'primary.example.com') === $primary,
+    'primary host did not select the primary profile'
+);
+check(
+    SecretsPortalSecurity::selectRpProfile($profiles, 'backup.example.net') === $backup,
+    'backup host did not select the backup profile'
+);
+check(
+    SecretsPortalSecurity::selectRpProfile($profiles, 'attacker.example') === null,
+    'unconfigured Host header selected a WebAuthn profile'
+);
+check(
+    SecretsPortalSecurity::selectRpProfile($profiles, "primary.example.com\r\nX-Test: injected") === null,
+    'Host header containing control characters was accepted'
+);
+
+$challenge = random_bytes(32);
+$clientData = json_encode([
+    'type'        => 'webauthn.get',
+    'challenge'   => SecretsPortalSecurity::base64UrlEncode($challenge),
+    'origin'      => 'https://symcon.example.com',
+    'crossOrigin' => false
+], JSON_UNESCAPED_SLASHES);
+
+check(
+    SecretsPortalSecurity::validateClientData(
+        (string)$clientData,
+        'webauthn.get',
+        $challenge,
+        'https://symcon.example.com'
+    ) !== null,
+    'valid client data was rejected'
+);
+check(
+    SecretsPortalSecurity::validateClientData(
+        (string)$clientData,
+        'webauthn.create',
+        $challenge,
+        'https://symcon.example.com'
+    ) === null,
+    'wrong ceremony type was accepted'
+);
+check(
+    SecretsPortalSecurity::validateClientData(
+        (string)$clientData,
+        'webauthn.get',
+        random_bytes(32),
+        'https://symcon.example.com'
+    ) === null,
+    'wrong challenge was accepted'
+);
+check(
+    SecretsPortalSecurity::validateClientData(
+        (string)$clientData,
+        'webauthn.get',
+        $challenge,
+        'https://other.example.com'
+    ) === null,
+    'wrong origin was accepted'
+);
+
+$crossOriginNull = json_encode([
+    'type'        => 'webauthn.get',
+    'challenge'   => SecretsPortalSecurity::base64UrlEncode($challenge),
+    'origin'      => 'https://symcon.example.com',
+    'crossOrigin' => null
+], JSON_UNESCAPED_SLASHES);
+check(
+    SecretsPortalSecurity::validateClientData(
+        (string)$crossOriginNull,
+        'webauthn.get',
+        $challenge,
+        'https://symcon.example.com'
+    ) === null,
+    'ambiguous cross-origin state was accepted'
+);
+
+$framedData = json_encode([
+    'type'        => 'webauthn.get',
+    'challenge'   => SecretsPortalSecurity::base64UrlEncode($challenge),
+    'origin'      => 'https://symcon.example.com',
+    'crossOrigin' => false,
+    'topOrigin'   => 'https://symcon.example.com'
+], JSON_UNESCAPED_SLASHES);
+check(
+    SecretsPortalSecurity::validateClientData(
+        (string)$framedData,
+        'webauthn.get',
+        $challenge,
+        'https://symcon.example.com'
+    ) === null,
+    'framed client data was accepted'
+);
+
+check(SecretsPortalSecurity::sanitizeReturnUrl('/hook/example?x=1') === '/hook/example?x=1', 'valid local return URL was rejected');
+check(SecretsPortalSecurity::sanitizeReturnUrl('https://evil.example/') === '/', 'external return URL was accepted');
+check(SecretsPortalSecurity::sanitizeReturnUrl('//evil.example/') === '/', 'scheme-relative return URL was accepted');
+check(SecretsPortalSecurity::sanitizeReturnUrl('/safe\\evil') === '/', 'backslash return URL was accepted');
+check(SecretsPortalSecurity::sanitizeReturnUrl('/safe</script>') === '/safe</script>', 'local return URL changed unexpectedly');
+
+$exactStream = fopen('php://temp', 'w+b');
+check(is_resource($exactStream), 'could not create exact-size request stream');
+fwrite($exactStream, str_repeat('a', 32));
+rewind($exactStream);
+check(SecretsPortalSecurity::readStreamLimited($exactStream, 32) === str_repeat('a', 32), 'exact-size request was rejected');
+fclose($exactStream);
+
+$oversizedStream = fopen('php://temp', 'w+b');
+check(is_resource($oversizedStream), 'could not create oversized request stream');
+fwrite($oversizedStream, str_repeat('b', 33));
+rewind($oversizedStream);
+check(SecretsPortalSecurity::readStreamLimited($oversizedStream, 32) === null, 'oversized request was accepted');
+fclose($oversizedStream);
+
+check(SecretsPortalSecurity::validateBackupFlags(false, false), 'valid non-backup credential flags were rejected');
+check(SecretsPortalSecurity::validateBackupFlags(true, false), 'valid backup-eligible credential flags were rejected');
+check(SecretsPortalSecurity::validateBackupFlags(true, true), 'valid backed-up credential flags were rejected');
+check(!SecretsPortalSecurity::validateBackupFlags(false, true), 'BS without BE was accepted');
+check(!SecretsPortalSecurity::validateBackupFlags(false, false, true), 'changed backup eligibility was accepted');
+check(SecretsPortalSecurity::validateBackupFlags(true, false, true), 'stable backup eligibility was rejected');
+
+echo "PortalSecurityTest: OK\n";
