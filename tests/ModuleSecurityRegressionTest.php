@@ -20,7 +20,15 @@ $required = [
     "RegisterPropertyString(\"PortalBackupOrigin\", \"\")",
     "RegisterPropertyBoolean(\"PortalDebugEnabled\", false)",
     "RegisterVariableString(\"PortalDebugMessage\", \"Portal debug (last event)\")",
-    "RecordPortalDebug('migration-unhandled-exception', \$e)",
+    "'migration-unhandled-exception',",
+    'SendPortalDiagnosticJson(',
+    "MODULE_VERSION = '5.4.3'",
+    "'moduleVersion'    => self::MODULE_VERSION",
+    'invalid JSON response',
+    'body.diagnostic',
+    "'challengeMatches'",
+    "'rpIdHashMatches'",
+    "'authorizationFailure'",
     'SecretsPortalSecurity::normalizeRpProfile',
     'SecretsPortalSecurity::selectRpProfile',
     'ChallengeMatchesCurrentPortalProfile(',
@@ -220,7 +228,7 @@ if ($debugStart === false || $debugEnd === false || $debugEnd <= $debugStart) {
     throw new RuntimeException('Could not isolate sanitized portal diagnostics');
 }
 $debug = substr($module, $debugStart, $debugEnd - $debugStart);
-foreach (['PortalDebugEnabled', 'get_class($exception)', 'basename($exception->getFile())', 'substr($exceptionMessage, 0, 768)'] as $needle) {
+foreach (['PortalDebugEnabled', 'self::MODULE_VERSION', 'GetPortalDiagnosticExplanation(', 'SanitizePortalDiagnosticFacts(', 'GetPortalSafeExceptionSummary(', 'facts=', 'get_class($exception)', 'basename($exception->getFile())', 'substr($message, 0, 768)'] as $needle) {
     if (!str_contains($debug, $needle)) {
         throw new RuntimeException('Portal diagnostics control missing: ' . $needle);
     }
