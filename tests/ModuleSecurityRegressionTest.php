@@ -92,6 +92,16 @@ if ($sessionInsert === false || $portalUnlock === false || $portalUnlock <= $ses
     throw new RuntimeException('Passkey session is not committed while the portal-state lock is held');
 }
 
+$sessionContextStart = strpos($module, 'private function GetPortalSessionContext(');
+$sessionContextEnd = strpos($module, 'private function PortalSessionMatchesRequirements(', $sessionContextStart === false ? 0 : $sessionContextStart);
+if ($sessionContextStart === false || $sessionContextEnd === false || $sessionContextEnd <= $sessionContextStart) {
+    throw new RuntimeException('Could not isolate GetPortalSessionContext');
+}
+$sessionContext = substr($module, $sessionContextStart, $sessionContextEnd - $sessionContextStart);
+if (!str_contains($sessionContext, 'PORTAL_REVOCATION_PENDING_BUFFER')) {
+    throw new RuntimeException('Pending revocation does not fail closed for portal-session consumers');
+}
+
 $migrationStart = strpos($module, 'private function VerifyLegacyMigration(): void');
 $migrationEnd = strpos($module, 'private function ServeRegistrationUI(', $migrationStart);
 if ($migrationStart === false || $migrationEnd === false || $migrationEnd <= $migrationStart) {

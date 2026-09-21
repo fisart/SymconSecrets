@@ -317,6 +317,13 @@ $session = invokePrivate($module, 'CreatePortalSessionStateLocked', [
     (int)$module->testGetBuffer('PortalRevocationGenerationV2')
 ]);
 stateCheck(is_array($session), 'could not create credential-bound session');
+$_COOKIE['SEC_PORTAL_V2_77'] = (string)$session['token'];
+$module->testSetBuffer('PortalRevocationPendingV2', '1');
+stateCheck(
+    invokePrivate($module, 'GetPortalSessionContext', [true, ['portal'], ['passkey']]) === null,
+    'pending revocation left an existing portal session usable'
+);
+$module->testSetBuffer('PortalRevocationPendingV2', '0');
 stateCheck(invokePrivate($module, 'DeleteLocalPasskey', ['device_race']), 'credential deletion failed');
 $remainingSessions = json_decode($module->testGetBuffer('PortalSessionsV2'), true);
 stateCheck(

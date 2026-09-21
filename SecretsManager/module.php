@@ -3376,6 +3376,12 @@ class SecretsManager extends IPSModuleStrict
      */
     private function GetPortalSessionContext(bool $requireEnabled, array $requiredScopes = [], ?array $allowedMethods = null): ?array
     {
+        // A failed revocation attempt must block every consumer of portal
+        // sessions, including external scripts that call IsPortalAuthenticated.
+        // ApplyChanges will retry the generation bump and state purge.
+        if ($this->GetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER) === '1') {
+            return null;
+        }
         if ($requireEnabled && !$this->ReadPropertyBoolean('PortalEnabled')) {
             return null;
         }
