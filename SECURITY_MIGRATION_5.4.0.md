@@ -47,9 +47,12 @@ optional password fallback for portal-protected pages on the same origin.
 Password authorization captures the current revocation generation before
 verification and may commit a session or registration ceremony only in that
 same generation. Session validation rechecks pending revocation after taking
-the portal-state lock. Passkey sessions are also bound to the exact live local
-credential record; deleting or modifying it through any vault editing path
-invalidates the session on its next use.
+the portal-state lock and again after any wait for the vault lock. Passkey
+sessions are bound to the exact live local credential record and to a monotonic
+credential generation. Deleting or modifying a credential through any vault
+editing path invalidates existing sessions, and restoring the identical record
+cannot revive them. Temporary vault contention denies the current request
+without deleting an otherwise valid session.
 
 Use Remove all passkeys only if you intentionally want a clean reset. Use the
 registration page only when adding a genuinely new device.

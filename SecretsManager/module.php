@@ -28,6 +28,7 @@ class SecretsManager extends IPSModuleStrict
     private const PORTAL_SESSION_BUFFER = 'PortalSessionsV2';
     private const PORTAL_RATE_BUFFER = 'PortalRateLimitsV2';
     private const PORTAL_REVOCATION_BUFFER = 'PortalRevocationGenerationV2';
+    private const PORTAL_CREDENTIAL_GENERATION_BUFFER = 'PortalCredentialGenerationV2';
     private const PORTAL_REVOCATION_PENDING_BUFFER = 'PortalRevocationPendingV2';
     private const PORTAL_ENABLED_BUFFER = 'PortalEnabledLastV2';
     private const PORTAL_COOKIE_PREFIX = 'SEC_PORTAL_V2_';
@@ -3445,9 +3446,25 @@ class SecretsManager extends IPSModuleStrict
             if (!$this->PortalSessionMatchesRequirements($session, $profile['origin'], $requiredScopes, $allowedMethods, $now)) {
                 return null;
             }
-            if (!$this->IsPasskeySessionCredentialCurrent($session, $profile['origin'])) {
+            $credentialState = $this->IsPasskeySessionCredentialCurrent($session, $profile['origin']);
+            if ($credentialState === null) {
+                // A busy or temporarily unreadable vault denies this request,
+                // but is not evidence that the credential was revoked.
+                return null;
+            }
+            if (!$credentialState) {
                 unset($sessions[$tokenHash]);
                 $this->SetBuffer(self::PORTAL_SESSION_BUFFER, (string)json_encode($sessions));
+                return null;
+            }
+            // Credential validation may wait for the vault lock. A revocation
+            // request publishes its pending marker without that lock, so check
+            // again at the final acceptance boundary.
+            if (
+                $this->GetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER) === '1' ||
+                ($requireEnabled && !$this->ReadPropertyBoolean('PortalEnabled')) ||
+                !$this->PortalSessionMatchesRequirements($session, $profile['origin'], $requiredScopes, $allowedMethods, time())
+            ) {
                 return null;
             }
 
@@ -3479,6 +3496,13 @@ class SecretsManager extends IPSModuleStrict
             return false;
         }
 
+        if (
+            (string)($session['method'] ?? '') === 'passkey' &&
+            (int)($session['credentialGeneration'] ?? -1) !== $this->GetPortalCredentialGeneration()
+        ) {
+            return false;
+        }
+
         $scopes = $session['scopes'] ?? [];
         if (!is_array($scopes)) {
             return false;
@@ -3501,7 +3525,7 @@ class SecretsManager extends IPSModuleStrict
      *
      * @param mixed $session
      */
-    private function IsPasskeySessionCredentialCurrent($session, string $origin): bool
+    private function IsPasskeySessionCredentialCurrent($session, string $origin): ?bool
     {
         if (!is_array($session) || (string)($session['method'] ?? '') !== 'passkey') {
             return true;
@@ -3509,15 +3533,26 @@ class SecretsManager extends IPSModuleStrict
 
         $deviceKey = (string)($session['credentialDeviceKey'] ?? '');
         $expectedBinding = (string)($session['credentialBinding'] ?? '');
-        if ($deviceKey === '' || $expectedBinding === '') {
+        $expectedGeneration = (int)($session['credentialGeneration'] ?? -1);
+        if (
+            $deviceKey === '' ||
+            $expectedBinding === '' ||
+            $expectedGeneration !== $this->GetPortalCredentialGeneration()
+        ) {
             return false;
         }
         if (!$this->EnterVaultLock()) {
-            return false;
+            return null;
         }
         try {
+            if ($expectedGeneration !== $this->GetPortalCredentialGeneration()) {
+                return false;
+            }
             $vault = $this->_decryptVault();
-            $credential = is_array($vault) ? ($vault[self::LOCAL_AUTH_KEY][$deviceKey] ?? null) : null;
+            if (!is_array($vault)) {
+                return null;
+            }
+            $credential = $vault[self::LOCAL_AUTH_KEY][$deviceKey] ?? null;
             if (!is_array($credential) || !hash_equals($origin, (string)($credential['origin'] ?? ''))) {
                 return false;
             }
@@ -3551,6 +3586,26 @@ class SecretsManager extends IPSModuleStrict
             $material .= pack('N', strlen($part)) . $part;
         }
         return hash('sha256', $material);
+    }
+
+    private function GetPortalCredentialStateHash(array $vault): string
+    {
+        $bindings = [];
+        $credentials = $vault[self::LOCAL_AUTH_KEY] ?? [];
+        if (is_array($credentials)) {
+            foreach ($credentials as $deviceKey => $credential) {
+                if ($deviceKey === '__folder' || !is_array($credential)) {
+                    continue;
+                }
+                $binding = $this->GetCredentialSessionBinding($credential);
+                if ($binding !== '') {
+                    $bindings[(string)$deviceKey] = $binding;
+                }
+            }
+        }
+        ksort($bindings, SORT_STRING);
+        $encoded = json_encode($bindings, JSON_UNESCAPED_SLASHES);
+        return hash('sha256', is_string($encoded) ? $encoded : '[]');
     }
 
     /**
@@ -3644,6 +3699,7 @@ class SecretsManager extends IPSModuleStrict
             'generation'          => $generation,
             'credentialDeviceKey' => $credentialDeviceKey,
             'credentialBinding'   => $credentialBinding,
+            'credentialGeneration' => $this->GetPortalCredentialGeneration(),
             'userAgentHash'       => $this->GetCurrentUserAgentHash()
         ];
         $encoded = json_encode($sessions);
@@ -4077,6 +4133,11 @@ class SecretsManager extends IPSModuleStrict
     private function GetPortalRevocationGenerationUnlocked(): int
     {
         return max(0, (int)$this->GetBuffer(self::PORTAL_REVOCATION_BUFFER));
+    }
+
+    private function GetPortalCredentialGeneration(): int
+    {
+        return max(0, (int)$this->GetBuffer(self::PORTAL_CREDENTIAL_GENERATION_BUFFER));
     }
 
     private function GetPortalAuthorizationGeneration(): ?int
@@ -4845,6 +4906,8 @@ class SecretsManager extends IPSModuleStrict
             return false;
         }
         try {
+            $currentVault = $this->_decryptVault();
+            $currentCredentialState = $this->GetPortalCredentialStateHash(is_array($currentVault) ? $currentVault : []);
             if ($expectedRevision !== null) {
                 $currentVaultJson = (string)$this->GetValue('Vault');
                 if (!hash_equals($expectedRevision, hash('sha256', $currentVaultJson))) {
@@ -4857,6 +4920,7 @@ class SecretsManager extends IPSModuleStrict
         if (!$keyHex) return false;
 
         $this->NormalizeCredentialRecordsForRollback($dataArray);
+        $newCredentialState = $this->GetPortalCredentialStateHash($dataArray);
         $newKeyBin = hex2bin($keyHex);
         $encodedPlain = json_encode($dataArray);
         if ($newKeyBin === false || $encodedPlain === false) {
@@ -4890,6 +4954,16 @@ class SecretsManager extends IPSModuleStrict
             return false;
         }
 
+        if (!hash_equals($currentCredentialState, $newCredentialState)) {
+            // This monotonic generation cannot be restored by importing an old
+            // credential record. Publish it before the vault write so a session
+            // validator outside the vault lock cannot accept the old generation
+            // after the credential change becomes visible.
+            $this->SetBuffer(
+                self::PORTAL_CREDENTIAL_GENERATION_BUFFER,
+                (string)($this->GetPortalCredentialGeneration() + 1)
+            );
+        }
         $this->SetValue("Vault", $vaultData);
 
         // (ENTFÄLLT) Disk-clean: kein Klartext-Cache

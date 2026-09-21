@@ -21,6 +21,15 @@ function IPS_SemaphoreEnter(string $name, int $milliseconds): bool
         $GLOBALS['portalSemaphoreEnterCallback'] = null;
         $callback();
     }
+    if (str_contains($name, '.Vault.') && ($GLOBALS['vaultSemaphoreFailures'] ?? 0) > 0) {
+        $GLOBALS['vaultSemaphoreFailures']--;
+        return false;
+    }
+    if (str_contains($name, '.Vault.') && is_callable($GLOBALS['vaultSemaphoreEnterCallback'] ?? null)) {
+        $callback = $GLOBALS['vaultSemaphoreEnterCallback'];
+        $GLOBALS['vaultSemaphoreEnterCallback'] = null;
+        $callback();
+    }
     return true;
 }
 
@@ -170,6 +179,8 @@ $_SERVER['HTTP_HOST'] = 'primary.example.com';
 $_SERVER['REMOTE_ADDR'] = '192.0.2.1';
 $GLOBALS['portalSemaphoreFailures'] = 0;
 $GLOBALS['portalSemaphoreEnterCallback'] = null;
+$GLOBALS['vaultSemaphoreFailures'] = 0;
+$GLOBALS['vaultSemaphoreEnterCallback'] = null;
 
 $module = new SecretsManager(77);
 $temporaryKeyFolder = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'symcon-secrets-test-' . bin2hex(random_bytes(8));
@@ -419,13 +430,60 @@ stateCheck(
     'pending revocation left an existing portal session usable'
 );
 $module->testSetBuffer('PortalRevocationPendingV2', '0');
+$GLOBALS['vaultSemaphoreFailures'] = 1;
+stateCheck(
+    invokePrivate($module, 'GetPortalSessionContext', [true, ['portal'], ['passkey']]) === null,
+    'vault contention did not deny the current passkey-session request'
+);
+$remainingSessions = json_decode($module->testGetBuffer('PortalSessionsV2'), true);
+stateCheck(
+    is_array($remainingSessions) && array_key_exists((string)$session['tokenHash'], $remainingSessions),
+    'temporary vault contention deleted a valid passkey session'
+);
+stateCheck(
+    is_array(invokePrivate($module, 'GetPortalSessionContext', [true, ['portal'], ['passkey']])),
+    'passkey session did not recover after vault contention cleared'
+);
+
+$GLOBALS['vaultSemaphoreEnterCallback'] = static function () use ($module): void {
+    $module->testSetBuffer('PortalRevocationPendingV2', '1');
+};
+stateCheck(
+    invokePrivate($module, 'GetPortalSessionContext', [true, ['portal'], ['passkey']]) === null,
+    'revocation published during the vault wait left the passkey session usable'
+);
+$remainingSessions = json_decode($module->testGetBuffer('PortalSessionsV2'), true);
+stateCheck(
+    is_array($remainingSessions) && array_key_exists((string)$session['tokenHash'], $remainingSessions),
+    'pending revocation unexpectedly deleted the passkey session before revocation completed'
+);
+$module->testSetBuffer('PortalRevocationPendingV2', '0');
+stateCheck(
+    is_array(invokePrivate($module, 'GetPortalSessionContext', [true, ['portal'], ['passkey']])),
+    'passkey session did not recover after the pending revocation was cleared'
+);
+
+$credentialRecord = $credentialVault['__AUTH__']['device_race'];
+$generationBeforeDelete = (int)$module->testGetBuffer('PortalCredentialGenerationV2');
 $module->testSetBuffer('CurrentPath', '__AUTH__');
 ob_start();
 invokePrivate($module, 'ProcessExplorerDelete', ['device_race']);
 ob_end_clean();
+$restoredVault = invokePrivate($module, '_decryptVault');
+stateCheck(is_array($restoredVault), 'could not read vault after credential deletion');
+$restoredVault['__AUTH__']['device_race'] = $credentialRecord;
+stateCheck(invokePrivate($module, '_encryptAndSave', [$restoredVault]), 'could not restore deleted credential record');
+stateCheck(
+    (int)$module->testGetBuffer('PortalCredentialGenerationV2') >= $generationBeforeDelete + 2,
+    'credential delete-and-restore did not advance the irreversible session generation'
+);
+stateCheck(
+    invokePrivate($module, 'GetCredentialSessionBinding', [$restoredVault['__AUTH__']['device_race']]) === $credentialBinding,
+    'credential restoration test did not restore the identical credential binding'
+);
 stateCheck(
     invokePrivate($module, 'GetPortalSessionContext', [true, ['portal'], ['passkey']]) === null,
-    'explorer credential deletion left its passkey session usable'
+    'restoring an identical deleted credential revived its old passkey session'
 );
 $remainingSessions = json_decode($module->testGetBuffer('PortalSessionsV2'), true);
 stateCheck(
