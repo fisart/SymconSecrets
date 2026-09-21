@@ -5,9 +5,10 @@ declare(strict_types=1);
 require_once __DIR__ . '/libs/PortalSecurity.php';
 require_once __DIR__ . '/libs/WebAuthn/src/WebAuthn.php';
 
-// Version 5.4.2
+// Version 5.4.3
 class SecretsManager extends IPSModuleStrict
 {
+    private const MODULE_VERSION = '5.4.3';
 
     // The name of the key file stored on the OS
     private const KEY_FILENAME = 'master.key';
@@ -2625,9 +2626,13 @@ class SecretsManager extends IPSModuleStrict
                 try {
                     $this->VerifyLegacyMigration();
                 } catch (Throwable $e) {
-                    $this->RecordPortalDebug('migration-unhandled-exception', $e);
                     $this->LogMessage('Unhandled WebAuthn migration exception. See the temporary diagnostic variable.', KL_ERROR);
-                    $this->SendPortalJson(500, ['ok' => false, 'error' => 'Migration failed. Review the module diagnostic variable.']);
+                    $this->SendPortalDiagnosticJson(
+                        500,
+                        'Migration failed because the server raised an unexpected exception.',
+                        'migration-unhandled-exception',
+                        $e
+                    );
                 }
                 return;
             }
@@ -2818,6 +2823,8 @@ class SecretsManager extends IPSModuleStrict
             return;
         }
 
+        $this->RecordPortalDebug('migration-page-ready');
+
         $allowCredentials = [];
         foreach ($allowedIds as $credentialId) {
             $allowCredentials[] = ['type' => 'public-key', 'id' => $credentialId];
@@ -2827,26 +2834,36 @@ class SecretsManager extends IPSModuleStrict
             'challenge'        => SecretsPortalSecurity::base64UrlEncode($challenge),
             'rpId'             => $rpId,
             'remaining'        => count($legacyCredentials),
-            'allowCredentials' => $allowCredentials
+            'allowCredentials' => $allowCredentials,
+            'debugEnabled'     => $this->ReadPropertyBoolean('PortalDebugEnabled'),
+            'moduleVersion'    => self::MODULE_VERSION,
+            'expectedOrigin'   => $origin
         ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
 
         $nonce = SecretsPortalSecurity::base64UrlEncode(random_bytes(18));
         $this->SendPortalSecurityHeaders($nonce);
         echo '<html><head><title>Passkey migration</title><meta name="viewport" content="width=device-width, initial-scale=1">';
-        echo '<style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f4f7f6}.box{background:#fff;padding:32px;border-radius:12px;box-shadow:0 5px 20px rgba(0,0,0,.1);text-align:center;max-width:520px}button,a{padding:12px 20px}.ok{color:#087f23}.error{color:#b00020}</style></head><body>';
+        echo '<style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f4f7f6}.box{background:#fff;padding:32px;border-radius:12px;box-shadow:0 5px 20px rgba(0,0,0,.1);text-align:center;max-width:760px}button,a{padding:12px 20px}.ok{color:#087f23}.error{color:#b00020;white-space:pre-wrap;word-break:break-word;text-align:left}.debug{font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;text-align:left}</style></head><body>';
         echo '<div class="box"><h2>Upgrade existing passkey</h2><p>A new passkey will not be created. Touch the authenticator once to prove possession and upgrade its stored public key.</p>';
         echo '<p>' . count($legacyCredentials) . ' migratable credential(s) remain.</p><button id="migrateButton" type="button">Verify and upgrade one passkey</button><p id="status" role="status"></p><p><a href="?admin=1">Admin dashboard</a></p></div>';
         echo '<script nonce="' . htmlspecialchars($nonce, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">';
         echo 'const config=' . $configJson . ';';
         echo 'const fromB64u=v=>{v=v.replace(/-/g,"+").replace(/_/g,"/");while(v.length%4)v+="=";const b=atob(v);return Uint8Array.from(b,c=>c.charCodeAt(0));};';
         echo 'const toB64u=v=>{let s="";new Uint8Array(v).forEach(b=>s+=String.fromCharCode(b));return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");};';
-        echo 'async function migrate(){const status=document.getElementById("status");status.className="";status.textContent="";try{';
+        echo 'let phase="page-ready";';
+        echo 'const debugFacts=()=>"module="+config.moduleVersion+", phase="+phase+", browserOrigin="+location.origin+", expectedOrigin="+config.expectedOrigin+", rpId="+config.rpId+", secureContext="+window.isSecureContext+", allowedCredentials="+config.allowCredentials.length;';
+        echo 'if(config.debugEnabled){const p=document.createElement("p");p.className="debug";p.textContent="Debug facts: "+debugFacts();document.querySelector(".box").insertBefore(p,document.getElementById("migrateButton"));}';
+        echo 'async function migrate(){const status=document.getElementById("status");status.className="";status.textContent="";try{phase="browser-assertion";';
+        echo 'if(!window.isSecureContext)throw new Error("WebAuthn requires a secure browser context.");';
         echo 'const publicKey={challenge:fromB64u(config.challenge),rpId:config.rpId,timeout:60000,userVerification:"required",allowCredentials:config.allowCredentials.map(i=>({type:i.type,id:fromB64u(i.id)}))};';
         echo 'const cred=await navigator.credentials.get({publicKey});';
         echo 'const payload={sid:config.sid,type:cred.type,rawId:toB64u(cred.rawId),response:{clientDataJSON:toB64u(cred.response.clientDataJSON),authenticatorData:toB64u(cred.response.authenticatorData),signature:toB64u(cred.response.signature),userHandle:cred.response.userHandle===null?null:toB64u(cred.response.userHandle)}};';
+        echo 'phase="server-request";';
         echo 'const res=await fetch(location.pathname+"?migrate=1",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});';
-        echo 'const body=await res.json().catch(()=>({error:"Migration failed."}));if(!res.ok||!body.ok)throw new Error(body.error||"Migration failed.");status.className="ok";status.innerHTML="✅ Passkey upgraded. <a href=\\"?migrate=1\\">Continue with the next passkey</a>.";';
-        echo '}catch(e){status.className="error";status.textContent="Migration failed: "+e.message;}}';
+        echo 'const responseText=await res.text();let body=null;try{body=JSON.parse(responseText);}catch(parseError){throw new Error("HTTP "+res.status+": invalid JSON response; contentType="+(res.headers.get("content-type")||"missing")+", responseLength="+responseText.length);}';
+        echo 'if(!res.ok||!body.ok){let detail="HTTP "+res.status+": "+(body.error||"Migration failed.");if(config.debugEnabled){if(body.diagnosticCode)detail+="\\nFailure code: "+body.diagnosticCode;if(body.diagnosticCause)detail+="\\nCause: "+body.diagnosticCause;if(body.diagnosticFacts)detail+="\\nChecked values:\\n"+JSON.stringify(body.diagnosticFacts,null,2);if(body.diagnosticException)detail+="\\nServer exception:\\n"+JSON.stringify(body.diagnosticException,null,2);if(!body.diagnosticCode&&body.diagnostic)detail+="\\nDiagnostic: "+body.diagnostic;}throw new Error(detail);}';
+        echo 'phase="complete";status.className="ok";status.innerHTML="✅ Passkey upgraded. <a href=\\"?migrate=1\\">Continue with the next passkey</a>.";';
+        echo '}catch(e){status.className="error";const name=e&&e.name?e.name+": ":"";let message="Migration failed during "+phase+": "+name+(e&&e.message?e.message:"Unknown error");if(config.debugEnabled)message+=" | "+debugFacts();status.textContent=message;}}';
         echo 'document.getElementById("migrateButton").addEventListener("click",migrate);';
         echo '</script></body></html>';
     }
@@ -2859,37 +2876,72 @@ class SecretsManager extends IPSModuleStrict
             return;
         }
         if (!$this->CheckPortalRateLimit('migration', true)) {
-            $this->RecordPortalDebug('migration-rate-limited');
-            $this->SendPortalJson(429, ['ok' => false, 'error' => 'Too many attempts. Please try again later.']);
+            $this->SendPortalDiagnosticJson(429, 'Too many attempts. Please try again later.', 'migration-rate-limited');
             return;
         }
 
         $requestBody = $this->ReadRequestBody(self::PORTAL_JSON_MAX_REQUEST_BYTES);
         if (!is_string($requestBody)) {
-            $this->RecordPortalDebug('migration-request-body-invalid');
-            $this->SendPortalJson(413, ['ok' => false, 'error' => 'Request payload too large.']);
+            $this->SendPortalDiagnosticJson(413, 'Request payload too large.', 'migration-request-body-invalid');
             return;
         }
         $data = SecretsPortalSecurity::decodeJsonRequest($requestBody);
-        $sid = is_array($data) ? (string)($data['sid'] ?? '') : '';
+        $submittedSid = is_array($data) ? ($data['sid'] ?? null) : null;
+        $sid = is_string($submittedSid) ? $submittedSid : '';
         if (preg_match('/^[A-Za-z0-9_-]{20,64}$/D', $sid) !== 1) {
-            $this->RejectPortalRequest('migration-request');
+            $this->RejectPortalRequest('migration-request', null, [
+                'jsonObject' => is_array($data),
+                'sidType'    => gettype($submittedSid),
+                'sidLength'  => is_string($submittedSid) ? strlen($submittedSid) : null
+            ]);
             return;
         }
 
-        $buffer = $this->ConsumePortalChallenge($sid, 'migration');
-        if ($buffer === null || !$this->ChallengeMatchesCurrentPortalProfile($buffer)) {
-            $this->RejectPortalRequest('migration-expired');
+        $challengeFailure = '';
+        $buffer = $this->ConsumePortalChallenge($sid, 'migration', $challengeFailure);
+        if ($buffer === null) {
+            $this->RejectPortalRequest('migration-expired', null, [
+                'challengeFailure' => $challengeFailure
+            ]);
+            return;
+        }
+        if (!$this->ChallengeMatchesCurrentPortalProfile($buffer)) {
+            $profileError = '';
+            $currentProfile = $this->GetCurrentPortalProfile($profileError);
+            $this->RejectPortalRequest('migration-expired', null, [
+                'challengeFailure' => 'current-profile-mismatch',
+                'challengeOrigin'  => (string)($buffer['origin'] ?? ''),
+                'currentOrigin'    => is_array($currentProfile) ? (string)$currentProfile['origin'] : '',
+                'challengeRpId'    => (string)($buffer['rpId'] ?? ''),
+                'currentRpId'      => is_array($currentProfile) ? (string)$currentProfile['rpId'] : '',
+                'profileError'     => $profileError
+            ]);
             return;
         }
 
+        $response = is_array($data) && isset($data['response']) && is_array($data['response'])
+            ? $data['response']
+            : [];
         $challenge = SecretsPortalSecurity::base64UrlDecode((string)($buffer['challenge'] ?? ''));
-        $rawId = SecretsPortalSecurity::base64UrlDecode((string)($data['rawId'] ?? ''));
-        $clientDataJson = SecretsPortalSecurity::base64UrlDecode((string)($data['response']['clientDataJSON'] ?? ''));
-        $authenticatorData = SecretsPortalSecurity::base64UrlDecode((string)($data['response']['authenticatorData'] ?? ''));
-        $signature = SecretsPortalSecurity::base64UrlDecode((string)($data['response']['signature'] ?? ''));
+        $rawIdValue = is_array($data) ? ($data['rawId'] ?? null) : null;
+        $rawId = is_string($rawIdValue) ? SecretsPortalSecurity::base64UrlDecode($rawIdValue) : null;
+        $clientDataValue = $response['clientDataJSON'] ?? null;
+        $authenticatorDataValue = $response['authenticatorData'] ?? null;
+        $signatureValue = $response['signature'] ?? null;
+        $clientDataJson = is_string($clientDataValue) ? SecretsPortalSecurity::base64UrlDecode($clientDataValue) : null;
+        $authenticatorData = is_string($authenticatorDataValue) ? SecretsPortalSecurity::base64UrlDecode($authenticatorDataValue) : null;
+        $signature = is_string($signatureValue) ? SecretsPortalSecurity::base64UrlDecode($signatureValue) : null;
         if (($data['type'] ?? null) !== 'public-key' || $challenge === null || $rawId === null || $clientDataJson === null || $authenticatorData === null || $signature === null) {
-            $this->RejectPortalRequest('migration-payload');
+            $this->RejectPortalRequest('migration-payload', null, [
+                'responseObject'          => isset($data['response']) && is_array($data['response']),
+                'receivedType'            => is_string($data['type'] ?? null) ? (string)$data['type'] : gettype($data['type'] ?? null),
+                'expectedType'            => 'public-key',
+                'challengeDecoded'        => $challenge !== null,
+                'credentialIdDecoded'     => $rawId !== null,
+                'clientDataDecoded'       => $clientDataJson !== null,
+                'authenticatorDataDecoded'=> $authenticatorData !== null,
+                'signatureDecoded'        => $signature !== null
+            ]);
             return;
         }
 
@@ -2899,26 +2951,65 @@ class SecretsManager extends IPSModuleStrict
         $origin = (string)($buffer['origin'] ?? '');
         $legacyCredentials = $this->GetMigratableLegacyCredentials($rpId);
         if (!is_array($allowed) || !in_array($credentialId, $allowed, true) || !isset($legacyCredentials[$credentialId])) {
-            $this->RejectPortalRequest('migration-credential');
+            $this->RejectPortalRequest('migration-credential', null, [
+                'allowListValid'       => is_array($allowed),
+                'credentialAllowed'    => is_array($allowed) && in_array($credentialId, $allowed, true),
+                'legacyRecordFound'    => isset($legacyCredentials[$credentialId]),
+                'allowListCount'       => is_array($allowed) ? count($allowed) : 0,
+                'migratableRecordCount'=> count($legacyCredentials)
+            ]);
             return;
         }
 
         $legacy = $legacyCredentials[$credentialId];
-        $submittedUserHandle = $data['response']['userHandle'] ?? null;
+        $submittedUserHandle = $response['userHandle'] ?? null;
         if ($submittedUserHandle !== null) {
             $userHandle = is_string($submittedUserHandle) ? SecretsPortalSecurity::base64UrlDecode($submittedUserHandle) : null;
             $expectedUserHandle = 'user' . $this->InstanceID;
             if ($userHandle === null || !hash_equals($expectedUserHandle, $userHandle)) {
-                $this->RejectPortalRequest('migration-user-handle');
+                $this->RejectPortalRequest('migration-user-handle', null, [
+                    'userHandlePresent' => true,
+                    'userHandleDecoded' => $userHandle !== null,
+                    'userHandleMatches' => $userHandle !== null && hash_equals($expectedUserHandle, $userHandle)
+                ]);
                 return;
             }
         }
         if (SecretsPortalSecurity::validateClientData($clientDataJson, 'webauthn.get', $challenge, $origin) === null) {
-            $this->RejectPortalRequest('migration-client-data');
+            $clientData = json_decode($clientDataJson, true);
+            $receivedChallenge = is_array($clientData) && is_string($clientData['challenge'] ?? null)
+                ? SecretsPortalSecurity::base64UrlDecode((string)$clientData['challenge'])
+                : null;
+            $this->RejectPortalRequest('migration-client-data', null, [
+                'clientDataJsonValid' => is_array($clientData),
+                'expectedType'        => 'webauthn.get',
+                'receivedType'        => is_array($clientData) && is_string($clientData['type'] ?? null) ? (string)$clientData['type'] : gettype(is_array($clientData) ? ($clientData['type'] ?? null) : null),
+                'expectedOrigin'      => $origin,
+                'receivedOrigin'      => is_array($clientData) && is_string($clientData['origin'] ?? null) ? (string)$clientData['origin'] : gettype(is_array($clientData) ? ($clientData['origin'] ?? null) : null),
+                'challengePresent'    => is_array($clientData) && is_string($clientData['challenge'] ?? null),
+                'challengeDecoded'    => $receivedChallenge !== null,
+                'challengeMatches'    => $receivedChallenge !== null && hash_equals($challenge, $receivedChallenge),
+                'crossOrigin'         => is_array($clientData) ? ($clientData['crossOrigin'] ?? null) : null,
+                'topOriginPresent'    => is_array($clientData) && array_key_exists('topOrigin', $clientData)
+            ]);
             return;
         }
 
+        $cryptoFacts = [
+            'expectedRpId'        => $rpId,
+            'expectedOrigin'      => $origin,
+            'publicKeyAvailable'  => (string)$legacy['credentialPublicKey'] !== '',
+            'signatureLength'     => strlen($signature),
+            'authenticatorLength' => strlen($authenticatorData)
+        ];
         try {
+            $verifiedAuthenticatorData = new \lbuchs\WebAuthn\Attestation\AuthenticatorData($authenticatorData);
+            $cryptoFacts['rpIdHashMatches'] = hash_equals(hash('sha256', $rpId, true), (string)$verifiedAuthenticatorData->getRpIdHash());
+            $cryptoFacts['userPresent'] = (bool)$verifiedAuthenticatorData->getUserPresent();
+            $cryptoFacts['userVerified'] = (bool)$verifiedAuthenticatorData->getUserVerified();
+            $cryptoFacts['receivedSignatureCounter'] = (int)$verifiedAuthenticatorData->getSignCount();
+            $cryptoFacts['backupEligible'] = (bool)$verifiedAuthenticatorData->getIsBackupEligible();
+            $cryptoFacts['backedUp'] = (bool)$verifiedAuthenticatorData->getIsBackup();
             $webAuthn = $this->CreateWebAuthnVerifier($rpId);
             $webAuthn->processGet(
                 $clientDataJson,
@@ -2931,32 +3022,39 @@ class SecretsManager extends IPSModuleStrict
                 true
             );
             $newCounter = $webAuthn->getSignatureCounter();
-            $verifiedAuthenticatorData = new \lbuchs\WebAuthn\Attestation\AuthenticatorData($authenticatorData);
             $backupEligible = (bool)$verifiedAuthenticatorData->getIsBackupEligible();
             $backedUp = (bool)$verifiedAuthenticatorData->getIsBackup();
             if (!SecretsPortalSecurity::validateBackupFlags($backupEligible, $backedUp)) {
                 throw new RuntimeException('Credential backup flags are inconsistent.');
             }
         } catch (Throwable $e) {
-            $this->RejectPortalRequest('migration-cryptographic-verification', $e);
+            $this->RejectPortalRequest('migration-cryptographic-verification', $e, $cryptoFacts);
             return;
         }
 
         $deviceKey = (string)$legacy['deviceKey'];
-        if (!$this->EnterAuthorizedCeremonyCommit($buffer, 'migrate')) {
-            $this->RejectPortalRequest('migration-authorization');
+        $authorizationFailure = '';
+        $authorizationFacts = [];
+        if (!$this->EnterAuthorizedCeremonyCommit($buffer, 'migrate', $authorizationFailure, $authorizationFacts)) {
+            $authorizationFacts['authorizationFailure'] = $authorizationFailure;
+            $this->RejectPortalRequest('migration-authorization', null, $authorizationFacts);
             return;
         }
         if (!$this->EnterVaultLock()) {
             $this->LeavePortalStateLock();
-            $this->RecordPortalDebug('migration-vault-busy');
-            $this->SendPortalJson(503, ['ok' => false, 'error' => 'The vault is busy. Please try again.']);
+            $this->SendPortalDiagnosticJson(503, 'The vault is busy. Please try again.', 'migration-vault-busy');
             return;
         }
 
         try {
-            if ((int)($buffer['credentialGeneration'] ?? -1) !== $this->GetPortalCredentialGeneration()) {
-                $this->RejectPortalRequest('migration-credential-state');
+            $challengeCredentialGeneration = (int)($buffer['credentialGeneration'] ?? -1);
+            $currentCredentialGeneration = $this->GetPortalCredentialGeneration();
+            if ($challengeCredentialGeneration !== $currentCredentialGeneration) {
+                $this->RejectPortalRequest('migration-credential-state', null, [
+                    'challengeCredentialGeneration' => $challengeCredentialGeneration,
+                    'currentCredentialGeneration'   => $currentCredentialGeneration,
+                    'generationMatches'             => false
+                ]);
                 return;
             }
             $vaultRevision = null;
@@ -2969,7 +3067,14 @@ class SecretsManager extends IPSModuleStrict
                 $currentLegacyId === null ||
                 !hash_equals($rawId, $currentLegacyId)
             ) {
-                $this->RejectPortalRequest('migration-state');
+                $this->RejectPortalRequest('migration-state', null, [
+                    'vaultDecrypted'            => is_array($vaultData),
+                    'legacyRecordFound'         => is_array($old),
+                    'storedSchemaVersion'       => is_array($old) ? (int)($old['schemaVersion'] ?? 0) : null,
+                    'alreadyMigrated'           => is_array($old) && (int)($old['schemaVersion'] ?? 0) === SecretsPortalSecurity::CREDENTIAL_SCHEMA_VERSION,
+                    'storedCredentialIdDecoded' => $currentLegacyId !== null,
+                    'credentialIdMatches'       => $currentLegacyId !== null && hash_equals($rawId, $currentLegacyId)
+                ]);
                 return;
             }
 
@@ -2995,8 +3100,11 @@ class SecretsManager extends IPSModuleStrict
             $vaultData[self::LOCAL_AUTH_KEY][$deviceKey] = $migrated;
 
             if (!$this->_encryptAndSave($vaultData, $vaultRevision, true)) {
-                $this->RecordPortalDebug('migration-vault-save-failed');
-                $this->SendPortalJson(500, ['ok' => false, 'error' => 'The verified migrated credential could not be saved.']);
+                $this->SendPortalDiagnosticJson(
+                    500,
+                    'The verified migrated credential could not be saved.',
+                    'migration-vault-save-failed'
+                );
                 return;
             }
         } finally {
@@ -4329,9 +4437,11 @@ class SecretsManager extends IPSModuleStrict
      *
      * @return array<string, mixed>|null
      */
-    private function ConsumePortalChallenge(string $sid, string $purpose): ?array
+    private function ConsumePortalChallenge(string $sid, string $purpose, ?string &$failureReason = null): ?array
     {
+        $failureReason = '';
         if (!$this->EnterPortalStateLock()) {
+            $failureReason = 'portal-state-lock-busy';
             return null;
         }
 
@@ -4339,6 +4449,7 @@ class SecretsManager extends IPSModuleStrict
         try {
             $challenges = json_decode($this->GetBuffer(self::PORTAL_CHALLENGE_BUFFER), true);
             if (!is_array($challenges)) {
+                $failureReason = 'challenge-store-invalid';
                 return null;
             }
 
@@ -4351,13 +4462,24 @@ class SecretsManager extends IPSModuleStrict
             }
             $this->SetBuffer(self::PORTAL_CHALLENGE_BUFFER, (string)json_encode($challenges));
 
-            if (
-                !is_array($selected) ||
-                (string)($selected['purpose'] ?? '') !== $purpose ||
-                (int)($selected['expires'] ?? 0) <= $now ||
-                (int)($selected['generation'] ?? -1) !== $this->GetPortalRevocationGenerationUnlocked() ||
-                !hash_equals((string)($selected['userAgentHash'] ?? ''), $this->GetCurrentUserAgentHash())
-            ) {
+            if (!is_array($selected)) {
+                $failureReason = 'challenge-not-found-or-already-consumed';
+                return null;
+            }
+            if ((string)($selected['purpose'] ?? '') !== $purpose) {
+                $failureReason = 'challenge-purpose-mismatch';
+                return null;
+            }
+            if ((int)($selected['expires'] ?? 0) <= $now) {
+                $failureReason = 'challenge-expired';
+                return null;
+            }
+            if ((int)($selected['generation'] ?? -1) !== $this->GetPortalRevocationGenerationUnlocked()) {
+                $failureReason = 'revocation-generation-mismatch';
+                return null;
+            }
+            if (!hash_equals((string)($selected['userAgentHash'] ?? ''), $this->GetCurrentUserAgentHash())) {
+                $failureReason = 'browser-user-agent-mismatch';
                 return null;
             }
 
@@ -4371,17 +4493,54 @@ class SecretsManager extends IPSModuleStrict
      * Acquire the portal-state lock and revalidate a consumed ceremony just
      * before its durable state change. The caller must release the lock.
      */
-    private function EnterAuthorizedCeremonyCommit(array $challenge, string $requiredScope = ''): bool
+    private function EnterAuthorizedCeremonyCommit(
+        array $challenge,
+        string $requiredScope = '',
+        ?string &$failureReason = null,
+        ?array &$diagnosticFacts = null
+    ): bool
     {
+        $failureReason = '';
+        $diagnosticFacts = [];
         if (!$this->EnterPortalStateLock()) {
+            $failureReason = 'portal-state-lock-busy';
             return false;
         }
 
-        $valid =
-            $this->GetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER) !== '1' &&
-            (int)($challenge['generation'] ?? -1) === $this->GetPortalRevocationGenerationUnlocked() &&
-            (int)($challenge['credentialGeneration'] ?? -1) === $this->GetPortalCredentialGeneration() &&
-            hash_equals((string)($challenge['userAgentHash'] ?? ''), $this->GetCurrentUserAgentHash());
+        $currentRevocationGeneration = $this->GetPortalRevocationGenerationUnlocked();
+        $currentCredentialGeneration = $this->GetPortalCredentialGeneration();
+        $pendingRevocation = $this->GetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER) === '1';
+        $userAgentMatches = hash_equals(
+            (string)($challenge['userAgentHash'] ?? ''),
+            $this->GetCurrentUserAgentHash()
+        );
+        $diagnosticFacts = [
+            'requiredScope'                 => $requiredScope,
+            'authorizationMethod'           => (string)($challenge['authorizationMethod'] ?? ''),
+            'revocationPending'             => $pendingRevocation,
+            'challengeRevocationGeneration' => (int)($challenge['generation'] ?? -1),
+            'currentRevocationGeneration'   => $currentRevocationGeneration,
+            'challengeCredentialGeneration' => (int)($challenge['credentialGeneration'] ?? -1),
+            'currentCredentialGeneration'   => $currentCredentialGeneration,
+            'browserUserAgentMatches'       => $userAgentMatches
+        ];
+
+        $valid = !$pendingRevocation
+            && (int)($challenge['generation'] ?? -1) === $currentRevocationGeneration
+            && (int)($challenge['credentialGeneration'] ?? -1) === $currentCredentialGeneration
+            && $userAgentMatches;
+
+        if (!$valid) {
+            if ($pendingRevocation) {
+                $failureReason = 'revocation-pending';
+            } elseif ((int)($challenge['generation'] ?? -1) !== $currentRevocationGeneration) {
+                $failureReason = 'revocation-generation-mismatch';
+            } elseif ((int)($challenge['credentialGeneration'] ?? -1) !== $currentCredentialGeneration) {
+                $failureReason = 'credential-generation-mismatch';
+            } else {
+                $failureReason = 'browser-user-agent-mismatch';
+            }
+        }
 
         if ($valid && $requiredScope !== '') {
             $method = (string)($challenge['authorizationMethod'] ?? '');
@@ -4392,6 +4551,17 @@ class SecretsManager extends IPSModuleStrict
             $sessionHash = (string)($challenge['authorizationSessionHash'] ?? '');
             $sessions = json_decode($this->GetBuffer(self::PORTAL_SESSION_BUFFER), true);
             $session = is_array($sessions) ? ($sessions[$sessionHash] ?? null) : null;
+            $sessionScopes = is_array($session) && is_array($session['scopes'] ?? null) ? $session['scopes'] : [];
+            $diagnosticFacts['authorizationSessionReferencePresent'] = $sessionHash !== '';
+            $diagnosticFacts['authorizationSessionStoreValid'] = is_array($sessions);
+            $diagnosticFacts['authorizationSessionFound'] = is_array($session);
+            $diagnosticFacts['authorizationSessionMethod'] = is_array($session) ? (string)($session['method'] ?? '') : '';
+            $diagnosticFacts['authorizationSessionScopes'] = implode(',', array_map('strval', $sessionScopes));
+            $diagnosticFacts['authorizationSessionOrigin'] = is_array($session) ? (string)($session['origin'] ?? '') : '';
+            $diagnosticFacts['expectedOrigin'] = (string)($challenge['origin'] ?? '');
+            $diagnosticFacts['authorizationSessionExpiresInSeconds'] = is_array($session)
+                ? (int)($session['expires'] ?? 0) - time()
+                : null;
             $valid = $method === 'admin-password' && $sessionHash !== '' && $this->PortalSessionMatchesRequirements(
                 $session,
                 (string)($challenge['origin'] ?? ''),
@@ -4399,6 +4569,31 @@ class SecretsManager extends IPSModuleStrict
                 ['admin-password'],
                 time()
             );
+            if (!$valid) {
+                if ($method !== 'admin-password') {
+                    $failureReason = 'challenge-authorization-method-mismatch';
+                } elseif ($sessionHash === '') {
+                    $failureReason = 'authorization-session-reference-missing';
+                } elseif (!is_array($sessions)) {
+                    $failureReason = 'authorization-session-store-invalid';
+                } elseif (!is_array($session)) {
+                    $failureReason = 'authorization-session-not-found';
+                } elseif ((int)($session['expires'] ?? 0) <= time()) {
+                    $failureReason = 'authorization-session-expired';
+                } elseif ((string)($session['method'] ?? '') !== 'admin-password') {
+                    $failureReason = 'authorization-session-method-mismatch';
+                } elseif (!in_array($requiredScope, $sessionScopes, true)) {
+                    $failureReason = 'authorization-session-scope-missing';
+                } elseif (!hash_equals((string)($session['origin'] ?? ''), (string)($challenge['origin'] ?? ''))) {
+                    $failureReason = 'authorization-session-origin-mismatch';
+                } elseif (!hash_equals((string)($session['userAgentHash'] ?? ''), $this->GetCurrentUserAgentHash())) {
+                    $failureReason = 'authorization-session-user-agent-mismatch';
+                } elseif ((int)($session['generation'] ?? -1) !== $currentRevocationGeneration) {
+                    $failureReason = 'authorization-session-generation-mismatch';
+                } else {
+                    $failureReason = 'authorization-session-requirements-failed';
+                }
+            }
         }
 
         if (!$valid) {
@@ -4478,31 +4673,143 @@ class SecretsManager extends IPSModuleStrict
         $this->SendPortalError(405, 'Method not allowed.');
     }
 
-    private function RejectPortalRequest(string $reason, ?Throwable $exception = null): void
+    /**
+     * @param array<string, scalar|null> $facts
+     */
+    private function RejectPortalRequest(string $reason, ?Throwable $exception = null, array $facts = []): void
     {
-        $this->RecordPortalDebug($reason, $exception);
+        $diagnostic = $this->RecordPortalDebug($reason, $exception, $facts);
         $this->LogPortalFailure($reason);
-        $this->SendPortalJson(401, ['ok' => false, 'error' => 'Authentication failed. Reload the page and try again.']);
+        $payload = ['ok' => false, 'error' => 'Authentication failed. Reload the page and try again.'];
+        if ($diagnostic !== null) {
+            $payload['diagnostic'] = $diagnostic;
+            $payload['diagnosticCode'] = $reason;
+            $payload['diagnosticCause'] = $this->GetPortalDiagnosticExplanation($reason);
+            $payload['diagnosticFacts'] = $this->SanitizePortalDiagnosticFacts($facts);
+            if ($exception !== null) {
+                $payload['diagnosticException'] = $this->GetPortalSafeExceptionSummary($exception);
+            }
+        }
+        $this->SendPortalJson(401, $payload);
     }
 
-    private function RecordPortalDebug(string $event, ?Throwable $exception = null): void
+    private function SendPortalDiagnosticJson(
+        int $status,
+        string $error,
+        string $event,
+        ?Throwable $exception = null,
+        array $facts = []
+    ): void {
+        $diagnostic = $this->RecordPortalDebug($event, $exception, $facts);
+        $payload = ['ok' => false, 'error' => $error];
+        if ($diagnostic !== null) {
+            $payload['diagnostic'] = $diagnostic;
+            $payload['diagnosticCode'] = $event;
+            $payload['diagnosticCause'] = $this->GetPortalDiagnosticExplanation($event);
+            $payload['diagnosticFacts'] = $this->SanitizePortalDiagnosticFacts($facts);
+            if ($exception !== null) {
+                $payload['diagnosticException'] = $this->GetPortalSafeExceptionSummary($exception);
+            }
+        }
+        $this->SendPortalJson($status, $payload);
+    }
+
+    /**
+     * @param array<string, scalar|null> $facts
+     */
+    private function RecordPortalDebug(string $event, ?Throwable $exception = null, array $facts = []): ?string
     {
         if (!$this->ReadPropertyBoolean('PortalDebugEnabled')) {
-            return;
+            return null;
         }
 
         $event = preg_replace('/[^A-Za-z0-9_.:-]+/', '-', $event) ?? 'invalid-event';
-        $message = gmdate('Y-m-d\\TH:i:s\\Z') . ' event=' . substr($event, 0, 128);
+        $message = gmdate('Y-m-d\\TH:i:s\\Z')
+            . ' module=' . self::MODULE_VERSION
+            . ' event=' . substr($event, 0, 128)
+            . ' cause=' . $this->GetPortalDiagnosticExplanation($event);
+
+        $safeFacts = $this->SanitizePortalDiagnosticFacts($facts);
+        $encodedFacts = json_encode($safeFacts, JSON_UNESCAPED_SLASHES);
+        if (is_string($encodedFacts)) {
+            $message .= ' facts=' . $encodedFacts;
+        }
         if ($exception !== null) {
-            // Store only bounded, sanitized exception metadata. Do not copy
-            // any request or authentication payload into the object tree.
-            $exceptionMessage = preg_replace('/[\\x00-\\x1F\\x7F]+/', ' ', $exception->getMessage()) ?? '';
-            $message .= ' exception=' . get_class($exception)
-                . ' location=' . basename($exception->getFile()) . ':' . $exception->getLine()
-                . ' message=' . substr($exceptionMessage, 0, 768);
+            $safeException = $this->GetPortalSafeExceptionSummary($exception);
+            $message .= ' exception=' . $safeException['class']
+                . ' location=' . $safeException['location']
+                . ' message=' . $safeException['message'];
         }
 
         $this->SetValue('PortalDebugMessage', $message);
+        return $message;
+    }
+
+    /**
+     * @param array<string, scalar|null> $facts
+     * @return array<string, scalar|null>
+     */
+    private function SanitizePortalDiagnosticFacts(array $facts): array
+    {
+        $safeFacts = [
+            'httpMethod' => substr((string)($_SERVER['REQUEST_METHOD'] ?? 'unknown'), 0, 16),
+            'httpHost'   => substr((string)($_SERVER['HTTP_HOST'] ?? 'unknown'), 0, 255)
+        ];
+        foreach ($facts as $key => $value) {
+            $safeKey = preg_replace('/[^A-Za-z0-9_.:-]+/', '-', (string)$key) ?? 'invalid';
+            if (is_bool($value)) {
+                $safeFacts[$safeKey] = $value;
+            } elseif (is_int($value) || is_float($value) || $value === null) {
+                $safeFacts[$safeKey] = $value;
+            } elseif (is_string($value)) {
+                $sanitized = preg_replace('/[\\x00-\\x1F\\x7F]+/', ' ', $value) ?? '';
+                $safeFacts[$safeKey] = substr($sanitized, 0, 256);
+            } else {
+                $safeFacts[$safeKey] = gettype($value);
+            }
+        }
+        ksort($safeFacts, SORT_STRING);
+        return $safeFacts;
+    }
+
+    /**
+     * @return array{class:string,location:string,message:string}
+     */
+    private function GetPortalSafeExceptionSummary(Throwable $exception): array
+    {
+        // Do not copy request or authentication payloads into diagnostics.
+        $message = preg_replace('/[\\x00-\\x1F\\x7F]+/', ' ', $exception->getMessage()) ?? '';
+        return [
+            'class'    => substr(get_class($exception), 0, 192),
+            'location' => substr(basename($exception->getFile()) . ':' . $exception->getLine(), 0, 256),
+            'message'  => substr($message, 0, 768)
+        ];
+    }
+
+    private function GetPortalDiagnosticExplanation(string $event): string
+    {
+        $explanations = [
+            'migration-page-ready'                   => 'Migration page and a fresh one-time challenge were created successfully.',
+            'migration-request-received'              => 'The browser submitted the migration response to the server.',
+            'migration-portal-not-ready'              => 'The configured portal profile or required server capability is not ready.',
+            'migration-rate-limited'                  => 'The authentication attempt rate limit was reached.',
+            'migration-request-body-invalid'          => 'The JSON request body was missing, unreadable or exceeded the size limit.',
+            'migration-request'                       => 'The request did not contain a syntactically valid migration session identifier.',
+            'migration-expired'                       => 'The one-time challenge was missing, expired, already consumed or did not match the current profile or browser.',
+            'migration-payload'                       => 'One or more required WebAuthn response fields were missing or could not be decoded.',
+            'migration-credential'                    => 'The submitted credential was not on the challenge allow-list or no matching legacy record exists.',
+            'migration-user-handle'                   => 'The returned user handle did not match this SecretsManager instance.',
+            'migration-client-data'                   => 'The WebAuthn ceremony type, origin, challenge or cross-origin policy did not match.',
+            'migration-cryptographic-verification'    => 'Signature, RP-ID hash, authenticator flags or signature counter verification failed.',
+            'migration-authorization'                 => 'The admin session bound to the migration challenge was missing, expired, revoked or no longer authorized.',
+            'migration-vault-busy'                    => 'The encrypted vault lock could not be acquired in time.',
+            'migration-credential-state'              => 'The credential collection changed after the challenge was created.',
+            'migration-state'                         => 'The selected legacy credential changed or disappeared before it could be saved.',
+            'migration-vault-save-failed'             => 'The verified credential could not be committed to the encrypted vault.',
+            'migration-unhandled-exception'           => 'An unexpected server exception interrupted the migration.',
+            'migration-success'                       => 'The passkey signature was verified and the upgraded credential was saved.'
+        ];
+        return $explanations[$event] ?? 'The request failed at the named portal validation stage.';
     }
 
     private function LogPortalFailure(string $reason): void
