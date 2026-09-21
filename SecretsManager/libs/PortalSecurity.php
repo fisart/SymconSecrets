@@ -195,12 +195,18 @@ final class SecretsPortalSecurity
             return null;
         }
 
-        $receivedChallenge = self::base64UrlDecode((string)($clientData['challenge'] ?? ''));
+        if (!isset($clientData['challenge']) || !is_string($clientData['challenge'])) {
+            return null;
+        }
+        $receivedChallenge = self::base64UrlDecode($clientData['challenge']);
         if ($receivedChallenge === null || !hash_equals($expectedChallenge, $receivedChallenge)) {
             return null;
         }
 
-        if (isset($clientData['crossOrigin']) && $clientData['crossOrigin'] !== false) {
+        if (array_key_exists('crossOrigin', $clientData) && $clientData['crossOrigin'] !== false) {
+            return null;
+        }
+        if (array_key_exists('topOrigin', $clientData)) {
             return null;
         }
 
