@@ -214,7 +214,7 @@ $commonSession = [
 ];
 $adminSession = $commonSession + [
     'method' => 'admin-password',
-    'scopes' => ['admin', 'register', 'migrate']
+    'scopes' => ['admin', 'register', 'migrate', 'portal']
 ];
 $portalSession = $commonSession + [
     'method' => 'passkey',
@@ -223,6 +223,10 @@ $portalSession = $commonSession + [
 stateCheck(
     invokePrivate($module, 'PortalSessionMatchesRequirements', [$adminSession, 'https://primary.example.com', ['migrate'], ['admin-password'], $now]),
     'admin-password migration scope was rejected'
+);
+stateCheck(
+    invokePrivate($module, 'PortalSessionMatchesRequirements', [$adminSession, 'https://primary.example.com', ['portal'], ['admin-password'], $now]),
+    'admin-password session did not retain portal fallback authority'
 );
 stateCheck(
     !invokePrivate($module, 'PortalSessionMatchesRequirements', [$portalSession, 'https://primary.example.com', ['migrate'], ['admin-password'], $now]),
@@ -256,18 +260,51 @@ stateCheck(
 );
 stateCheck($normalized['backupEligibilityVerified'] === false, 'pre-hardening backup eligibility was incorrectly trusted');
 
+$initialVault = [
+    'runtime_secret' => 'available',
+    'record' => ['value' => 'initial']
+];
+stateCheck(invokePrivate($module, '_encryptAndSave', [$initialVault]), 'could not create test vault');
+
 $module->testSetProperty('PortalEnabled', false);
 $module->testSetBuffer('PortalEnabledLastV2', '1');
 $generationBeforePendingRevocation = (int)$module->testGetBuffer('PortalRevocationGenerationV2');
 $GLOBALS['portalSemaphoreFailures'] = 1;
 $module->ApplyChanges();
 stateCheck($module->testGetBuffer('PortalRevocationPendingV2') === '1', 'failed disable revocation was not persisted');
+stateCheck($module->testGetStatus() === 102, 'pending portal revocation disabled the healthy vault instance');
+stateCheck($module->GetSecret('runtime_secret') === 'available', 'pending portal revocation interrupted ordinary secret reads');
+
+$pendingChallenge = [
+    'generation' => (int)$module->testGetBuffer('PortalRevocationGenerationV2'),
+    'userAgentHash' => hash('sha256', $_SERVER['HTTP_USER_AGENT'])
+];
+stateCheck(
+    !invokePrivate($module, 'EnterAuthorizedCeremonyCommit', [$pendingChallenge]),
+    'ceremony commit was authorized while revocation was pending'
+);
+stateCheck(
+    invokePrivate($module, 'CreatePortalSessionStateLocked', [
+        'passkey',
+        ['portal'],
+        'https://primary.example.com',
+        'device_pending',
+        (int)$module->testGetBuffer('PortalRevocationGenerationV2')
+    ]) === null,
+    'session was created while revocation was pending'
+);
+$vaultBeforePendingWrite = $module->testGetValue('Vault');
+stateCheck(
+    !invokePrivate($module, '_encryptAndSave', [['runtime_secret' => 'replaced'], null, true]),
+    'ceremony vault write committed while revocation was pending'
+);
+stateCheck($module->testGetValue('Vault') === $vaultBeforePendingWrite, 'rejected pending ceremony changed the vault');
 
 $module->testSetProperty('PortalEnabled', true);
 $GLOBALS['portalSemaphoreFailures'] = 1;
 $module->ApplyChanges();
 stateCheck($module->testGetBuffer('PortalRevocationPendingV2') === '1', 'portal reopened while revocation remained pending');
-stateCheck($module->testGetStatus() === 202, 'pending revocation did not place the instance in error state');
+stateCheck($module->testGetStatus() === 102, 'pending revocation disabled ordinary vault access after portal re-enable');
 
 $module->ApplyChanges();
 stateCheck($module->testGetBuffer('PortalRevocationPendingV2') === '0', 'pending revocation was not retried');
@@ -276,8 +313,6 @@ stateCheck(
     'retried revocation did not advance the session generation'
 );
 
-$initialVault = ['record' => ['value' => 'initial']];
-stateCheck(invokePrivate($module, '_encryptAndSave', [$initialVault]), 'could not create test vault');
 $vaultRevision = null;
 $revisionArguments = [&$vaultRevision];
 $staleSnapshot = invokePrivate($module, '_decryptVaultWithRevision', $revisionArguments);
@@ -340,7 +375,34 @@ for ($i = 0; $i < 180; $i++) {
 }
 stateCheck($allowed === 100, 'global rate limit did not stop at the configured maximum');
 $rateState = json_decode($module->testGetBuffer('PortalRateLimitsV2'), true);
-stateCheck(is_array($rateState) && count($rateState) <= 256, 'rate-limit state exceeded its hard capacity');
+stateCheck(is_array($rateState) && count($rateState) <= 320, 'rate-limit partition exceeded its hard capacity');
+
+$module->testSetBuffer('PortalRateLimitsV2', '{}');
+$_SERVER['HTTP_HOST'] = 'primary.example.com';
+$primaryChallengeAllowed = 0;
+for ($i = 0; $i < 180; $i++) {
+    $_SERVER['REMOTE_ADDR'] = '203.0.113.' . $i;
+    if (invokePrivate($module, 'CheckPortalRateLimit', ['challenge-issuance', true, 30, 300])) {
+        $primaryChallengeAllowed++;
+    }
+}
+$primaryAdminAllowed = 0;
+for ($i = 0; $i < 80; $i++) {
+    $_SERVER['REMOTE_ADDR'] = '198.18.0.' . $i;
+    if (invokePrivate($module, 'CheckPortalRateLimit', ['admin-password', true])) {
+        $primaryAdminAllowed++;
+    }
+}
+stateCheck($primaryChallengeAllowed === 180 && $primaryAdminAllowed === 80, 'independent primary-origin rate partitions interfered');
+
+$_SERVER['HTTP_HOST'] = 'backup.example.net';
+$_SERVER['REMOTE_ADDR'] = '192.0.2.200';
+stateCheck(
+    invokePrivate($module, 'CheckPortalRateLimit', ['assertion', true]),
+    'primary-origin rate state blocked the backup-origin authentication partition'
+);
+$partitionedRateState = json_decode($module->testGetBuffer('PortalRateLimitsV2'), true);
+stateCheck(is_array($partitionedRateState) && count($partitionedRateState) > 256, 'rate-limit isolation test did not exceed the former shared capacity');
 
 @unlink($temporaryKeyFolder . DIRECTORY_SEPARATOR . 'master.key');
 @rmdir($temporaryKeyFolder);

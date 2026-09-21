@@ -20,7 +20,7 @@ class SecretsManager extends IPSModuleStrict
     private const PORTAL_RATE_WINDOW_SECONDS = 600;
     private const PORTAL_RATE_MAX_PER_CLIENT = 10;
     private const PORTAL_RATE_MAX_GLOBAL = 100;
-    private const PORTAL_RATE_MAX_ENTRIES = 256;
+    private const PORTAL_RATE_MAX_ENTRIES_PER_PARTITION = 320;
     private const PORTAL_CHALLENGE_BUFFER = 'PortalChallengesV2';
     private const PORTAL_CHALLENGE_MAX_ENTRIES = 192;
     private const PORTAL_ASSERTION_CHALLENGES_PER_ORIGIN = 64;
@@ -537,6 +537,10 @@ class SecretsManager extends IPSModuleStrict
         $previousPortalEnabled = $this->GetBuffer(self::PORTAL_ENABLED_BUFFER);
         $revocationPending = $this->GetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER) === '1';
         if ($revocationPending || ($previousPortalEnabled === '1' && !$portalEnabled)) {
+            // Publish the fail-closed state before waiting for the lock. Any
+            // ceremony already in flight will see it at its commit boundary.
+            $this->SetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER, '1');
+            $revocationPending = true;
             if ($this->EnterPortalStateLock()) {
                 try {
                     $this->RevokeAllPortalStateUnlocked();
@@ -545,8 +549,8 @@ class SecretsManager extends IPSModuleStrict
                     $this->LeavePortalStateLock();
                 }
             } else {
-                $this->SetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER, '1');
-                $revocationPending = true;
+                // Keep the pending marker set; portal authentication and
+                // ceremony commits remain blocked until a retry succeeds.
             }
         }
         $this->SetBuffer(self::PORTAL_ENABLED_BUFFER, $portalEnabled ? '1' : '0');
@@ -573,7 +577,6 @@ class SecretsManager extends IPSModuleStrict
 
         if ($portalEnabled && $revocationPending) {
             $errorMessage = 'Portal remains blocked because session revocation is pending. Apply the configuration again.';
-            $this->SetStatus(202);
         }
 
         $this->UpdateFormLayout($errorMessage);
@@ -809,8 +812,8 @@ class SecretsManager extends IPSModuleStrict
 
     public function RevokePortalSessions(): void
     {
+        $this->SetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER, '1');
         if (!$this->EnterPortalStateLock()) {
-            $this->SetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER, '1');
             echo "❌ Portal security state is busy. Try again.";
             return;
         }
@@ -2522,7 +2525,7 @@ class SecretsManager extends IPSModuleStrict
         }
 
         $this->ResetPortalRateLimit('admin-password');
-        if (!$this->CreatePortalSession('admin-password', ['admin', 'register', 'migrate'])) {
+        if (!$this->CreatePortalSession('admin-password', ['admin', 'register', 'migrate', 'portal'])) {
             $this->SendPortalError(500, 'The session could not be created.');
             return;
         }
@@ -2950,7 +2953,7 @@ class SecretsManager extends IPSModuleStrict
             $migrated['UserAgent'] = substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 512);
             $vaultData[self::LOCAL_AUTH_KEY][$deviceKey] = $migrated;
 
-            if (!$this->_encryptAndSave($vaultData, $vaultRevision)) {
+            if (!$this->_encryptAndSave($vaultData, $vaultRevision, true)) {
                 $this->SendPortalJson(500, ['ok' => false, 'error' => 'The verified migrated credential could not be saved.']);
                 return;
             }
@@ -3162,7 +3165,7 @@ class SecretsManager extends IPSModuleStrict
                 'UserAgent'           => substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 512)
             ];
 
-            if (!$this->_encryptAndSave($vaultData, $vaultRevision)) {
+            if (!$this->_encryptAndSave($vaultData, $vaultRevision, true)) {
                 $this->SendPortalJson(500, ['ok' => false, 'error' => 'The verified passkey could not be saved.']);
                 return;
             }
@@ -3312,7 +3315,7 @@ class SecretsManager extends IPSModuleStrict
             $vaultData[self::LOCAL_AUTH_KEY][$deviceKey]['backupEligibilityVerified'] = true;
             $vaultData[self::LOCAL_AUTH_KEY][$deviceKey]['LastUsedAt'] = time();
 
-            if (!$this->_encryptAndSave($vaultData, $vaultRevision)) {
+            if (!$this->_encryptAndSave($vaultData, $vaultRevision, true)) {
                 $this->SendPortalJson(500, ['ok' => false, 'error' => 'Authentication state could not be saved.']);
                 return;
             }
@@ -3509,6 +3512,9 @@ class SecretsManager extends IPSModuleStrict
         ?string $credentialDeviceKey = null,
         ?int $expectedGeneration = null
     ): ?array {
+        if ($this->GetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER) === '1') {
+            return null;
+        }
         $generation = $this->GetPortalRevocationGenerationUnlocked();
         if ($expectedGeneration !== null && $generation !== $expectedGeneration) {
             return null;
@@ -4132,6 +4138,7 @@ class SecretsManager extends IPSModuleStrict
         }
 
         $valid =
+            $this->GetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER) !== '1' &&
             (int)($challenge['generation'] ?? -1) === $this->GetPortalRevocationGenerationUnlocked() &&
             hash_equals((string)($challenge['userAgentHash'] ?? ''), $this->GetCurrentUserAgentHash());
 
@@ -4291,8 +4298,21 @@ class SecretsManager extends IPSModuleStrict
                         $newKeys++;
                     }
                 }
-                if (count($limits) + $newKeys > self::PORTAL_RATE_MAX_ENTRIES) {
-                    $this->LogMessage('Portal rate-limit state capacity reached.', KL_WARNING);
+                $globalKey = 'global:' . $origin . ':' . $bucket;
+                $clientPrefix = 'client:' . $origin . ':' . $bucket . ':';
+                $partitionEntries = 0;
+                foreach (array_keys($limits) as $key) {
+                    if ($key === $globalKey || str_starts_with((string)$key, $clientPrefix)) {
+                        $partitionEntries++;
+                    }
+                }
+                if ($partitionEntries + $newKeys > self::PORTAL_RATE_MAX_ENTRIES_PER_PARTITION) {
+                    $entry = $limits[$globalKey] ?? ['started' => $now, 'count' => 0, 'logged' => false];
+                    if (!(bool)($entry['capacityLogged'] ?? false)) {
+                        $entry['capacityLogged'] = true;
+                        $this->LogMessage('Portal rate-limit partition capacity reached. Bucket=' . $bucket, KL_WARNING);
+                    }
+                    $limits[$globalKey] = $entry;
                     $this->SetBuffer(self::PORTAL_RATE_BUFFER, (string)json_encode($limits));
                     return false;
                 }
@@ -4697,7 +4717,11 @@ class SecretsManager extends IPSModuleStrict
         return $changed;
     }
 
-    private function _encryptAndSave(array $dataArray, ?string $expectedRevision = null): bool
+    private function _encryptAndSave(
+        array $dataArray,
+        ?string $expectedRevision = null,
+        bool $abortIfPortalRevocationPending = false
+    ): bool
     {
         if (!$this->EnterVaultLock()) {
             return false;
@@ -4738,6 +4762,13 @@ class SecretsManager extends IPSModuleStrict
 
         if (!is_string($vaultData) || strlen($vaultData) > self::VAULT_MAX_BYTES) {
             $this->LogMessage('Vault save rejected because the encrypted result exceeds the configured size limit.', KL_WARNING);
+            return false;
+        }
+
+        // Ceremony callers hold the portal-state lock. Checking immediately
+        // before the durable write prevents a revocation request published
+        // during expensive encoding/encryption from committing new auth data.
+        if ($abortIfPortalRevocationPending && $this->GetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER) === '1') {
             return false;
         }
 

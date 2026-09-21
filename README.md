@@ -92,6 +92,8 @@ Die Passkey-Funktion ermöglicht es Ihnen, den Zugriff auf den Tresor oder eigen
 - **Hardware-gebunden:** Der private Schlüssel verlässt niemals Ihr Gerät (Smartphone oder PC).
 - **Serverseitig verifiziert:** Signatur, Challenge, Ceremony-Typ, exakter Origin, RP-ID, Benutzeranwesenheit und Benutzerverifikation werden geprüft.
 - **Sichere Sitzung:** Nach erfolgreicher Prüfung wird ein zufälliges `Secure`-/`HttpOnly`-/`SameSite=Strict`-Cookie ausgegeben. Im RAM wird nur dessen SHA-256-Hash gespeichert.
+- **Getrennte Berechtigungen:** Eine Passkey-Sitzung erlaubt nur den Portalzugriff. Migration und Administration erfordern das Admin-Passwort.
+- **Sicherer Widerruf:** Ein laufender Widerruf blockiert neue Portal-Sitzungen und Passkey-Änderungen, ohne den normalen Zugriff auf gespeicherte Secrets zu unterbrechen.
 
 ### 7.2 Einrichtung (Registrierung)
 
@@ -120,6 +122,7 @@ Die Seite `?register=1` wird nur benötigt, wenn Sie später tatsächlich ein ne
 
 - **Login-Portal:** Sie können das Portal nutzen, um eine Sitzung für Ihren Browser zu starten. URL: `https://[Ihre-Symcon-URL]/hook/secrets_[ID]?portal=1`. Nach erfolgreichem Scan ist Ihr Browser für 60 Minuten autorisiert.
 - **Primär-/Backup-URL:** Passkeys und Sitzungs-Cookies bleiben jeweils an ihren exakten Origin gebunden. Bei einem Wechsel zur Backup-URL authentifizieren Sie sich dort erneut mit dem für diese URL registrierten Passkey.
+- **Passwort-Alternative:** Eine Anmeldung am Admin-Dashboard mit dem Admin-Passwort berechtigt dieselbe Browser-Sitzung am gleichen Origin auch für Portal-geschützte Webseiten.
 - **Integration in eigene Skripte:** Sie können die biometrische Prüfung in jedes WebHook-Skript einbauen:
 
 ```php
@@ -140,16 +143,16 @@ echo "Willkommen! Ihr Zugriff wurde biometrisch verifiziert.";
 
 Das Admin-Dashboard ist eine zentrale Steuerseite, die über den WebHook aufgerufen werden kann. Es dient dazu, Registrierungs-Links für alle im System befindlichen Master- und Slave-Instanzen automatisch zu generieren.
 
-**Zugriffsschutz (Zweistufig):**
+**Zugriffsschutz:**
 
 - **Erst-Login:** Das Admin-Passwort wird über ein POST-Formular übermittelt und erscheint niemals in der URL.
-- **Folge-Logins:** Ein vollständig verifizierter Passkey erzeugt eine kurzlebige, widerrufbare Cookie-Sitzung.
+- **Folgezugriffe:** Die erfolgreiche Anmeldung erzeugt eine kurzlebige, widerrufbare Cookie-Sitzung. Eine normale Passkey-Sitzung erhält keine Administratorrechte.
 
 ### 8.2 Sicherheits-Architektur (Zwei-Passwort-Konzept)
 
 Um maximale Sicherheit zu gewährleisten, nutzt das System zwei getrennte Passwörter im Tresor:
 
-1.  **AdminPortal (Record `AdminPortal` -> Feld `PW`):** Schützt das Dashboard. Sollte niemals geteilt werden. Ermöglicht den Zugriff auf alle System-Links.
+1.  **AdminPortal (Record `AdminPortal` -> Feld `PW`):** Schützt das Dashboard. Sollte niemals geteilt werden. Ermöglicht den Zugriff auf alle System-Links und dient optional als Passwort-Alternative für Portal-geschützte Webseiten.
 2.  **RegistrationPassword (Record `RegistrationPassword` -> Feld `PW`):** Schützt das Registrierungsformular unter `?register=1`.
 
 ### 8.3 Passkeys in verteilten Systemen (Master/Slave)
@@ -269,6 +272,7 @@ Protect access to your vault or custom WebHook scripts using biometrics (fingerp
 - **Secure session:** Successful verification creates a random `Secure`/`HttpOnly`/`SameSite=Strict` cookie. Only its SHA-256 hash is held in RAM.
 - **Separated authority:** A normal passkey login grants portal access only. Migration and credential administration require a current admin-password session; the registration password authorizes only its single registration ceremony.
 - **Immediate revocation:** Disabling the portal or revoking sessions also invalidates pending login, migration, and registration challenges.
+- **Runtime availability:** A pending portal revocation blocks portal sessions and credential changes while ordinary vault reads remain available.
 
 ### 7.2 Setup (Registration)
 
@@ -304,6 +308,7 @@ portal must not be exposed to untrusted networks.
 - **Login Portal:** `https://[Your-Symcon-URL]/hook/secrets_[ID]?portal=1`. After a successful scan, your browser is authorized for 60 minutes.
 - **Primary/backup URL:** Passkeys and session cookies remain bound to their exact origin. When switching to the backup URL, authenticate there with a passkey registered for that URL.
 - **Revocation:** Disabling the portal or using the revoke action invalidates current sessions and all pending passkey ceremonies.
+- **Password fallback:** Signing in to the admin dashboard with the admin password also authorizes that browser session for portal-protected websites on the same origin.
 - **Integration into Custom Scripts:** You can integrate biometric verification into any WebHook script:
 
 ```php
@@ -328,7 +333,7 @@ The Admin Dashboard is accessible through `?admin=1`. The admin password is subm
 
 For maximum security, the system utilizes two distinct passwords stored within the vault:
 
-1.  **AdminPortal (Record `AdminPortal` -> Field `PW`):** Protects the Admin Dashboard. Should never be shared. Grants access to all system-wide registration links.
+1.  **AdminPortal (Record `AdminPortal` -> Field `PW`):** Protects the Admin Dashboard. Should never be shared. Grants access to all system-wide registration links and provides the optional password fallback for portal-protected websites.
 2.  **RegistrationPassword (Record `RegistrationPassword` -> Field `PW`):** Protects the registration form at `?register=1`.
 
 ### 8.3 Passkeys in Distributed Environments (Master/Slave)

@@ -45,6 +45,9 @@ $required = [
     '_decryptVaultWithRevision(',
     'CreatePortalSessionStateLocked(',
     "PORTAL_REVOCATION_PENDING_BUFFER = 'PortalRevocationPendingV2'",
+    'PORTAL_RATE_MAX_ENTRIES_PER_PARTITION = 320',
+    "CreatePortalSession('admin-password', ['admin', 'register', 'migrate', 'portal'])",
+    'abortIfPortalRevocationPending',
     'ReadRequestBody(',
     'SYNC_MAX_REQUEST_BYTES',
     'PORTAL_JSON_MAX_REQUEST_BYTES',
@@ -66,7 +69,8 @@ $forbidden = [
     "'PortalAuthChallengeV2_' . \$sid",
     "'PortalRegistrationChallengeV2_' . \$sid",
     "'PortalMigrationChallengeV2_' . \$sid",
-    'VAULT_REVISION_KEY'
+    'VAULT_REVISION_KEY',
+    'PORTAL_RATE_MAX_ENTRIES = 256'
 ];
 foreach ($forbidden as $needle) {
     if (str_contains($module, $needle)) {
@@ -100,6 +104,16 @@ if ($sessionContextStart === false || $sessionContextEnd === false || $sessionCo
 $sessionContext = substr($module, $sessionContextStart, $sessionContextEnd - $sessionContextStart);
 if (!str_contains($sessionContext, 'PORTAL_REVOCATION_PENDING_BUFFER')) {
     throw new RuntimeException('Pending revocation does not fail closed for portal-session consumers');
+}
+
+$commitStart = strpos($module, 'private function EnterAuthorizedCeremonyCommit(');
+$commitEnd = strpos($module, 'private function IsJsonRequest()', $commitStart === false ? 0 : $commitStart);
+if ($commitStart === false || $commitEnd === false || $commitEnd <= $commitStart) {
+    throw new RuntimeException('Could not isolate EnterAuthorizedCeremonyCommit');
+}
+$commit = substr($module, $commitStart, $commitEnd - $commitStart);
+if (!str_contains($commit, 'PORTAL_REVOCATION_PENDING_BUFFER')) {
+    throw new RuntimeException('Ceremony commits do not fail closed while revocation is pending');
 }
 
 $migrationStart = strpos($module, 'private function VerifyLegacyMigration(): void');

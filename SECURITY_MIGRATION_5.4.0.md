@@ -37,7 +37,13 @@ Disabling the portal, selecting Revoke portal sessions, deleting a passkey, or
 removing all passkeys also invalidates relevant pending ceremonies. Challenges
 are one-time, short-lived, user-agent-bound, generation-bound, and stored in a
 bounded in-memory set. Authentication attempts are limited per client and per
-configured origin without creating unbounded state.
+configured origin and operation without creating unbounded state. Traffic on
+the primary URL cannot consume the backup URL's rate-limit capacity.
+
+If a revocation must be retried because portal state is busy, new portal
+sessions and credential changes fail closed. Ordinary vault reads remain
+available to runtime integrations. An AdminPortal/PW login also retains the
+optional password fallback for portal-protected pages on the same origin.
 
 Use Remove all passkeys only if you intentionally want a clean reset. Use the
 registration page only when adding a genuinely new device.
