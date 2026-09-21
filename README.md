@@ -93,7 +93,8 @@ Die Passkey-Funktion ermöglicht es Ihnen, den Zugriff auf den Tresor oder eigen
 - **Serverseitig verifiziert:** Signatur, Challenge, Ceremony-Typ, exakter Origin, RP-ID, Benutzeranwesenheit und Benutzerverifikation werden geprüft.
 - **Sichere Sitzung:** Nach erfolgreicher Prüfung wird ein zufälliges `Secure`-/`HttpOnly`-/`SameSite=Strict`-Cookie ausgegeben. Im RAM wird nur dessen SHA-256-Hash gespeichert.
 - **Getrennte Berechtigungen:** Eine Passkey-Sitzung erlaubt nur den Portalzugriff. Migration und Administration erfordern das Admin-Passwort.
-- **Sicherer Widerruf:** Ein laufender Widerruf blockiert neue Portal-Sitzungen und Passkey-Änderungen, ohne den normalen Zugriff auf gespeicherte Secrets zu unterbrechen.
+- **Sicherer Widerruf:** Ein laufender Widerruf blockiert neue Portal-Sitzungen und Passkey-Änderungen, ohne den normalen Zugriff auf gespeicherte Secrets zu unterbrechen. Passwort-Anmeldungen und Sitzungsprüfungen sind an dieselbe Widerrufs-Generation gebunden.
+- **An den Passkey gebundene Sitzung:** Eine Passkey-Sitzung wird bei jedem Zugriff gegen den unveränderten lokalen Credential-Datensatz geprüft. Löschen oder Ändern über Explorer, Import oder Geräteverwaltung beendet damit auch bestehende Sitzungen.
 
 ### 7.2 Einrichtung (Registrierung)
 
@@ -273,6 +274,8 @@ Protect access to your vault or custom WebHook scripts using biometrics (fingerp
 - **Separated authority:** A normal passkey login grants portal access only. Migration and credential administration require a current admin-password session; the registration password authorizes only its single registration ceremony.
 - **Immediate revocation:** Disabling the portal or revoking sessions also invalidates pending login, migration, and registration challenges.
 - **Runtime availability:** A pending portal revocation blocks portal sessions and credential changes while ordinary vault reads remain available.
+- **Generation-bound password authorization:** Password login and session validation cannot cross a concurrent completed or pending revocation.
+- **Live credential binding:** Every passkey session is checked against the unchanged local credential record, so deletion or modification through the explorer, import, or device management invalidates it.
 
 ### 7.2 Setup (Registration)
 

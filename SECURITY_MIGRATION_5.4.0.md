@@ -44,6 +44,12 @@ If a revocation must be retried because portal state is busy, new portal
 sessions and credential changes fail closed. Ordinary vault reads remain
 available to runtime integrations. An AdminPortal/PW login also retains the
 optional password fallback for portal-protected pages on the same origin.
+Password authorization captures the current revocation generation before
+verification and may commit a session or registration ceremony only in that
+same generation. Session validation rechecks pending revocation after taking
+the portal-state lock. Passkey sessions are also bound to the exact live local
+credential record; deleting or modifying it through any vault editing path
+invalidates the session on its next use.
 
 Use Remove all passkeys only if you intentionally want a clean reset. Use the
 registration page only when adding a genuinely new device.

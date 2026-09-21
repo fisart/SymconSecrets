@@ -16,6 +16,11 @@ function IPS_SemaphoreEnter(string $name, int $milliseconds): bool
         $GLOBALS['portalSemaphoreFailures']--;
         return false;
     }
+    if (str_contains($name, '.PortalState.') && is_callable($GLOBALS['portalSemaphoreEnterCallback'] ?? null)) {
+        $callback = $GLOBALS['portalSemaphoreEnterCallback'];
+        $GLOBALS['portalSemaphoreEnterCallback'] = null;
+        $callback();
+    }
     return true;
 }
 
@@ -164,6 +169,7 @@ $_SERVER['HTTP_USER_AGENT'] = 'SymconSecrets security test';
 $_SERVER['HTTP_HOST'] = 'primary.example.com';
 $_SERVER['REMOTE_ADDR'] = '192.0.2.1';
 $GLOBALS['portalSemaphoreFailures'] = 0;
+$GLOBALS['portalSemaphoreEnterCallback'] = null;
 
 $module = new SecretsManager(77);
 $temporaryKeyFolder = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'symcon-secrets-test-' . bin2hex(random_bytes(8));
@@ -205,10 +211,35 @@ stateCheck(
     'primary-origin assertion traffic evicted the backup-origin challenge'
 );
 
+$passwordAuthorizationGeneration = invokePrivate($module, 'GetPortalAuthorizationGeneration');
+stateCheck(is_int($passwordAuthorizationGeneration), 'password authorization generation was unavailable');
+ob_start();
+$module->RevokePortalSessions();
+ob_end_clean();
+stateCheck(
+    invokePrivate($module, 'CreatePortalSessionStateLocked', [
+        'admin-password',
+        ['admin', 'portal'],
+        'https://primary.example.com',
+        null,
+        $passwordAuthorizationGeneration,
+        null
+    ]) === null,
+    'password login crossed a completed revocation generation'
+);
+stateCheck(
+    invokePrivate($module, 'StorePortalChallenge', [
+        'registration',
+        ['origin' => 'https://primary.example.com'],
+        $passwordAuthorizationGeneration
+    ]) === null,
+    'registration-password authorization crossed a completed revocation generation'
+);
+
 $now = time();
 $commonSession = [
     'expires'       => $now + 60,
-    'generation'    => 1,
+    'generation'    => (int)$module->testGetBuffer('PortalRevocationGenerationV2'),
     'origin'        => 'https://primary.example.com',
     'userAgentHash' => hash('sha256', $_SERVER['HTTP_USER_AGENT'])
 ];
@@ -236,6 +267,26 @@ stateCheck(
     invokePrivate($module, 'PortalSessionMatchesRequirements', [$portalSession, 'https://primary.example.com', ['portal'], ['passkey'], $now]),
     'portal passkey scope was rejected'
 );
+
+$module->testSetProperty('PortalEnabled', true);
+$lockedRecheckSession = invokePrivate($module, 'CreatePortalSessionStateLocked', [
+    'admin-password',
+    ['portal'],
+    'https://primary.example.com',
+    null,
+    (int)$module->testGetBuffer('PortalRevocationGenerationV2'),
+    null
+]);
+stateCheck(is_array($lockedRecheckSession), 'could not create session for locked revocation recheck');
+$_COOKIE['SEC_PORTAL_V2_77'] = (string)$lockedRecheckSession['token'];
+$GLOBALS['portalSemaphoreEnterCallback'] = static function () use ($module): void {
+    $module->testSetBuffer('PortalRevocationPendingV2', '1');
+};
+stateCheck(
+    invokePrivate($module, 'GetPortalSessionContext', [true, ['portal'], ['admin-password']]) === null,
+    'session validation did not recheck pending revocation after acquiring its lock'
+);
+$module->testSetBuffer('PortalRevocationPendingV2', '0');
 
 $rawCredentialId = "\xfb\xff\x00credential";
 $vault = [
@@ -339,17 +390,26 @@ $credentialId = "race-credential";
 $credentialVault = [
     '__AUTH__' => [
         'device_race' => [
-            'credentialId' => base64_encode($credentialId)
+            'schemaVersion'       => SecretsPortalSecurity::CREDENTIAL_SCHEMA_VERSION,
+            'credentialId'        => base64_encode($credentialId),
+            'credentialIdV2'      => SecretsPortalSecurity::base64UrlEncode($credentialId),
+            'credentialPublicKey' => 'test-public-key',
+            'rpId'                => 'primary.example.com',
+            'origin'              => 'https://primary.example.com',
+            'userHandle'          => SecretsPortalSecurity::base64UrlEncode('test-user')
         ]
     ]
 ];
 stateCheck(invokePrivate($module, '_encryptAndSave', [$credentialVault]), 'could not create credential deletion test vault');
+$credentialBinding = invokePrivate($module, 'GetCredentialSessionBinding', [$credentialVault['__AUTH__']['device_race']]);
+stateCheck(is_string($credentialBinding) && $credentialBinding !== '', 'could not bind session to live credential');
 $session = invokePrivate($module, 'CreatePortalSessionStateLocked', [
     'passkey',
     ['portal'],
     'https://primary.example.com',
     'device_race',
-    (int)$module->testGetBuffer('PortalRevocationGenerationV2')
+    (int)$module->testGetBuffer('PortalRevocationGenerationV2'),
+    $credentialBinding
 ]);
 stateCheck(is_array($session), 'could not create credential-bound session');
 $_COOKIE['SEC_PORTAL_V2_77'] = (string)$session['token'];
@@ -359,11 +419,18 @@ stateCheck(
     'pending revocation left an existing portal session usable'
 );
 $module->testSetBuffer('PortalRevocationPendingV2', '0');
-stateCheck(invokePrivate($module, 'DeleteLocalPasskey', ['device_race']), 'credential deletion failed');
+$module->testSetBuffer('CurrentPath', '__AUTH__');
+ob_start();
+invokePrivate($module, 'ProcessExplorerDelete', ['device_race']);
+ob_end_clean();
+stateCheck(
+    invokePrivate($module, 'GetPortalSessionContext', [true, ['portal'], ['passkey']]) === null,
+    'explorer credential deletion left its passkey session usable'
+);
 $remainingSessions = json_decode($module->testGetBuffer('PortalSessionsV2'), true);
 stateCheck(
     is_array($remainingSessions) && !array_key_exists((string)$session['tokenHash'], $remainingSessions),
-    'credential deletion left its authenticated session active'
+    'stale passkey session was not removed after explorer credential deletion'
 );
 
 $allowed = 0;

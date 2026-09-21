@@ -44,6 +44,10 @@ $required = [
     'NormalizeCredentialRecordsForRollback(',
     '_decryptVaultWithRevision(',
     'CreatePortalSessionStateLocked(',
+    'IsPasskeySessionCredentialCurrent(',
+    'GetCredentialSessionBinding(',
+    "'credentialBinding'",
+    'GetPortalAuthorizationGeneration(',
     "PORTAL_REVOCATION_PENDING_BUFFER = 'PortalRevocationPendingV2'",
     'PORTAL_RATE_MAX_ENTRIES_PER_PARTITION = 320',
     "CreatePortalSession('admin-password', ['admin', 'register', 'migrate', 'portal'])",
@@ -104,6 +108,33 @@ if ($sessionContextStart === false || $sessionContextEnd === false || $sessionCo
 $sessionContext = substr($module, $sessionContextStart, $sessionContextEnd - $sessionContextStart);
 if (!str_contains($sessionContext, 'PORTAL_REVOCATION_PENDING_BUFFER')) {
     throw new RuntimeException('Pending revocation does not fail closed for portal-session consumers');
+}
+if (!str_contains($sessionContext, 'IsPasskeySessionCredentialCurrent(')) {
+    throw new RuntimeException('Passkey sessions are not bound to the current live credential');
+}
+
+$adminLoginStart = strpos($module, 'private function HandleAdminLogin(): void');
+$adminLoginEnd = strpos($module, 'protected function ProcessHookData(): void', $adminLoginStart === false ? 0 : $adminLoginStart);
+if ($adminLoginStart === false || $adminLoginEnd === false || $adminLoginEnd <= $adminLoginStart) {
+    throw new RuntimeException('Could not isolate HandleAdminLogin');
+}
+$adminLogin = substr($module, $adminLoginStart, $adminLoginEnd - $adminLoginStart);
+foreach (['GetPortalAuthorizationGeneration(', '$authorizationGeneration)'] as $needle) {
+    if (!str_contains($adminLogin, $needle)) {
+        throw new RuntimeException('Admin password login is not generation-bound: ' . $needle);
+    }
+}
+
+$registrationPasswordStart = strpos($module, 'private function HandleRegistrationPassword(): void');
+$registrationPasswordEnd = strpos($module, 'private function ServeLegacyMigrationUI(): void', $registrationPasswordStart === false ? 0 : $registrationPasswordStart);
+if ($registrationPasswordStart === false || $registrationPasswordEnd === false || $registrationPasswordEnd <= $registrationPasswordStart) {
+    throw new RuntimeException('Could not isolate HandleRegistrationPassword');
+}
+$registrationPassword = substr($module, $registrationPasswordStart, $registrationPasswordEnd - $registrationPasswordStart);
+foreach (['GetPortalAuthorizationGeneration(', 'ServeRegistrationUI(\'registration-password\', null, $authorizationGeneration)'] as $needle) {
+    if (!str_contains($registrationPassword, $needle)) {
+        throw new RuntimeException('Registration password authorization is not generation-bound: ' . $needle);
+    }
 }
 
 $commitStart = strpos($module, 'private function EnterAuthorizedCeremonyCommit(');

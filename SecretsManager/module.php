@@ -2508,6 +2508,11 @@ class SecretsManager extends IPSModuleStrict
         if (!$this->RequirePortalReady(false)) {
             return;
         }
+        $authorizationGeneration = $this->GetPortalAuthorizationGeneration();
+        if ($authorizationGeneration === null) {
+            $this->SendPortalError(503, 'Portal security state changed. Reload the page and try again.');
+            return;
+        }
         if (!$this->CheckPortalRateLimit('admin-password', true)) {
             $this->SendPortalError(429, 'Too many attempts. Please try again later.');
             return;
@@ -2525,7 +2530,7 @@ class SecretsManager extends IPSModuleStrict
         }
 
         $this->ResetPortalRateLimit('admin-password');
-        if (!$this->CreatePortalSession('admin-password', ['admin', 'register', 'migrate', 'portal'])) {
+        if (!$this->CreatePortalSession('admin-password', ['admin', 'register', 'migrate', 'portal'], null, $authorizationGeneration)) {
             $this->SendPortalError(500, 'The session could not be created.');
             return;
         }
@@ -2712,6 +2717,11 @@ class SecretsManager extends IPSModuleStrict
         if (!$this->RequirePortalReady(false)) {
             return;
         }
+        $authorizationGeneration = $this->GetPortalAuthorizationGeneration();
+        if ($authorizationGeneration === null) {
+            $this->SendPortalError(503, 'Portal security state changed. Reload the page and try again.');
+            return;
+        }
         if (!$this->CheckPortalRateLimit('registration-password', true)) {
             $this->SendPortalError(429, 'Too many attempts. Please try again later.');
             return;
@@ -2729,7 +2739,7 @@ class SecretsManager extends IPSModuleStrict
         }
 
         $this->ResetPortalRateLimit('registration-password');
-        $this->ServeRegistrationUI('registration-password', null);
+        $this->ServeRegistrationUI('registration-password', null, $authorizationGeneration);
     }
 
     private function ServeLegacyMigrationUI(): void
@@ -2967,7 +2977,11 @@ class SecretsManager extends IPSModuleStrict
         $this->SendPortalJson(200, ['ok' => true]);
     }
 
-    private function ServeRegistrationUI(string $authorizationMethod, ?string $authorizationSessionHash): void
+    private function ServeRegistrationUI(
+        string $authorizationMethod,
+        ?string $authorizationSessionHash,
+        ?int $expectedGeneration = null
+    ): void
     {
         if (!$this->RequirePortalReady(false)) {
             return;
@@ -2989,7 +3003,7 @@ class SecretsManager extends IPSModuleStrict
             'origin'                  => $origin,
             'authorizationMethod'     => $authorizationMethod,
             'authorizationSessionHash'=> $authorizationSessionHash
-        ]);
+        ], $expectedGeneration);
         if ($sid === null) {
             $this->SendPortalError(503, 'Registration state is busy. Please try again.');
             return;
@@ -3328,7 +3342,8 @@ class SecretsManager extends IPSModuleStrict
                 ['portal'],
                 $origin,
                 $deviceKey,
-                (int)$buffer['generation']
+                (int)$buffer['generation'],
+                $this->GetCredentialSessionBinding($current)
             );
             if ($createdSession === null) {
                 $this->SendPortalJson(500, ['ok' => false, 'error' => 'Authentication session could not be saved.']);
@@ -3401,6 +3416,14 @@ class SecretsManager extends IPSModuleStrict
         }
 
         try {
+            // Recheck after acquiring the lock. A revocation request may have
+            // published its pending marker while this request was waiting.
+            if (
+                $this->GetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER) === '1' ||
+                ($requireEnabled && !$this->ReadPropertyBoolean('PortalEnabled'))
+            ) {
+                return null;
+            }
             $sessions = json_decode($this->GetBuffer(self::PORTAL_SESSION_BUFFER), true);
             if (!is_array($sessions)) {
                 return null;
@@ -3420,6 +3443,11 @@ class SecretsManager extends IPSModuleStrict
                 $this->SetBuffer(self::PORTAL_SESSION_BUFFER, json_encode($sessions));
             }
             if (!$this->PortalSessionMatchesRequirements($session, $profile['origin'], $requiredScopes, $allowedMethods, $now)) {
+                return null;
+            }
+            if (!$this->IsPasskeySessionCredentialCurrent($session, $profile['origin'])) {
+                unset($sessions[$tokenHash]);
+                $this->SetBuffer(self::PORTAL_SESSION_BUFFER, (string)json_encode($sessions));
                 return null;
             }
 
@@ -3464,6 +3492,68 @@ class SecretsManager extends IPSModuleStrict
     }
 
     /**
+     * Ordinary passkey sessions remain valid only while the exact credential
+     * that created them still exists unchanged in the local vault. This also
+     * covers credential edits performed through generic explorer/import paths.
+     *
+     * The caller holds the portal-state lock, preserving the global lock order
+     * portal state -> vault used by credential ceremonies and deletion.
+     *
+     * @param mixed $session
+     */
+    private function IsPasskeySessionCredentialCurrent($session, string $origin): bool
+    {
+        if (!is_array($session) || (string)($session['method'] ?? '') !== 'passkey') {
+            return true;
+        }
+
+        $deviceKey = (string)($session['credentialDeviceKey'] ?? '');
+        $expectedBinding = (string)($session['credentialBinding'] ?? '');
+        if ($deviceKey === '' || $expectedBinding === '') {
+            return false;
+        }
+        if (!$this->EnterVaultLock()) {
+            return false;
+        }
+        try {
+            $vault = $this->_decryptVault();
+            $credential = is_array($vault) ? ($vault[self::LOCAL_AUTH_KEY][$deviceKey] ?? null) : null;
+            if (!is_array($credential) || !hash_equals($origin, (string)($credential['origin'] ?? ''))) {
+                return false;
+            }
+            $currentBinding = $this->GetCredentialSessionBinding($credential);
+            return $currentBinding !== '' && hash_equals($expectedBinding, $currentBinding);
+        } finally {
+            $this->LeaveVaultLock();
+        }
+    }
+
+    private function GetCredentialSessionBinding(array $credential): string
+    {
+        $credentialId = $this->GetCredentialCanonicalId($credential);
+        $publicKey = (string)($credential['credentialPublicKey'] ?? '');
+        $rpId = (string)($credential['rpId'] ?? '');
+        $origin = (string)($credential['origin'] ?? '');
+        $userHandle = (string)($credential['userHandle'] ?? '');
+        if (
+            (int)($credential['schemaVersion'] ?? 0) !== SecretsPortalSecurity::CREDENTIAL_SCHEMA_VERSION ||
+            SecretsPortalSecurity::base64UrlDecode($credentialId) === null ||
+            $publicKey === '' ||
+            $rpId === '' ||
+            $origin === '' ||
+            SecretsPortalSecurity::base64UrlDecode($userHandle) === null
+        ) {
+            return '';
+        }
+
+        $material = '';
+        foreach ([$credentialId, $publicKey, $rpId, $origin, $userHandle] as $part) {
+            $material .= pack('N', strlen($part)) . $part;
+        }
+        return hash('sha256', $material);
+    }
+
+    /**
      * @param string[] $scopes
      */
     private function CreatePortalSession(string $authenticationMethod, array $scopes, ?string $credentialDeviceKey = null, ?int $expectedGeneration = null): bool
@@ -3483,7 +3573,8 @@ class SecretsManager extends IPSModuleStrict
                 $scopes,
                 $profile['origin'],
                 $credentialDeviceKey,
-                $expectedGeneration
+                $expectedGeneration,
+                null
             );
         } finally {
             $this->LeavePortalStateLock();
@@ -3510,13 +3601,17 @@ class SecretsManager extends IPSModuleStrict
         array $scopes,
         string $origin,
         ?string $credentialDeviceKey = null,
-        ?int $expectedGeneration = null
+        ?int $expectedGeneration = null,
+        ?string $credentialBinding = null
     ): ?array {
         if ($this->GetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER) === '1') {
             return null;
         }
         $generation = $this->GetPortalRevocationGenerationUnlocked();
         if ($expectedGeneration !== null && $generation !== $expectedGeneration) {
+            return null;
+        }
+        if ($authenticationMethod === 'passkey' && ($credentialDeviceKey === null || $credentialBinding === null || $credentialBinding === '')) {
             return null;
         }
 
@@ -3548,6 +3643,7 @@ class SecretsManager extends IPSModuleStrict
             'origin'              => $origin,
             'generation'          => $generation,
             'credentialDeviceKey' => $credentialDeviceKey,
+            'credentialBinding'   => $credentialBinding,
             'userAgentHash'       => $this->GetCurrentUserAgentHash()
         ];
         $encoded = json_encode($sessions);
@@ -3983,6 +4079,21 @@ class SecretsManager extends IPSModuleStrict
         return max(0, (int)$this->GetBuffer(self::PORTAL_REVOCATION_BUFFER));
     }
 
+    private function GetPortalAuthorizationGeneration(): ?int
+    {
+        if (!$this->EnterPortalStateLock()) {
+            return null;
+        }
+        try {
+            if ($this->GetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER) === '1') {
+                return null;
+            }
+            return $this->GetPortalRevocationGenerationUnlocked();
+        } finally {
+            $this->LeavePortalStateLock();
+        }
+    }
+
     private function RevokeAllPortalStateUnlocked(): void
     {
         $this->SetBuffer(self::PORTAL_REVOCATION_BUFFER, (string)($this->GetPortalRevocationGenerationUnlocked() + 1));
@@ -4012,7 +4123,7 @@ class SecretsManager extends IPSModuleStrict
      *
      * @param array<string, mixed> $data
      */
-    private function StorePortalChallenge(string $purpose, array $data): ?string
+    private function StorePortalChallenge(string $purpose, array $data, ?int $expectedGeneration = null): ?string
     {
         if (!$this->EnterPortalStateLock()) {
             return null;
@@ -4020,6 +4131,13 @@ class SecretsManager extends IPSModuleStrict
 
         $now = time();
         try {
+            $generation = $this->GetPortalRevocationGenerationUnlocked();
+            if (
+                $this->GetBuffer(self::PORTAL_REVOCATION_PENDING_BUFFER) === '1' ||
+                ($expectedGeneration !== null && $generation !== $expectedGeneration)
+            ) {
+                return null;
+            }
             $challenges = json_decode($this->GetBuffer(self::PORTAL_CHALLENGE_BUFFER), true);
             if (!is_array($challenges)) {
                 $challenges = [];
@@ -4058,7 +4176,7 @@ class SecretsManager extends IPSModuleStrict
             $sid = SecretsPortalSecurity::base64UrlEncode(random_bytes(16));
             $data['purpose'] = $purpose;
             $data['expires'] = $now + self::PORTAL_CHALLENGE_TTL_SECONDS;
-            $data['generation'] = $this->GetPortalRevocationGenerationUnlocked();
+            $data['generation'] = $generation;
             $data['userAgentHash'] = $this->GetCurrentUserAgentHash();
             $data['bucket'] = $bucket;
             $challenges[$sid] = $data;
