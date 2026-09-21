@@ -259,8 +259,9 @@ $adminSession = $commonSession + [
     'scopes' => ['admin', 'register', 'migrate', 'portal']
 ];
 $portalSession = $commonSession + [
-    'method' => 'passkey',
-    'scopes' => ['portal']
+    'method'               => 'passkey',
+    'scopes'               => ['portal'],
+    'credentialGeneration' => (int)$module->testGetBuffer('PortalCredentialGenerationV2')
 ];
 stateCheck(
     invokePrivate($module, 'PortalSessionMatchesRequirements', [$adminSession, 'https://primary.example.com', ['migrate'], ['admin-password'], $now]),
