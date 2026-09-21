@@ -117,6 +117,8 @@ Bevor Sie ein Gerät nutzen können, muss es einmalig verknüpft werden. Dieser 
 
 Rufen Sie `https://[Ihre-Symcon-URL]/hook/secrets_[ID]?admin=1` auf, melden Sie sich mit dem Admin-Passwort an und wählen Sie **Start verified migration**. Berühren Sie jeden vorhandenen Passkey einmal. Wiederholen Sie dies über die Backup-URL, falls dort eigene Passkeys registriert wurden. Dabei wird kein neuer Passkey erstellt; nur der bereits gespeicherte öffentliche Schlüssel wird durch eine aktuelle Signatur bestätigt. Aktivieren Sie `PortalEnabled`, sobald alle vorhandenen Passkeys übernommen wurden.
 
+Schlägt die Migration fehl, kann `PortalDebugEnabled` vorübergehend aktiviert werden. Unter der Modulinstanz erscheint dann die String-Variable **Portal debug (last event)** mit der letzten bereinigten Diagnose. Sie enthält keine Request-Payloads oder Authentifizierungsdaten. Nach der Fehlersuche `PortalDebugEnabled` wieder ausschalten; die Variable wird verborgen und geleert.
+
 Die Seite `?register=1` wird nur benötigt, wenn Sie später tatsächlich ein neues Gerät hinzufügen möchten.
 
 ### 7.3 Nutzung im Alltag
