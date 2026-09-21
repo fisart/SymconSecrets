@@ -50,7 +50,7 @@ $required = [
     'GetPortalAuthorizationGeneration(',
     "PORTAL_REVOCATION_PENDING_BUFFER = 'PortalRevocationPendingV2'",
     'PORTAL_RATE_MAX_ENTRIES_PER_PARTITION = 320',
-    "CreatePortalSession('admin-password', ['admin', 'register', 'migrate', 'portal'])",
+    "CreatePortalSession('admin-password', ['admin', 'register', 'migrate', 'portal'], null, \$authorizationGeneration)",
     'abortIfPortalRevocationPending',
     'ReadRequestBody(',
     'SYNC_MAX_REQUEST_BYTES',
