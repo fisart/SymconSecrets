@@ -5,7 +5,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/libs/PortalSecurity.php';
 require_once __DIR__ . '/libs/WebAuthn/src/WebAuthn.php';
 
-// Version 5.4.1
+// Version 5.4.2
 class SecretsManager extends IPSModuleStrict
 {
 
@@ -2609,16 +2609,19 @@ class SecretsManager extends IPSModuleStrict
         }
 
         if ($isMigrate) {
-            if (!$this->IsPortalSessionValid(false, ['migrate'], ['admin-password'])) {
-                $this->RecordPortalDebug('migration-admin-authentication-required');
-                $this->SendPortalError(403, 'Admin authentication is required before legacy passkeys can be migrated.');
-                return;
-            }
             if ($method === 'GET') {
+                // ServeLegacyMigrationUI requires a live admin-password
+                // session and binds its server-side token hash into the
+                // one-time migration challenge.
                 $this->ServeLegacyMigrationUI();
                 return;
             }
             if ($method === 'POST' && $this->IsJsonRequest()) {
+                // Do not depend on the browser exposing the admin cookie to
+                // this JSON request. VerifyLegacyMigration consumes the
+                // unguessable, single-use challenge, verifies the passkey,
+                // and EnterAuthorizedCeremonyCommit revalidates the exact
+                // bound admin session immediately before the vault update.
                 try {
                     $this->VerifyLegacyMigration();
                 } catch (Throwable $e) {
@@ -2850,11 +2853,6 @@ class SecretsManager extends IPSModuleStrict
 
     private function VerifyLegacyMigration(): void
     {
-        if (!$this->IsPortalSessionValid(false, ['migrate'], ['admin-password'])) {
-            $this->RecordPortalDebug('migration-admin-authentication-required');
-            $this->SendPortalJson(403, ['ok' => false, 'error' => 'Admin authentication is required.']);
-            return;
-        }
         $this->RecordPortalDebug('migration-request-received');
         if (!$this->RequirePortalReady(false)) {
             $this->RecordPortalDebug('migration-portal-not-ready');
