@@ -199,7 +199,7 @@ $migration = substr($module, $migrationStart, $migrationEnd - $migrationStart);
 foreach ([
     '$migrated[\'credentialIdV2\']',
     '$vaultData[self::LOCAL_AUTH_KEY][$deviceKey] = $migrated',
-    "EnterAuthorizedCeremonyCommit(\$buffer, 'migrate')"
+    "EnterAuthorizedCeremonyCommit(\$buffer, 'migrate',"
 ] as $needle) {
     if (!str_contains($migration, $needle)) {
         throw new RuntimeException('Rollback-compatible migration control missing: ' . $needle);
