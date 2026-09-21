@@ -213,6 +213,25 @@ ob_end_clean();
 $_POST = [];
 unset($_SERVER['REQUEST_METHOD']);
 
+// IP-Symcon may omit CONTENT_TYPE from the module PHP environment even when
+// the browser sent application/json. A migration POST must reach the strict
+// JSON verifier and return JSON rather than being rejected by the router with
+// an HTML HTTP 405 response.
+$_SERVER['REQUEST_METHOD'] = 'POST';
+unset($_SERVER['CONTENT_TYPE'], $_SERVER['HTTP_CONTENT_TYPE'], $_SERVER['HTTP_ACCEPT']);
+$_GET = ['migrate' => '1', 'json' => '1'];
+$_POST = [];
+ob_start();
+invokePrivate($module, 'ProcessHookData');
+$contentTypeIndependentMigrationResponse = (string)ob_get_clean();
+stateCheck(
+    str_starts_with($contentTypeIndependentMigrationResponse, '{') &&
+    !str_contains($contentTypeIndependentMigrationResponse, 'Method not allowed'),
+    'migration POST without exposed Content-Type was rejected by the router'
+);
+$_GET = [];
+unset($_SERVER['REQUEST_METHOD']);
+
 $sid = invokePrivate($module, 'StorePortalChallenge', ['assertion', ['origin' => 'https://primary.example.com']]);
 stateCheck(is_string($sid) && $sid !== '', 'challenge was not stored');
 $challenge = invokePrivate($module, 'ConsumePortalChallenge', [$sid, 'assertion']);

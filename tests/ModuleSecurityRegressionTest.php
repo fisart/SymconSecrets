@@ -22,7 +22,7 @@ $required = [
     "RegisterVariableString(\"PortalDebugMessage\", \"Portal debug (last event)\")",
     "'migration-unhandled-exception',",
     'SendPortalDiagnosticJson(',
-    "MODULE_VERSION = '5.4.3'",
+    "MODULE_VERSION = '5.4.4'",
     "'moduleVersion'    => self::MODULE_VERSION",
     'invalid JSON response',
     'body.diagnostic',
@@ -220,6 +220,14 @@ if ($migrationRouteStart === false || $migrationRouteEnd === false || $migration
 $migrationRoute = substr($module, $migrationRouteStart, $migrationRouteEnd - $migrationRouteStart);
 if (str_contains($migrationRoute, 'IsPortalSessionValid(')) {
     throw new RuntimeException('Migration route performs a redundant cookie check before challenge authorization');
+}
+if (str_contains($migrationRoute, '&& $this->IsJsonRequest()')) {
+    throw new RuntimeException('Migration routing still depends on an inconsistently exposed Content-Type header');
+}
+foreach (["?migrate=1&json=1", "?register=1&json=1", "?portal=1&json=1", "\$_SERVER['HTTP_CONTENT_TYPE']", "\$_SERVER['HTTP_ACCEPT']"] as $needle) {
+    if (!str_contains($module, $needle)) {
+        throw new RuntimeException('Robust JSON request routing control missing: ' . $needle);
+    }
 }
 
 $debugStart = strpos($module, 'private function RecordPortalDebug(');
