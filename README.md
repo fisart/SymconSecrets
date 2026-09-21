@@ -267,6 +267,8 @@ Protect access to your vault or custom WebHook scripts using biometrics (fingerp
 - **Hardware-Bound:** The private key never leaves your device (smartphone or PC).
 - **Server-verified:** Signature, challenge, ceremony type, exact origin, RP ID, user presence, and user verification are checked.
 - **Secure session:** Successful verification creates a random `Secure`/`HttpOnly`/`SameSite=Strict` cookie. Only its SHA-256 hash is held in RAM.
+- **Separated authority:** A normal passkey login grants portal access only. Migration and credential administration require a current admin-password session; the registration password authorizes only its single registration ceremony.
+- **Immediate revocation:** Disabling the portal or revoking sessions also invalidates pending login, migration, and registration challenges.
 
 ### 7.2 Setup (Registration)
 
@@ -291,10 +293,17 @@ Open `https://[Your-Symcon-URL]/hook/secrets_[ID]?admin=1`, sign in with the adm
 
 Use `?register=1` only if you later choose to add a genuinely new device.
 
+Credential records retain the legacy padded-Base64 ID and attestation while
+the hardened verifier uses a canonical Base64URL ID. This keeps both migrated
+and newly registered passkeys readable by the rollback branch. Rolling back
+also restores that branch's original authentication vulnerability, so the old
+portal must not be exposed to untrusted networks.
+
 ### 7.3 Daily Usage
 
 - **Login Portal:** `https://[Your-Symcon-URL]/hook/secrets_[ID]?portal=1`. After a successful scan, your browser is authorized for 60 minutes.
 - **Primary/backup URL:** Passkeys and session cookies remain bound to their exact origin. When switching to the backup URL, authenticate there with a passkey registered for that URL.
+- **Revocation:** Disabling the portal or using the revoke action invalidates current sessions and all pending passkey ceremonies.
 - **Integration into Custom Scripts:** You can integrate biometric verification into any WebHook script:
 
 ```php

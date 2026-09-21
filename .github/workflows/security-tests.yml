@@ -33,3 +33,5 @@ jobs:
         run: php tests/WebAuthnAssertionTest.php
       - name: Test module security regressions
         run: php tests/ModuleSecurityRegressionTest.php
+      - name: Test atomic portal state and rollback compatibility
+        run: php tests/ModuleStateTest.php

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../SecretsManager/libs/PortalSecurity.php';
 
 function check(bool $condition, string $message): void
@@ -115,6 +116,39 @@ check(
         'https://other.example.com'
     ) === null,
     'wrong origin was accepted'
+);
+
+$crossOriginNull = json_encode([
+    'type'        => 'webauthn.get',
+    'challenge'   => SecretsPortalSecurity::base64UrlEncode($challenge),
+    'origin'      => 'https://symcon.example.com',
+    'crossOrigin' => null
+], JSON_UNESCAPED_SLASHES);
+check(
+    SecretsPortalSecurity::validateClientData(
+        (string)$crossOriginNull,
+        'webauthn.get',
+        $challenge,
+        'https://symcon.example.com'
+    ) === null,
+    'ambiguous cross-origin state was accepted'
+);
+
+$framedData = json_encode([
+    'type'        => 'webauthn.get',
+    'challenge'   => SecretsPortalSecurity::base64UrlEncode($challenge),
+    'origin'      => 'https://symcon.example.com',
+    'crossOrigin' => false,
+    'topOrigin'   => 'https://symcon.example.com'
+], JSON_UNESCAPED_SLASHES);
+check(
+    SecretsPortalSecurity::validateClientData(
+        (string)$framedData,
+        'webauthn.get',
+        $challenge,
+        'https://symcon.example.com'
+    ) === null,
+    'framed client data was accepted'
 );
 
 check(SecretsPortalSecurity::sanitizeReturnUrl('/hook/example?x=1') === '/hook/example?x=1', 'valid local return URL was rejected');

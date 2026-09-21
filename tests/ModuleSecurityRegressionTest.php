@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/bootstrap.php';
+
 $module = file_get_contents(__DIR__ . '/../SecretsManager/module.php');
 if (!is_string($module)) {
     throw new RuntimeException('Could not read module.php');
@@ -30,7 +32,15 @@ $required = [
     'httponly',
     "'samesite' => 'Strict'",
     'hash_equals',
-    'schemaVersion'
+    'schemaVersion',
+    'EnterAuthorizedCeremonyCommit(',
+    'PORTAL_REVOCATION_BUFFER',
+    "['portal']",
+    "['admin-password']",
+    'backupEligibilityVerified',
+    'NormalizeCredentialRecordsForRollback(',
+    'VAULT_REVISION_KEY',
+    'SYNC_MAX_REQUEST_BYTES'
 ];
 foreach ($required as $needle) {
     if (!str_contains($module, $needle)) {
@@ -68,7 +78,7 @@ foreach (['authenticatorData', 'signature', 'credentialPublicKey', 'processGet('
 }
 
 $migrationStart = strpos($module, 'private function VerifyLegacyMigration(): void');
-$migrationEnd = strpos($module, 'private function ServeRegistrationUI(): void');
+$migrationEnd = strpos($module, 'private function ServeRegistrationUI(', $migrationStart);
 if ($migrationStart === false || $migrationEnd === false || $migrationEnd <= $migrationStart) {
     throw new RuntimeException('Could not isolate VerifyLegacyMigration');
 }

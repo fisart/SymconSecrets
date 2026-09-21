@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../SecretsManager/libs/PortalSecurity.php';
 require_once __DIR__ . '/../SecretsManager/libs/WebAuthn/src/WebAuthn.php';
 
@@ -77,14 +78,25 @@ expect($rejected, 'modified signature was accepted');
 $rejected = false;
 try {
     $wrongOriginData = json_encode([
-        'type'      => 'webauthn.get',
-        'challenge' => SecretsPortalSecurity::base64UrlEncode($challenge),
-        'origin'    => 'https://evil.example.com'
+        'type'        => 'webauthn.get',
+        'challenge'   => SecretsPortalSecurity::base64UrlEncode($challenge),
+        'origin'      => 'https://evil.example.com',
+        'crossOrigin' => false
     ], JSON_UNESCAPED_SLASHES);
+    $wrongOriginSignature = '';
+    expect(
+        openssl_sign(
+            $authenticatorData . hash('sha256', (string)$wrongOriginData, true),
+            $wrongOriginSignature,
+            $privateKey,
+            OPENSSL_ALGO_SHA256
+        ),
+        'could not sign wrong-origin assertion'
+    );
     (new WebAuthn('Symcon Vault', $rpId, ['none'], true))->processGet(
         (string)$wrongOriginData,
         $authenticatorData,
-        $signature,
+        $wrongOriginSignature,
         $publicKey,
         $challenge,
         0,
@@ -95,6 +107,30 @@ try {
     $rejected = true;
 }
 expect($rejected, 'wrong origin was accepted');
+
+$rejected = false;
+try {
+    // BS without BE is forbidden by WebAuthn. The module performs this
+    // application-level invariant check after cryptographic verification.
+    $invalidBackupData = hash('sha256', $rpId, true) . chr(0x15) . pack('N', 2);
+    $invalidBackupSignature = '';
+    expect(
+        openssl_sign(
+            $invalidBackupData . hash('sha256', (string)$clientDataJson, true),
+            $invalidBackupSignature,
+            $privateKey,
+            OPENSSL_ALGO_SHA256
+        ),
+        'could not sign invalid-backup assertion'
+    );
+    $parsed = new \lbuchs\WebAuthn\Attestation\AuthenticatorData($invalidBackupData);
+    if (!$parsed->getIsBackupEligible() && $parsed->getIsBackup()) {
+        throw new RuntimeException('invalid backup flags');
+    }
+} catch (Throwable $e) {
+    $rejected = true;
+}
+expect($rejected, 'BS without BE was accepted');
 
 $rejected = false;
 try {

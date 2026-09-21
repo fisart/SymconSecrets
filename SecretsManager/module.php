@@ -30,7 +30,9 @@ class SecretsManager extends IPSModuleStrict
     private const PORTAL_COOKIE_PREFIX = 'SEC_PORTAL_V2_';
     private const PORTAL_SESSION_MAX_ENTRIES = 50;
     private const PORTAL_LOCK_WAIT_MILLISECONDS = 5000;
-    private const SYNC_MAX_REQUEST_BYTES = 2097152;
+    // Keep sync bounded without rejecting vaults that were valid before this
+    // hardening release. The encrypted vault itself remains capped at 16 MiB.
+    private const SYNC_MAX_REQUEST_BYTES = 18874368;
     private const VAULT_MAX_BYTES = 16777216;
     private const VAULT_REVISION_KEY = '__SEC_INTERNAL_REVISION__';
 
@@ -3054,7 +3056,14 @@ class SecretsManager extends IPSModuleStrict
 
         $verifiedCredentialId = (string)($registration->credentialId ?? '');
         $publicKey = (string)($registration->credentialPublicKey ?? '');
-        if ($verifiedCredentialId === '' || !hash_equals($verifiedCredentialId, $rawId) || $publicKey === '') {
+        $backupEligible = (bool)($registration->isBackupEligible ?? false);
+        $backedUp = (bool)($registration->isBackedUp ?? false);
+        if (
+            $verifiedCredentialId === '' ||
+            !hash_equals($verifiedCredentialId, $rawId) ||
+            $publicKey === '' ||
+            (!$backupEligible && $backedUp)
+        ) {
             $this->RejectPortalRequest('registration-credential');
             return;
         }
@@ -3110,8 +3119,8 @@ class SecretsManager extends IPSModuleStrict
                 'aaguid'              => ($aaguid === '') ? '' : SecretsPortalSecurity::base64UrlEncode($aaguid),
                 'attestation'         => base64_encode($attestationObject),
                 'attestationFormat'   => (string)($registration->attestationFormat ?? ''),
-                'backupEligible'      => (bool)($registration->isBackupEligible ?? false),
-                'backedUp'            => (bool)($registration->isBackedUp ?? false),
+                'backupEligible'      => $backupEligible,
+                'backedUp'            => $backedUp,
                 'backupEligibilityVerified' => true,
                 'RegisteredAt'        => time(),
                 'UserAgent'           => substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 512)
@@ -3637,7 +3646,7 @@ class SecretsManager extends IPSModuleStrict
             // Migrated records retain credentialId in the exact encoding used
             // by the old branch for rollback compatibility. V2 verification
             // addresses the same credential by canonical Base64URL instead.
-            $credentialId = (string)($device['credentialIdV2'] ?? $device['credentialId'] ?? '');
+            $credentialId = $this->GetCredentialCanonicalId($device);
             $publicKey = (string)($device['credentialPublicKey'] ?? '');
             if (
                 SecretsPortalSecurity::base64UrlDecode($credentialId) === null ||
@@ -3683,7 +3692,16 @@ class SecretsManager extends IPSModuleStrict
             }
             if ((int)($device['schemaVersion'] ?? 0) === SecretsPortalSecurity::CREDENTIAL_SCHEMA_VERSION) {
                 if ((string)($device['rpId'] ?? '') === $rpId && (string)($device['origin'] ?? '') === $origin) {
-                    $status['verified']++;
+                    $credentialId = $this->GetCredentialCanonicalId($device);
+                    if (
+                        $credentialId !== '' &&
+                        (string)($device['credentialPublicKey'] ?? '') !== '' &&
+                        SecretsPortalSecurity::base64UrlDecode((string)($device['userHandle'] ?? '')) !== null
+                    ) {
+                        $status['verified']++;
+                    } else {
+                        $status['incompatible']++;
+                    }
                 } else {
                     $status['otherOrigin']++;
                 }
