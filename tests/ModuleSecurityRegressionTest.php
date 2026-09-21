@@ -88,7 +88,7 @@ foreach (['$migrated[\'credentialIdV2\']', '$vaultData[self::LOCAL_AUTH_KEY][$de
         throw new RuntimeException('Rollback-compatible migration control missing: ' . $needle);
     }
 }
-if (str_contains($migration, "'credentialId' => $credentialId")) {
+if (str_contains($migration, "'credentialId' => \$credentialId")) {
     throw new RuntimeException('Migration overwrites the legacy rollback credential ID');
 }
 
