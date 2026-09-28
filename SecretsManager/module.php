@@ -5,10 +5,10 @@ declare(strict_types=1);
 require_once __DIR__ . '/libs/PortalSecurity.php';
 require_once __DIR__ . '/libs/WebAuthn/src/WebAuthn.php';
 
-// Version 5.4.3
+// Version 5.4.5
 class SecretsManager extends IPSModuleStrict
 {
-    private const MODULE_VERSION = '5.4.4';
+    private const MODULE_VERSION = '5.4.5';
 
     // The name of the key file stored on the OS
     private const KEY_FILENAME = 'master.key';
@@ -631,7 +631,14 @@ class SecretsManager extends IPSModuleStrict
             return;
         }
         if (!$this->CheckPortalRateLimit('challenge-issuance', true, 30, 300)) {
-            $this->SendPortalError(429, 'Too many login page requests. Please try again later.');
+            $retryAfter = $this->GetPortalLoginPageRetryAfter();
+            if ($retryAfter !== null) {
+                header('Retry-After: ' . $retryAfter);
+            }
+            $message = $retryAfter === null
+                ? 'Too many login page requests. Please try again later.'
+                : 'Too many login page requests. Please try again in about ' . $retryAfter . ' seconds.';
+            $this->SendPortalError(429, $message);
             return;
         }
         $credentials = $this->GetVerifiedPortalCredentials($profile['rpId'], $profile['origin']);
@@ -839,6 +846,40 @@ class SecretsManager extends IPSModuleStrict
         $this->ClearPortalSessionCookie();
         $this->LogMessage('All portal sessions and pending WebAuthn ceremonies were revoked.', KL_WARNING);
         echo "✅ All portal sessions and pending passkey operations were revoked.";
+    }
+
+    /**
+     * Instance-form recovery for exhausted login-page issuance. Keep password,
+     * assertion, registration and migration throttles unchanged.
+     */
+    public function ResetPortalLoginPageRateLimit(): void
+    {
+        if (!$this->EnterPortalStateLock()) {
+            echo "❌ Portal security state is busy. No rate limits were changed.";
+            return;
+        }
+        $removed = 0;
+        try {
+            $limits = json_decode($this->GetBuffer(self::PORTAL_RATE_BUFFER), true);
+            if (!is_array($limits)) {
+                $limits = [];
+            }
+            foreach (array_keys($limits) as $key) {
+                $key = (string)$key;
+                if (
+                    (str_starts_with($key, 'global:') && str_ends_with($key, ':challenge-issuance')) ||
+                    (str_starts_with($key, 'client:') && str_contains($key, ':challenge-issuance:'))
+                ) {
+                    unset($limits[$key]);
+                    $removed++;
+                }
+            }
+            $this->SetBuffer(self::PORTAL_RATE_BUFFER, (string)json_encode($limits));
+        } finally {
+            $this->LeavePortalStateLock();
+        }
+        $this->LogMessage('Login-page rate-limit counters reset from instance form. Buckets=' . $removed, KL_WARNING);
+        echo "✅ Login-page request limit reset. Other authentication limits and existing sessions are unchanged.";
     }
 
     public function RemoveAllPasskeys(): void
@@ -3513,6 +3554,9 @@ class SecretsManager extends IPSModuleStrict
         }
 
         $this->ResetPortalRateLimit('assertion');
+        // A completed, cryptographically verified login releases this client's
+        // page-load allowance. Other clients and assertion limits stay intact.
+        $this->ResetPortalRateLimit('challenge-issuance');
         $this->LogMessage('WebAuthn portal authentication succeeded after signature verification.', KL_MESSAGE);
         $this->SendPortalJson(200, [
             'ok'       => true,
@@ -4914,6 +4958,66 @@ class SecretsManager extends IPSModuleStrict
         }
     }
 
+    /**
+     * Report the earliest retry for the page-issuance bucket. The same fixed
+     * ten-minute window and per-origin client/global keys are used by
+     * CheckPortalRateLimit. This is advisory under concurrent requests.
+     */
+    private function GetPortalLoginPageRetryAfter(): ?int
+    {
+        if (!$this->EnterPortalStateLock()) {
+            return null;
+        }
+        try {
+            $limits = json_decode($this->GetBuffer(self::PORTAL_RATE_BUFFER), true);
+            if (!is_array($limits)) {
+                return null;
+            }
+            $now = time();
+            $origin = hash('sha256', strtolower((string)($_SERVER['HTTP_HOST'] ?? 'unknown')));
+            $client = hash('sha256', (string)($_SERVER['REMOTE_ADDR'] ?? 'unknown'));
+            $globalKey = 'global:' . $origin . ':challenge-issuance';
+            $clientKey = 'client:' . $origin . ':challenge-issuance:' . $client;
+            $retryAfter = 0;
+            foreach ([$globalKey => 300, $clientKey => 30] as $key => $maximum) {
+                $entry = $limits[$key] ?? null;
+                if (!is_array($entry) || (int)($entry['count'] ?? 0) < $maximum) {
+                    continue;
+                }
+                $retryAfter = max($retryAfter, (int)($entry['started'] ?? 0) + self::PORTAL_RATE_WINDOW_SECONDS - $now);
+            }
+            if ($retryAfter > 0) {
+                return $retryAfter;
+            }
+
+            // The per-origin partition can also be full of distinct clients.
+            $entries = 0;
+            $newKeys = (isset($limits[$globalKey]) ? 0 : 1) + (isset($limits[$clientKey]) ? 0 : 1);
+            $soonestExpiry = PHP_INT_MAX;
+            $clientPrefix = 'client:' . $origin . ':challenge-issuance:';
+            foreach ($limits as $key => $entry) {
+                if (
+                    ($key !== $globalKey && !str_starts_with((string)$key, $clientPrefix)) ||
+                    !is_array($entry)
+                ) {
+                    continue;
+                }
+                $expiry = (int)($entry['started'] ?? 0) + self::PORTAL_RATE_WINDOW_SECONDS;
+                if ($expiry <= $now) {
+                    continue;
+                }
+                $entries++;
+                $soonestExpiry = min($soonestExpiry, $expiry);
+            }
+            if ($entries + $newKeys > self::PORTAL_RATE_MAX_ENTRIES_PER_PARTITION && $soonestExpiry !== PHP_INT_MAX) {
+                return max(1, $soonestExpiry - $now);
+            }
+            return null;
+        } finally {
+            $this->LeavePortalStateLock();
+        }
+    }
+
     private function ResetPortalRateLimit(string $bucket): void
     {
         $client = hash('sha256', (string)($_SERVER['REMOTE_ADDR'] ?? 'unknown'));
@@ -4926,10 +5030,16 @@ class SecretsManager extends IPSModuleStrict
             if (!is_array($limits)) {
                 return;
             }
-            unset($limits['client:' . $origin . ':' . $bucket . ':' . $client]);
+            $clientKey = 'client:' . $origin . ':' . $bucket . ':' . $client;
+            $clientEntry = $limits[$clientKey] ?? null;
+            $clientCount = is_array($clientEntry) ? max(0, (int)($clientEntry['count'] ?? 0)) : 0;
+            unset($limits[$clientKey]);
             $globalKey = 'global:' . $origin . ':' . $bucket;
             if (isset($limits[$globalKey]) && is_array($limits[$globalKey])) {
-                $limits[$globalKey]['count'] = max(0, (int)($limits[$globalKey]['count'] ?? 0) - 1);
+                // All page loads by this verified client are no longer pending.
+                // Other clients still contribute to the global flood limit.
+                $decrement = $bucket === 'challenge-issuance' ? $clientCount : 1;
+                $limits[$globalKey]['count'] = max(0, (int)($limits[$globalKey]['count'] ?? 0) - $decrement);
                 if ((int)$limits[$globalKey]['count'] === 0) {
                     unset($limits[$globalKey]);
                 }

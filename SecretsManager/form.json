@@ -42,6 +42,13 @@
     },
 
     {
+      "type": "NumberSpinner",
+      "name": "PortalSessionLifetimeMinutes",
+      "caption": "Passkey portal session duration (minutes; passkeys themselves do not expire)",
+      "minimum": 5,
+      "maximum": 1440
+    },
+    {
       "type": "ExpansionPanel",
       "name": "PortalSecurity",
       "caption": "WebAuthn Portal Security",
@@ -60,13 +67,6 @@
           "type": "ValidationTextBox",
           "name": "PortalBackupOrigin",
           "caption": "Optional backup exact HTTPS origin (e.g. https://abc.ipmagic.de)"
-        },
-        {
-          "type": "NumberSpinner",
-          "name": "PortalSessionLifetimeMinutes",
-          "caption": "Portal session lifetime (minutes)",
-          "minimum": 5,
-          "maximum": 1440
         },
         {
           "type": "CheckBox",
@@ -293,6 +293,13 @@
       "name": "BtnRevokePortalSessions",
       "caption": "Revoke all portal sessions",
       "onClick": "SEC_RevokePortalSessions($id);"
+    },
+    {
+      "type": "Button",
+      "name": "BtnResetPortalLoginPageRateLimit",
+      "caption": "Reset login-page request limit",
+      "confirm": "Reset login-page request counters for this instance? Failed-login limits remain in effect.",
+      "onClick": "SEC_ResetPortalLoginPageRateLimit($id);"
     },
     {
       "type": "Button",

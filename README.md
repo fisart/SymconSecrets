@@ -123,7 +123,9 @@ Die Seite `?register=1` wird nur benötigt, wenn Sie später tatsächlich ein ne
 
 ### 7.3 Nutzung im Alltag
 
-- **Login-Portal:** Sie können das Portal nutzen, um eine Sitzung für Ihren Browser zu starten. URL: `https://[Ihre-Symcon-URL]/hook/secrets_[ID]?portal=1`. Nach erfolgreichem Scan ist Ihr Browser für 60 Minuten autorisiert.
+Das Feld **Passkey portal session duration** wird im Konfigurationsformular für Master, Slave und Standalone angezeigt. Wiederholtes Laden der Loginseite ist auf 30 Aufrufe je Client und 300 insgesamt pro Origin innerhalb von 10 Minuten begrenzt. Nach erfolgreicher Passkey-Anmeldung wird der Loginseiten-Zähler dieses Clients freigegeben. Bei einer Sperre zeigt die Seite die ungefähre Restzeit und sendet den HTTP-Header `Retry-After`. Der Knopf **Reset login-page request limit** in der Modulkonfiguration löscht nur diese Loginseiten-Zähler; Schutzlimits für fehlgeschlagene Anmeldungen und vorhandene Sitzungen bleiben erhalten. Eine blockierte automatische Weiterleitung oder wiederholtes Neuladen sollte zuerst behoben werden.
+
+- **Login-Portal:** Sie können das Portal nutzen, um eine Sitzung für Ihren Browser zu starten. URL: `https://[Ihre-Symcon-URL]/hook/secrets_[ID]?portal=1`. Die Sitzung gilt für die in `PortalSessionLifetimeMinutes` eingestellte Dauer (Standard: 60 Minuten); der gespeicherte Passkey selbst läuft dadurch nicht ab.
 - **Primär-/Backup-URL:** Passkeys und Sitzungs-Cookies bleiben jeweils an ihren exakten Origin gebunden. Bei einem Wechsel zur Backup-URL authentifizieren Sie sich dort erneut mit dem für diese URL registrierten Passkey.
 - **Passwort-Alternative:** Eine Anmeldung am Admin-Dashboard mit dem Admin-Passwort berechtigt dieselbe Browser-Sitzung am gleichen Origin auch für Portal-geschützte Webseiten.
 - **Integration in eigene Skripte:** Sie können die biometrische Prüfung in jedes WebHook-Skript einbauen:
@@ -310,7 +312,9 @@ portal must not be exposed to untrusted networks.
 
 ### 7.3 Daily Usage
 
-- **Login Portal:** `https://[Your-Symcon-URL]/hook/secrets_[ID]?portal=1`. After a successful scan, your browser is authorized for 60 minutes.
+**Passkey portal session duration** is visible in the configuration form for Master, Slave and Standalone. Login-page loads are limited to 30 per client and 300 overall per origin in a 10-minute window. A successful passkey login releases that client's login-page allowance. When limited, the page reports an approximate wait and sends `Retry-After`. The instance-form **Reset login-page request limit** button clears only login-page counters, not failed-authentication limits or existing sessions. Fix any automatic redirect/reload loop before using the reset.
+
+- **Login Portal:** `https://[Your-Symcon-URL]/hook/secrets_[ID]?portal=1`. The browser session lasts for `PortalSessionLifetimeMinutes` (default: 60 minutes); the stored passkey itself does not expire.
 - **Primary/backup URL:** Passkeys and session cookies remain bound to their exact origin. When switching to the backup URL, authenticate there with a passkey registered for that URL.
 - **Revocation:** Disabling the portal or using the revoke action invalidates current sessions and all pending passkey ceremonies.
 - **Password fallback:** Signing in to the admin dashboard with the admin password also authorizes that browser session for portal-protected websites on the same origin.
