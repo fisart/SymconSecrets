@@ -22,7 +22,7 @@ $required = [
     "RegisterVariableString(\"PortalDebugMessage\", \"Portal debug (last event)\")",
     "'migration-unhandled-exception',",
     'SendPortalDiagnosticJson(',
-    "MODULE_VERSION = '5.4.4'",
+    "MODULE_VERSION = '5.4.5'",
     "'moduleVersion'    => self::MODULE_VERSION",
     'invalid JSON response',
     'body.diagnostic',
@@ -116,6 +116,35 @@ foreach (['authenticatorData', 'signature', 'credentialPublicKey', 'processGet('
     if (!str_contains($verify, $needle)) {
         throw new RuntimeException('Assertion verifier does not use ' . $needle);
     }
+}
+
+if (!str_contains($verify, "ResetPortalRateLimit('assertion')") ||
+    !str_contains($verify, "ResetPortalRateLimit('challenge-issuance')")) {
+    throw new RuntimeException('Successful passkey login does not release the client login-page allowance');
+}
+if (!str_contains($module, 'GetPortalLoginPageRetryAfter()') ||
+    !str_contains($module, "header('Retry-After: ' . \$retryAfter)")) {
+    throw new RuntimeException('Login-page rate limit does not report a retry interval');
+}
+$form = json_decode((string)file_get_contents(__DIR__ . '/../SecretsManager/form.json'), true);
+if (!is_array($form)) {
+    throw new RuntimeException('Could not read configuration form');
+}
+$duration = array_values(array_filter(
+    $form['elements'] ?? [],
+    static fn($field): bool => ($field['name'] ?? '') === 'PortalSessionLifetimeMinutes'
+));
+if (count($duration) !== 1) {
+    throw new RuntimeException('Passkey session duration is not visible at the form top level');
+}
+$reset = array_values(array_filter(
+    $form['actions'] ?? [],
+    static fn($field): bool => ($field['name'] ?? '') === 'BtnResetPortalLoginPageRateLimit'
+));
+if (count($reset) !== 1 ||
+    ($reset[0]['onClick'] ?? '') !== 'SEC_ResetPortalLoginPageRateLimit($id);' ||
+    !str_contains($module, 'public function ResetPortalLoginPageRateLimit(): void')) {
+    throw new RuntimeException('Login-page limit reset form action is missing');
 }
 
 $sessionInsert = strpos($verify, 'CreatePortalSessionStateLocked(');

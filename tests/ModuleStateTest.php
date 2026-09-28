@@ -620,6 +620,82 @@ stateCheck(
 $partitionedRateState = json_decode($module->testGetBuffer('PortalRateLimitsV2'), true);
 stateCheck(is_array($partitionedRateState) && count($partitionedRateState) > 256, 'rate-limit isolation test did not exceed the former shared capacity');
 
+// Exhaust only the login-page limit for one client; report the actual
+// remaining fixed-window time, then simulate a verified login releasing that
+// client's page allowance without releasing unrelated authentication limits.
+$_SERVER['HTTP_HOST'] = 'primary.example.com';
+$_SERVER['REMOTE_ADDR'] = '203.0.113.250';
+for ($i = 0; $i < 30; $i++) {
+    stateCheck(
+        invokePrivate($module, 'CheckPortalRateLimit', ['challenge-issuance', true, 30, 300]),
+        'login-page limit blocked before 30 page loads'
+    );
+}
+stateCheck(
+    !invokePrivate($module, 'CheckPortalRateLimit', ['challenge-issuance', true, 30, 300]),
+    'login-page limit permitted a 31st page load'
+);
+$retryAfter = invokePrivate($module, 'GetPortalLoginPageRetryAfter');
+stateCheck(is_int($retryAfter) && $retryAfter >= 1 && $retryAfter <= 600, 'login-page Retry-After was not in the active window');
+$rateStateBeforeSuccess = json_decode($module->testGetBuffer('PortalRateLimitsV2'), true);
+$adminBucketsBeforeSuccess = array_filter(
+    $rateStateBeforeSuccess,
+    static fn($key): bool => str_contains((string)$key, ':admin-password'),
+    ARRAY_FILTER_USE_KEY
+);
+invokePrivate($module, 'ResetPortalRateLimit', ['challenge-issuance']);
+stateCheck(
+    invokePrivate($module, 'CheckPortalRateLimit', ['challenge-issuance', false, 30, 300]),
+    'successful login did not release the client page counter'
+);
+$rateStateAfterSuccess = json_decode($module->testGetBuffer('PortalRateLimitsV2'), true);
+$loginGlobalKey = 'global:' . hash('sha256', strtolower($_SERVER['HTTP_HOST'])) . ':challenge-issuance';
+stateCheck(
+    (int)($rateStateAfterSuccess[$loginGlobalKey]['count'] ?? 0) ===
+        (int)($rateStateBeforeSuccess[$loginGlobalKey]['count'] ?? 0) - 30,
+    'successful login did not release all 30 page loads from the global counter'
+);
+stateCheck(
+    array_filter($rateStateAfterSuccess, static fn($key): bool => str_contains((string)$key, ':admin-password'), ARRAY_FILTER_USE_KEY) === $adminBucketsBeforeSuccess,
+    'successful login reset password rate limits'
+);
+
+$sessionStateBeforeReset = $module->testGetBuffer('PortalSessionsV2');
+$limitsBeforeBusyReset = $module->testGetBuffer('PortalRateLimitsV2');
+$GLOBALS['portalSemaphoreFailures'] = 1;
+ob_start();
+$module->ResetPortalLoginPageRateLimit();
+ob_end_clean();
+stateCheck($module->testGetBuffer('PortalRateLimitsV2') === $limitsBeforeBusyReset, 'busy reset changed rate limits');
+ob_start();
+$module->ResetPortalLoginPageRateLimit();
+ob_end_clean();
+$rateStateAfterManualReset = json_decode($module->testGetBuffer('PortalRateLimitsV2'), true);
+foreach (array_keys($rateStateAfterManualReset) as $key) {
+    stateCheck(!str_contains((string)$key, ':challenge-issuance'), 'manual reset retained a login-page limit');
+}
+stateCheck(
+    array_filter($rateStateAfterManualReset, static fn($key): bool => str_contains((string)$key, ':admin-password'), ARRAY_FILTER_USE_KEY) === $adminBucketsBeforeSuccess,
+    'manual page reset removed password rate limits'
+);
+stateCheck($module->testGetBuffer('PortalSessionsV2') === $sessionStateBeforeReset, 'manual page reset changed portal sessions');
+
+foreach ([0, 1, 2] as $role) {
+    $module->testSetProperty('OperationMode', $role);
+    $form = json_decode($module->GetConfigurationForm(), true);
+    stateCheck(is_array($form), 'configuration form failed for role ' . $role);
+    $durationFields = array_values(array_filter(
+        $form['elements'] ?? [],
+        static fn($element): bool => ($element['name'] ?? '') === 'PortalSessionLifetimeMinutes' && ($element['visible'] ?? true)
+    ));
+    stateCheck(count($durationFields) === 1, 'session duration is not visible at top level for role ' . $role);
+    $resetButtons = array_values(array_filter(
+        $form['actions'] ?? [],
+        static fn($action): bool => ($action['name'] ?? '') === 'BtnResetPortalLoginPageRateLimit' && ($action['visible'] ?? true)
+    ));
+    stateCheck(count($resetButtons) === 1, 'login-page limit reset is missing for role ' . $role);
+}
+
 @unlink($temporaryKeyFolder . DIRECTORY_SEPARATOR . 'master.key');
 @rmdir($temporaryKeyFolder);
 
