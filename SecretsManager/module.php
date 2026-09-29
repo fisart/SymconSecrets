@@ -2687,7 +2687,7 @@ class SecretsManager extends IPSModuleStrict
 
         if ($isPortal) {
             if ($method === 'GET') {
-                if ($this->IsPortalAuthenticated()) {
+                if ($this->IsPasskeyPortalAuthenticated()) {
                     $returnUrl = SecretsPortalSecurity::sanitizeReturnUrl((string)($_GET['return'] ?? '/'));
                     header('Location: ' . $returnUrl, true, 303);
                 } else {
@@ -3570,6 +3570,14 @@ class SecretsManager extends IPSModuleStrict
             return false;
         }
         return $this->IsPortalSessionValid(true, ['portal']);
+    }
+
+    public function IsPasskeyPortalAuthenticated(): bool
+    {
+        if (!$this->ReadPropertyBoolean('PortalEnabled')) {
+            return false;
+        }
+        return $this->IsPortalSessionValid(true, ['portal'], ['passkey']);
     }
 
     /**
