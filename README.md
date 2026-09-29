@@ -139,10 +139,8 @@ if (!SEC_IsPortalAuthenticated($instanceID)) {
     header("Location: " . $loginUrl);
     exit;
 }
-echo "Willkommen! Zugriff bestätigt.";
+echo "Willkommen! Ihr Zugriff wurde biometrisch verifiziert.";
 ```
-
-`SEC_IsPortalAuthenticated()` akzeptiert Portal-Sitzungen nach Passkey **oder** Administratorpasswort. Für Webseiten, die ausdrücklich einen Passkey verlangen, verwenden Sie `SEC_IsPasskeyPortalAuthenticated($instanceID)`. Bei fehlender oder deaktivierter Portal-Konfiguration muss der Zugriff gesperrt bleiben.
 
 ## 8. 🛠️ Fortgeschrittene Administration & Biometrie-Verbund
 
@@ -331,10 +329,8 @@ if (!SEC_IsPortalAuthenticated($instanceID)) {
     header("Location: " . $loginUrl);
     exit;
 }
-echo "Welcome! Access granted.";
+echo "Welcome! Your access has been biometrically verified.";
 ```
-
-`SEC_IsPortalAuthenticated()` accepts portal sessions created by either a passkey or an administrator password. For pages that require a passkey, use `SEC_IsPasskeyPortalAuthenticated($instanceID)` and deny access when the portal is unavailable or disabled.
 
 ## 8. 🛠️ Advanced Administration & Biometric Federation
 
