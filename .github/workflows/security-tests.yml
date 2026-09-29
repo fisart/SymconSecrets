@@ -6,6 +6,7 @@ on:
       - security/**
   pull_request:
     branches:
+      - main
       - mit-grafischem-Editor
 
 permissions:
