@@ -313,6 +313,10 @@ stateCheck(
     'admin-password session did not retain portal fallback authority'
 );
 stateCheck(
+    !invokePrivate($module, 'PortalSessionMatchesRequirements', [$adminSession, 'https://primary.example.com', ['portal'], ['passkey'], $now]),
+    'admin-password session was accepted by a passkey-only portal check'
+);
+stateCheck(
     !invokePrivate($module, 'PortalSessionMatchesRequirements', [$portalSession, 'https://primary.example.com', ['migrate'], ['admin-password'], $now]),
     'ordinary passkey session received migration authority'
 );

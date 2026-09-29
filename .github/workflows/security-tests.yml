@@ -4,8 +4,10 @@ on:
   push:
     branches:
       - security/**
+      - feat/**
   pull_request:
     branches:
+      - main
       - mit-grafischem-Editor
 
 permissions:
