@@ -22,7 +22,7 @@ $required = [
     "RegisterVariableString(\"PortalDebugMessage\", \"Portal debug (last event)\")",
     "'migration-unhandled-exception',",
     'SendPortalDiagnosticJson(',
-    "MODULE_VERSION = '5.4.5'",
+    "MODULE_VERSION = '5.4.6'",
     "'moduleVersion'    => self::MODULE_VERSION",
     'invalid JSON response',
     'body.diagnostic',
@@ -120,12 +120,25 @@ foreach (['authenticatorData', 'signature', 'credentialPublicKey', 'processGet('
 
 if (!str_contains($verify, "ResetPortalRateLimit('assertion')") ||
     !str_contains($verify, "ResetPortalRateLimit('challenge-issuance')")) {
-    throw new RuntimeException('Successful passkey login does not release the client login-page allowance');
+    throw new RuntimeException('Successful passkey login does not release the client challenge allowance');
 }
-if (!str_contains($module, 'GetPortalLoginPageRetryAfter()') ||
+if (!str_contains($module, 'GetPortalChallengeRetryAfter()') ||
     !str_contains($module, "header('Retry-After: ' . \$retryAfter)")) {
-    throw new RuntimeException('Login-page rate limit does not report a retry interval');
+    throw new RuntimeException('Challenge rate limit does not report a retry interval');
 }
+$pageStart = strpos($module, 'private function ServePortalUI(): void');
+$pageEnd = strpos($module, '// CONFIGURATION ACTIONS', $pageStart === false ? 0 : $pageStart);
+$page = ($pageStart !== false && $pageEnd !== false) ? substr($module, $pageStart, $pageEnd - $pageStart) : '';
+if ($page === '' || str_contains($page, "CheckPortalRateLimit('challenge-issuance'") ||
+    str_contains($page, 'StorePortalChallenge(') ||
+    !str_contains($page, 'challengeResponse=await fetch')) {
+    throw new RuntimeException('Login page still consumes challenge allowance before an explicit login click');
+}
+if (!str_contains($module, "isset(\$_GET['challenge'])") ||
+    !str_contains($module, '$this->IssuePortalChallenge();')) {
+    throw new RuntimeException('Explicit challenge endpoint is missing');
+}
+
 $form = json_decode((string)file_get_contents(__DIR__ . '/../SecretsManager/form.json'), true);
 if (!is_array($form)) {
     throw new RuntimeException('Could not read configuration form');
@@ -139,12 +152,12 @@ if (count($duration) !== 1) {
 }
 $reset = array_values(array_filter(
     $form['actions'] ?? [],
-    static fn($field): bool => ($field['name'] ?? '') === 'BtnResetPortalLoginPageRateLimit'
+    static fn($field): bool => ($field['name'] ?? '') === 'BtnResetPortalChallengeRateLimit'
 ));
 if (count($reset) !== 1 ||
-    ($reset[0]['onClick'] ?? '') !== 'SEC_ResetPortalLoginPageRateLimit($id);' ||
-    !str_contains($module, 'public function ResetPortalLoginPageRateLimit(): void')) {
-    throw new RuntimeException('Login-page limit reset form action is missing');
+    ($reset[0]['onClick'] ?? '') !== 'SEC_ResetPortalChallengeRateLimit($id);' ||
+    !str_contains($module, 'public function ResetPortalChallengeRateLimit(): void')) {
+    throw new RuntimeException('Challenge limit reset form action is missing');
 }
 
 $sessionInsert = strpos($verify, 'CreatePortalSessionStateLocked(');

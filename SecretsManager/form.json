@@ -296,10 +296,10 @@
     },
     {
       "type": "Button",
-      "name": "BtnResetPortalLoginPageRateLimit",
-      "caption": "Reset login-page request limit",
-      "confirm": "Reset login-page request counters for this instance? Failed-login limits remain in effect.",
-      "onClick": "SEC_ResetPortalLoginPageRateLimit($id);"
+      "name": "BtnResetPortalChallengeRateLimit",
+      "caption": "Reset passkey challenge request limit",
+      "confirm": "Reset passkey challenge request counters for this instance? Failed-login limits remain in effect.",
+      "onClick": "SEC_ResetPortalChallengeRateLimit($id);"
     },
     {
       "type": "Button",
