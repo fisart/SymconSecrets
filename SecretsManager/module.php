@@ -5,10 +5,10 @@ declare(strict_types=1);
 require_once __DIR__ . '/libs/PortalSecurity.php';
 require_once __DIR__ . '/libs/WebAuthn/src/WebAuthn.php';
 
-// Version 5.4.5
+// Version 5.4.6
 class SecretsManager extends IPSModuleStrict
 {
-    private const MODULE_VERSION = '5.4.5';
+    private const MODULE_VERSION = '5.4.6';
 
     // The name of the key file stored on the OS
     private const KEY_FILENAME = 'master.key';
@@ -619,7 +619,7 @@ class SecretsManager extends IPSModuleStrict
         }
     }
 
-    private function ServePortalUI(): void
+    private function IssuePortalChallenge(): void
     {
         if (!$this->RequirePortalReady()) {
             return;
@@ -627,23 +627,23 @@ class SecretsManager extends IPSModuleStrict
         $profileError = '';
         $profile = $this->GetCurrentPortalProfile($profileError);
         if ($profile === null) {
-            $this->SendPortalError(503, $profileError);
+            $this->SendPortalJson(503, ['ok' => false, 'error' => $profileError]);
             return;
         }
         if (!$this->CheckPortalRateLimit('challenge-issuance', true, 30, 300)) {
-            $retryAfter = $this->GetPortalLoginPageRetryAfter();
+            $retryAfter = $this->GetPortalChallengeRetryAfter();
             if ($retryAfter !== null) {
                 header('Retry-After: ' . $retryAfter);
             }
             $message = $retryAfter === null
-                ? 'Too many login page requests. Please try again later.'
-                : 'Too many login page requests. Please try again in about ' . $retryAfter . ' seconds.';
-            $this->SendPortalError(429, $message);
+                ? 'Too many passkey challenge requests. Please try again later.'
+                : 'Too many passkey challenge requests. Please try again in about ' . $retryAfter . ' seconds.';
+            $this->SendPortalJson(429, ['ok' => false, 'error' => $message]);
             return;
         }
         $credentials = $this->GetVerifiedPortalCredentials($profile['rpId'], $profile['origin']);
         if (count($credentials) === 0) {
-            $this->SendPortalError(409, 'No verified passkeys are available for this origin. Use verified migration in the admin dashboard.');
+            $this->SendPortalJson(409, ['ok' => false, 'error' => 'No verified passkeys are available for this origin. Use verified migration in the admin dashboard.']);
             return;
         }
 
@@ -662,7 +662,7 @@ class SecretsManager extends IPSModuleStrict
             'allowedCredentialIds' => $allowedCredentialIds
         ]);
         if ($sid === null) {
-            $this->SendPortalError(503, 'Authentication state is busy. Please try again.');
+            $this->SendPortalJson(503, ['ok' => false, 'error' => 'Authentication state is busy. Please try again.']);
             return;
         }
 
@@ -674,12 +674,20 @@ class SecretsManager extends IPSModuleStrict
             ];
         }
 
-        $configJson = json_encode([
+        $this->SendPortalJson(200, [
+            'ok'               => true,
             'sid'              => $sid,
             'challenge'        => SecretsPortalSecurity::base64UrlEncode($challenge),
             'rpId'             => $rpId,
             'allowCredentials' => $allowCredentials
-        ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
+        ]);
+    }
+
+    private function ServePortalUI(): void
+    {
+        if (!$this->RequirePortalReady()) {
+            return;
+        }
 
         $nonce = SecretsPortalSecurity::base64UrlEncode(random_bytes(18));
         $this->SendPortalSecurityHeaders($nonce);
@@ -692,10 +700,11 @@ class SecretsManager extends IPSModuleStrict
         echo '<div class="box"><h2>🔐 Biometrischer Login</h2><p>Bitte Sensor berühren.</p>';
         echo '<button id="loginButton" type="button">Anmelden</button><p id="status" role="status"></p></div>';
         echo '<script nonce="' . htmlspecialchars($nonce, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">';
-        echo 'const config=' . $configJson . ';';
         echo 'const fromB64u=v=>{v=v.replace(/-/g,"+").replace(/_/g,"/");while(v.length%4)v+="=";const b=atob(v);return Uint8Array.from(b,c=>c.charCodeAt(0));};';
         echo 'const toB64u=v=>{let s="";new Uint8Array(v).forEach(b=>s+=String.fromCharCode(b));return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");};';
         echo 'async function login(){const status=document.getElementById("status");status.textContent="";try{';
+        echo 'const target=new URL(location.href);const challengeUrl=new URL(location.pathname,location.origin);challengeUrl.searchParams.set("portal","1");challengeUrl.searchParams.set("challenge","1");challengeUrl.searchParams.set("return",target.searchParams.get("return")||"/");';
+        echo 'const challengeResponse=await fetch(challengeUrl,{credentials:"same-origin",headers:{"Accept":"application/json"}});const config=await challengeResponse.json().catch(()=>({error:"Could not obtain a passkey challenge."}));if(!challengeResponse.ok||!config.ok)throw new Error(config.error||"Could not obtain a passkey challenge.");';
         echo 'const publicKey={challenge:fromB64u(config.challenge),rpId:config.rpId,timeout:60000,userVerification:"required",allowCredentials:config.allowCredentials.map(i=>({type:i.type,id:fromB64u(i.id)}))};';
         echo 'const cred=await navigator.credentials.get({publicKey});';
         echo 'const payload={sid:config.sid,type:cred.type,rawId:toB64u(cred.rawId),response:{clientDataJSON:toB64u(cred.response.clientDataJSON),authenticatorData:toB64u(cred.response.authenticatorData),signature:toB64u(cred.response.signature),userHandle:cred.response.userHandle===null?null:toB64u(cred.response.userHandle)}};';
@@ -854,6 +863,11 @@ class SecretsManager extends IPSModuleStrict
      */
     public function ResetPortalLoginPageRateLimit(): void
     {
+        $this->ResetPortalChallengeRateLimit();
+    }
+
+    public function ResetPortalChallengeRateLimit(): void
+    {
         if (!$this->EnterPortalStateLock()) {
             echo "❌ Portal security state is busy. No rate limits were changed.";
             return;
@@ -878,8 +892,8 @@ class SecretsManager extends IPSModuleStrict
         } finally {
             $this->LeavePortalStateLock();
         }
-        $this->LogMessage('Login-page rate-limit counters reset from instance form. Buckets=' . $removed, KL_WARNING);
-        echo "✅ Login-page request limit reset. Other authentication limits and existing sessions are unchanged.";
+        $this->LogMessage('Passkey challenge rate-limit counters reset from instance form. Buckets=' . $removed, KL_WARNING);
+        echo "✅ Passkey challenge request limit reset. Other authentication limits and existing sessions are unchanged.";
     }
 
     public function RemoveAllPasskeys(): void
@@ -2687,6 +2701,10 @@ class SecretsManager extends IPSModuleStrict
 
         if ($isPortal) {
             if ($method === 'GET') {
+                if (isset($_GET['challenge'])) {
+                    $this->IssuePortalChallenge();
+                    return;
+                }
                 if ($this->IsPortalAuthenticated()) {
                     $returnUrl = SecretsPortalSecurity::sanitizeReturnUrl((string)($_GET['return'] ?? '/'));
                     header('Location: ' . $returnUrl, true, 303);
@@ -3554,8 +3572,8 @@ class SecretsManager extends IPSModuleStrict
         }
 
         $this->ResetPortalRateLimit('assertion');
-        // A completed, cryptographically verified login releases this client's
-        // page-load allowance. Other clients and assertion limits stay intact.
+        // A verified login releases this client's issued challenge allowance.
+        // Other clients and assertion limits stay intact.
         $this->ResetPortalRateLimit('challenge-issuance');
         $this->LogMessage('WebAuthn portal authentication succeeded after signature verification.', KL_MESSAGE);
         $this->SendPortalJson(200, [
@@ -4959,11 +4977,11 @@ class SecretsManager extends IPSModuleStrict
     }
 
     /**
-     * Report the earliest retry for the page-issuance bucket. The same fixed
+     * Report the earliest retry for the challenge-issuance bucket. The same fixed
      * ten-minute window and per-origin client/global keys are used by
      * CheckPortalRateLimit. This is advisory under concurrent requests.
      */
-    private function GetPortalLoginPageRetryAfter(): ?int
+    private function GetPortalChallengeRetryAfter(): ?int
     {
         if (!$this->EnterPortalStateLock()) {
             return null;
@@ -5036,7 +5054,7 @@ class SecretsManager extends IPSModuleStrict
             unset($limits[$clientKey]);
             $globalKey = 'global:' . $origin . ':' . $bucket;
             if (isset($limits[$globalKey]) && is_array($limits[$globalKey])) {
-                // All page loads by this verified client are no longer pending.
+                // All issued challenges by this verified client are no longer pending.
                 // Other clients still contribute to the global flood limit.
                 $decrement = $bucket === 'challenge-issuance' ? $clientCount : 1;
                 $limits[$globalKey]['count'] = max(0, (int)($limits[$globalKey]['count'] ?? 0) - $decrement);

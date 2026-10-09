@@ -620,23 +620,23 @@ stateCheck(
 $partitionedRateState = json_decode($module->testGetBuffer('PortalRateLimitsV2'), true);
 stateCheck(is_array($partitionedRateState) && count($partitionedRateState) > 256, 'rate-limit isolation test did not exceed the former shared capacity');
 
-// Exhaust only the login-page limit for one client; report the actual
+// Exhaust only the challenge-request limit for one client; report the actual
 // remaining fixed-window time, then simulate a verified login releasing that
-// client's page allowance without releasing unrelated authentication limits.
+// client's challenge allowance without releasing unrelated authentication limits.
 $_SERVER['HTTP_HOST'] = 'primary.example.com';
 $_SERVER['REMOTE_ADDR'] = '203.0.113.250';
 for ($i = 0; $i < 30; $i++) {
     stateCheck(
         invokePrivate($module, 'CheckPortalRateLimit', ['challenge-issuance', true, 30, 300]),
-        'login-page limit blocked before 30 page loads'
+        'challenge limit blocked before 30 requests'
     );
 }
 stateCheck(
     !invokePrivate($module, 'CheckPortalRateLimit', ['challenge-issuance', true, 30, 300]),
-    'login-page limit permitted a 31st page load'
+    'challenge limit permitted a 31st request'
 );
-$retryAfter = invokePrivate($module, 'GetPortalLoginPageRetryAfter');
-stateCheck(is_int($retryAfter) && $retryAfter >= 1 && $retryAfter <= 600, 'login-page Retry-After was not in the active window');
+$retryAfter = invokePrivate($module, 'GetPortalChallengeRetryAfter');
+stateCheck(is_int($retryAfter) && $retryAfter >= 1 && $retryAfter <= 600, 'challenge Retry-After was not in the active window');
 $rateStateBeforeSuccess = json_decode($module->testGetBuffer('PortalRateLimitsV2'), true);
 $adminBucketsBeforeSuccess = array_filter(
     $rateStateBeforeSuccess,
@@ -646,14 +646,14 @@ $adminBucketsBeforeSuccess = array_filter(
 invokePrivate($module, 'ResetPortalRateLimit', ['challenge-issuance']);
 stateCheck(
     invokePrivate($module, 'CheckPortalRateLimit', ['challenge-issuance', false, 30, 300]),
-    'successful login did not release the client page counter'
+    'successful login did not release the client challenge counter'
 );
 $rateStateAfterSuccess = json_decode($module->testGetBuffer('PortalRateLimitsV2'), true);
 $loginGlobalKey = 'global:' . hash('sha256', strtolower($_SERVER['HTTP_HOST'])) . ':challenge-issuance';
 stateCheck(
     (int)($rateStateAfterSuccess[$loginGlobalKey]['count'] ?? 0) ===
         (int)($rateStateBeforeSuccess[$loginGlobalKey]['count'] ?? 0) - 30,
-    'successful login did not release all 30 page loads from the global counter'
+    'successful login did not release all 30 challenges from the global counter'
 );
 stateCheck(
     array_filter($rateStateAfterSuccess, static fn($key): bool => str_contains((string)$key, ':admin-password'), ARRAY_FILTER_USE_KEY) === $adminBucketsBeforeSuccess,
@@ -664,21 +664,37 @@ $sessionStateBeforeReset = $module->testGetBuffer('PortalSessionsV2');
 $limitsBeforeBusyReset = $module->testGetBuffer('PortalRateLimitsV2');
 $GLOBALS['portalSemaphoreFailures'] = 1;
 ob_start();
-$module->ResetPortalLoginPageRateLimit();
+$module->ResetPortalChallengeRateLimit();
 ob_end_clean();
 stateCheck($module->testGetBuffer('PortalRateLimitsV2') === $limitsBeforeBusyReset, 'busy reset changed rate limits');
 ob_start();
-$module->ResetPortalLoginPageRateLimit();
+$module->ResetPortalChallengeRateLimit();
 ob_end_clean();
 $rateStateAfterManualReset = json_decode($module->testGetBuffer('PortalRateLimitsV2'), true);
 foreach (array_keys($rateStateAfterManualReset) as $key) {
-    stateCheck(!str_contains((string)$key, ':challenge-issuance'), 'manual reset retained a login-page limit');
+    stateCheck(!str_contains((string)$key, ':challenge-issuance'), 'manual reset retained a challenge limit');
 }
 stateCheck(
     array_filter($rateStateAfterManualReset, static fn($key): bool => str_contains((string)$key, ':admin-password'), ARRAY_FILTER_USE_KEY) === $adminBucketsBeforeSuccess,
-    'manual page reset removed password rate limits'
+    'manual challenge reset removed password rate limits'
 );
-stateCheck($module->testGetBuffer('PortalSessionsV2') === $sessionStateBeforeReset, 'manual page reset changed portal sessions');
+stateCheck($module->testGetBuffer('PortalSessionsV2') === $sessionStateBeforeReset, 'manual challenge reset changed portal sessions');
+
+// Ordinary page requests must remain available even after many reloads.
+// A challenge is requested only when the user presses the login button.
+$module->testSetProperty('PortalEnabled', true);
+$_SERVER['HTTP_HOST'] = 'primary.example.com';
+$rateStateBeforePageLoads = $module->testGetBuffer('PortalRateLimitsV2');
+$challengeStateBeforePageLoads = $module->testGetBuffer('PortalChallengesV2');
+for ($i = 0; $i < 35; $i++) {
+    ob_start();
+    invokePrivate($module, 'ServePortalUI');
+    $page = (string)ob_get_clean();
+    stateCheck(str_contains($page, 'id="loginButton"'), 'login page stopped loading after repeated visits');
+}
+stateCheck(str_contains($page, 'challengeResponse=await fetch'), 'login button does not request its challenge');
+stateCheck($module->testGetBuffer('PortalRateLimitsV2') === $rateStateBeforePageLoads, 'page loads consumed the challenge rate counter');
+stateCheck($module->testGetBuffer('PortalChallengesV2') === $challengeStateBeforePageLoads, 'page loads created passkey challenges');
 
 foreach ([0, 1, 2] as $role) {
     $module->testSetProperty('OperationMode', $role);
@@ -691,9 +707,9 @@ foreach ([0, 1, 2] as $role) {
     stateCheck(count($durationFields) === 1, 'session duration is not visible at top level for role ' . $role);
     $resetButtons = array_values(array_filter(
         $form['actions'] ?? [],
-        static fn($action): bool => ($action['name'] ?? '') === 'BtnResetPortalLoginPageRateLimit' && ($action['visible'] ?? true)
+        static fn($action): bool => ($action['name'] ?? '') === 'BtnResetPortalChallengeRateLimit' && ($action['visible'] ?? true)
     ));
-    stateCheck(count($resetButtons) === 1, 'login-page limit reset is missing for role ' . $role);
+    stateCheck(count($resetButtons) === 1, 'challenge limit reset is missing for role ' . $role);
 }
 
 @unlink($temporaryKeyFolder . DIRECTORY_SEPARATOR . 'master.key');
