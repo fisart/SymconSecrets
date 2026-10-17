@@ -1,6 +1,8 @@
 <?php
 
 declare(strict_types=1);
+require_once __DIR__ . '/../libs/SystemPortalNavigation.php';
+
 
 require_once __DIR__ . '/libs/PortalSecurity.php';
 require_once __DIR__ . '/libs/WebAuthn/src/WebAuthn.php';
@@ -2613,6 +2615,20 @@ class SecretsManager extends IPSModuleStrict
      * This is called by IP-Symcon when data is posted to /hook/secrets_ID
      */
     protected function ProcessHookData(): void
+    {
+        // Only complete HTML documents are decorated; API payloads remain unchanged.
+        $systemPortalVault = $this->InstanceID;
+        ob_start(static function (string $html) use ($systemPortalVault): string {
+            return AFSystemPortalNavigationV1::inject($html, $systemPortalVault);
+        });
+        try {
+            $this->RenderHookContentWithPortal();
+        } finally {
+            ob_end_flush();
+        }
+    }
+
+    private function RenderHookContentWithPortal(): void
     {
         $mode = $this->ReadPropertyInteger('OperationMode');
         $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
