@@ -11,3 +11,10 @@ jobs:
         run: |
           php -l libs/SystemPortalNavigation.php
           php tests/system_portal_navigation.php
+      - name: Existing vault and authentication regression
+        run: |
+          php -l SecretsManager/module.php
+          php tests/PortalSecurityTest.php
+          php tests/WebAuthnAssertionTest.php
+          php tests/ModuleSecurityRegressionTest.php
+          php tests/ModuleStateTest.php
