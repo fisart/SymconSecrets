@@ -52,6 +52,12 @@ future V2 PHP packer; it is not an import path for the V1 store.
 
 ## Explicit unfinished work and gates
 
+IR-01--IR-03 and G-01 corrections are described in
+[`../../SecretsFrontend/IMPLEMENTATION_REVIEW_FIXES.md`](../../SecretsFrontend/IMPLEMENTATION_REVIEW_FIXES.md).
+They require independent re-review at the replacement commit. The frozen example
+with a null rejection epoch for a coordinator-bound reservation is retained as
+a negative test; `tests/response-bindings.json` contains its signed correction.
+
 1. Restricted HTTPS/mTLS gateway/archive transport, service admission, boot
    registration issuance and complete dispatch of the 24 accepted operations.
    Internal `Guard`, `Snapshot`, provisioning and write methods must never be
@@ -80,10 +86,14 @@ retained without GC. The production capacity/retention gates remain blocked.
 An ACTIVE archive can honestly have missing/quarantined copies. New core writers
 must enforce derived two-copy health; those writers are not implemented here.
 
-Archive `Boot` requires the exact already-recorded independent admission
-reference. Its unit fixtures provide that prerequisite explicitly; they do not
-demonstrate real platform attestation or the complete cross-service admission
-transaction. Runtime admission and TLS identity must prevent an endpoint/client
+Archive `Boot` now requires an opaque runtime capability created only after
+signed independent admission consumption and an explicit volume verifier. It
+atomically installs the exact admission with the new registration. `Open` binds
+that capability to one opened directory and a monotonic durable local marker;
+no service derives its local generation from the latest catalog registration.
+Re-attestation and activation compare that admitted identity before work and at
+their final authority transaction. Unit fixtures use synthetic guard inventories;
+they do not demonstrate real platform attestation. Runtime admission and TLS identity must prevent an endpoint/client
 from silently changing native etcd lineage after its initial verification.
 
 All formal **Q01-Q48 remain NOT_RUN end to end**. Targeted component evidence is
@@ -98,9 +108,12 @@ cd SecretsBackend/quorum
 go mod verify
 go vet ./...
 go test -race -count=1 -timeout=5m -json ./... > quorum-tests.json
-python tests/summarize.py quorum-tests.json quorum-evidence.json
+python tests/io_faults.py --output ir-io-tests.json
+python tests/summarize.py quorum-tests.json quorum-evidence.json ir-io-tests.json
 cd ../..
 php SecretsBackend/tests/quorum-protocol.php
+php SecretsBackend/tests/ir-runtime.php
+php SecretsBackend/tests/ir-response-bindings.php
 python SecretsFrontend/tests/structure.py
 ```
 

@@ -5,8 +5,10 @@ package durable
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,6 +17,26 @@ import (
 )
 
 type Directory struct{ root *os.Root }
+
+// Identity binds this open directory handle, not a replaceable pathname. It is
+// a local binding only; independent volume provenance/rollback evidence is separate.
+func (d *Directory) Identity() (string, error) {
+	f, e := d.root.Open(".")
+	if e != nil {
+		return "", e
+	}
+	defer f.Close()
+	st, e := f.Stat()
+	if e != nil {
+		return "", e
+	}
+	s, ok := st.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", errors.New("unsupported directory identity platform")
+	}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("SYMCON-LOCAL-DIRECTORY-V1\x00%d:%d", s.Dev, s.Ino)))
+	return hex.EncodeToString(sum[:]), nil
+}
 
 func Open(path string) (*Directory, error) {
 	clean, e := filepath.Abs(path)
@@ -54,6 +76,15 @@ func nameOK(name string) bool {
 	return name != "" && !strings.ContainsAny(name, "/\\\x00") && name != "." && name != ".."
 }
 func (d *Directory) Read(name string) ([]byte, error) {
+	return d.read(name, false)
+}
+
+// ReadDurable must be called under Locked before acknowledging journal history
+// or exposing an unlocked trust floor. Visibility after rename is not durability.
+// Re-syncing both the opened file and directory also repairs a lost barrier after
+// an earlier error or process interruption; no process-local dirty flag suffices.
+func (d *Directory) ReadDurable(name string) ([]byte, error) { return d.read(name, true) }
+func (d *Directory) read(name string, durable bool) ([]byte, error) {
 	if !nameOK(name) {
 		return nil, errors.New("invalid file name")
 	}
@@ -69,8 +100,29 @@ func (d *Directory) Read(name string) ([]byte, error) {
 		return nil, e
 	}
 	defer f.Close()
-	return io.ReadAll(io.LimitReader(f, 67108865))
+	opened, e := f.Stat()
+	if e != nil {
+		return nil, e
+	}
+	if !os.SameFile(st, opened) {
+		return nil, errors.New("file identity changed")
+	}
+	b, e := io.ReadAll(io.LimitReader(f, 67108865))
+	if e != nil {
+		return nil, e
+	}
+	if durable {
+		if e = d.syncFile(f); e != nil {
+			return nil, e
+		}
+		if e = d.Sync(); e != nil {
+			return nil, e
+		}
+	}
+	return b, nil
 }
+func (d *Directory) syncFile(f *os.File) error    { return f.Sync() }
+func (d *Directory) rename(from, to string) error { return d.root.Rename(from, to) }
 func (d *Directory) Sync() error {
 	f, e := d.root.Open(".")
 	if e != nil {
@@ -122,14 +174,14 @@ func (d *Directory) Replace(name string, b []byte) error {
 		f.Close()
 		return e
 	}
-	if e = f.Sync(); e != nil {
+	if e = d.syncFile(f); e != nil {
 		f.Close()
 		return e
 	}
 	if e = f.Close(); e != nil {
 		return e
 	}
-	if e = d.root.Rename(temp, name); e != nil {
+	if e = d.rename(temp, name); e != nil {
 		return e
 	}
 	return d.Sync()
@@ -137,7 +189,7 @@ func (d *Directory) Replace(name string, b []byte) error {
 
 // PutImmutable is idempotent only for exactly identical bytes. The caller holds Locked.
 func (d *Directory) PutImmutable(name string, b []byte) error {
-	old, e := d.Read(name)
+	old, e := d.ReadDurable(name)
 	if e == nil {
 		if !bytes.Equal(old, b) {
 			return errors.New("immutable file collision")

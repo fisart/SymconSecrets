@@ -18,6 +18,7 @@ import (
 	"github.com/fisart/SymconSecrets/SecretsBackend/quorum/consensus"
 	"github.com/fisart/SymconSecrets/SecretsBackend/quorum/internal/testcluster"
 	"github.com/fisart/SymconSecrets/SecretsBackend/quorum/protocol"
+	"github.com/fisart/SymconSecrets/SecretsBackend/quorum/trust"
 )
 
 func TestEtcdMemberProcess(t *testing.T) { testcluster.MemberProcess(t) }
@@ -30,6 +31,9 @@ type workerConfig struct {
 	Directory, ID, PrivateKey, Cluster, Realm, Native, Bundle, Point, Ready string
 	Endpoints                                                               []string
 	Attempt                                                                 consensus.Attempt
+	Admission                                                               protocol.Object
+	GuardPublic, GuardJournal, GuardKeyID                                   string
+	Expected                                                                protocol.Object
 }
 
 func TestArchiveWorkerProcess(t *testing.T) {
@@ -62,7 +66,20 @@ func TestArchiveWorkerProcess(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	service, e := Open(input.Directory, input.ID, ed25519.PrivateKey(key), catalog)
+	journal, e := trust.OpenAdmission(input.GuardJournal)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer journal.Close()
+	pub, e := protocol.Unbase(input.GuardPublic, 32)
+	if e != nil {
+		t.Fatal(e)
+	}
+	runtime, e := journal.AdmitDirectory(input.Admission, trust.AdmissionContext{Expected: input.Expected, PublicKeys: map[string]ed25519.PublicKey{input.GuardKeyID: pub}}, input.Directory, verifyTestVolume)
+	if e != nil {
+		t.Fatal(e)
+	}
+	service, e := Open(input.Directory, input.ID, ed25519.PrivateKey(key), catalog, runtime)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -93,20 +110,10 @@ func TestArchiveWorkerSIGKILLRecovery(t *testing.T) {
 			a := attempt()
 			ctx := context.Background()
 			ready := filepath.Join(t.TempDir(), "crash-point")
-			// Directory path is recovered from the test's explicit private fixture input.
-			path := filepath.Join(t.TempDir(), "worker-private")
-			if e := os.Mkdir(path, 0700); e != nil {
-				t.Fatal(e)
-			}
-			worker, e := Open(path, s.ID, s.Key, f.Catalog)
-			if e != nil {
-				t.Fatal(e)
-			}
-			defer worker.Close()
-			if e = worker.Preserve(f.Bundle, f.Bytes); e != nil {
-				t.Fatal(e)
-			}
-			input := workerConfig{Directory: path, ID: s.ID, PrivateKey: protocol.Base(s.Key), Cluster: protocol.Text(f.Head, "clusterId"), Realm: protocol.Text(f.Head, "realmId"), Native: f.Cluster.NativeID, Bundle: id, Point: point, Ready: ready, Endpoints: f.Cluster.Endpoints, Attempt: a}
+			path := f.Paths[0]
+			worker := s
+			var e error
+			input := workerConfig{Directory: path, ID: s.ID, PrivateKey: protocol.Base(s.Key), Cluster: protocol.Text(f.Head, "clusterId"), Realm: protocol.Text(f.Head, "realmId"), Native: f.Cluster.NativeID, Bundle: id, Point: point, Ready: ready, Endpoints: f.Cluster.Endpoints, Attempt: a, Admission: s.runtime.Record(), GuardPublic: protocol.Base(f.Guards[0].Public().(ed25519.PublicKey)), GuardJournal: f.GuardJournals[0], GuardKeyID: f.GuardIDs[0], Expected: f.Contexts[0].Expected}
 			configPath := filepath.Join(t.TempDir(), "worker.json")
 			if e = os.WriteFile(configPath, consensus.JSON(input), 0600); e != nil {
 				t.Fatal(e)
@@ -174,14 +181,18 @@ func encrypted(t *testing.T, b []byte) []byte {
 }
 
 type archiveFixture struct {
-	Cluster       *testcluster.Cluster
-	Catalog       *Catalog
-	Services      []*Service
-	Registrations []Registration
-	IDs           []string
-	Bundle        Bundle
-	Bytes         []byte
-	Head          protocol.Object
+	Paths, GuardJournals, GuardIDs []string
+	Guards                         []ed25519.PrivateKey
+	Runtimes                       []*trust.AdmittedRuntime
+	Contexts                       []trust.AdmissionContext
+	Cluster                        *testcluster.Cluster
+	Catalog                        *Catalog
+	Services                       []*Service
+	Registrations                  []Registration
+	IDs                            []string
+	Bundle                         Bundle
+	Bytes                          []byte
+	Head                           protocol.Object
 }
 
 func fixture(t *testing.T) *archiveFixture {
@@ -221,14 +232,38 @@ func fixture(t *testing.T) *archiveFixture {
 		id := testcluster.UUID()
 		f.IDs = append(f.IDs, id)
 		reg := Registration{Binding: protocol.Object{"archiveId": id, "failureDomainId": testcluster.UUID(), "storageGeneration": randomB64(), "registrationVersion": "1", "bootId": randomB64()}, State: "ACTIVE", KeyID: randomB64(), PublicKey: protocol.Base(pub)}
-		f.Registrations = append(f.Registrations, reg)
-		records[archiveKey(id)] = consensus.JSON(reg)
-		records["admissions/"+id] = []byte("independently-consumed-test-admission")
+
 		path := filepath.Join(t.TempDir(), "private-archive")
 		if e = os.Mkdir(path, 0700); e != nil {
 			t.Fatal(e)
 		}
 		paths = append(paths, path)
+		f.Paths = append(f.Paths, path)
+		_, guard, e := ed25519.GenerateKey(rand.Reader)
+		if e != nil {
+			t.Fatal(e)
+		}
+		f.Guards = append(f.Guards, guard)
+		f.GuardIDs = append(f.GuardIDs, randomB64())
+		journalPath := filepath.Join(t.TempDir(), "independent-guard")
+		if e = os.Mkdir(journalPath, 0700); e != nil {
+			t.Fatal(e)
+		}
+		f.GuardJournals = append(f.GuardJournals, journalPath)
+		j, e := trust.OpenAdmission(journalPath)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if e = j.Initialize(); e != nil {
+			t.Fatal(e)
+		}
+		j.Close()
+		reg, runtime, context := f.admit(t, i, reg, path, attempt().ID)
+		f.Registrations = append(f.Registrations, reg)
+		f.Runtimes = append(f.Runtimes, runtime)
+		f.Contexts = append(f.Contexts, context)
+		records[archiveKey(id)] = consensus.JSON(reg)
+		records["admissions/"+id] = consensus.JSON(runtime.Record())
 	}
 	for _, id := range f.IDs {
 		records[inventoryKey(id)] = consensus.JSON(Inventory{Ref: ref(testcluster.UUID()), BundleIDs: []string{protocol.Text(f.Bundle.Ref, "id")}, ArchiveIDs: f.IDs})
@@ -237,7 +272,7 @@ func fixture(t *testing.T) *archiveFixture {
 		t.Fatal(e)
 	}
 	for i, id := range f.IDs {
-		s, e := Open(paths[i], id, keys[i], f.Catalog)
+		s, e := Open(paths[i], id, keys[i], f.Catalog, f.Runtimes[i])
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -249,7 +284,8 @@ func fixture(t *testing.T) *archiveFixture {
 	}
 	return f
 }
-func (f *archiveFixture) boot(t *testing.T, i int) {
+func (f *archiveFixture) boot(t *testing.T, i int) { f.replace(t, i, f.Paths[i]) }
+func (f *archiveFixture) replace(t *testing.T, i int, path string) {
 	t.Helper()
 	old := f.Registrations[i]
 	b, _ := json.Marshal(old)
@@ -259,10 +295,21 @@ func (f *archiveFixture) boot(t *testing.T, i int) {
 	next.Binding["bootId"] = randomB64()
 	next.Binding["storageGeneration"] = randomB64()
 	next.Binding["registrationVersion"] = increment(protocol.Text(old.Binding, "registrationVersion"))
-	if e := f.Catalog.Boot(context.Background(), attempt(), old, next, []byte("independently-consumed-test-admission")); e != nil {
+	a := attempt()
+	next, runtime, admissionContext := f.admit(t, i, next, path, a.ID)
+	if e := f.Catalog.Boot(context.Background(), a, old, next, runtime); e != nil {
 		t.Fatal(e)
 	}
+	service, e := Open(path, f.IDs[i], f.Services[i].Key, f.Catalog, runtime)
+	if e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() { service.Close() })
+	f.Services[i] = service
+	f.Paths[i] = path
 	f.Registrations[i] = next
+	f.Runtimes[i] = runtime
+	f.Contexts[i] = admissionContext
 }
 func (f *archiveFixture) health(t *testing.T, want string) {
 	t.Helper()
@@ -324,7 +371,8 @@ func TestArchiveGenerationRaceFencesOldWorker(t *testing.T) {
 	ctx := context.Background()
 	checked := make(chan struct{})
 	resume := make(chan struct{})
-	f.Services[0].Fault = func(point string) error {
+	old := f.Services[0]
+	old.Fault = func(point string) error {
 		if point == "after-authority-check" {
 			close(checked)
 			<-resume
@@ -333,9 +381,13 @@ func TestArchiveGenerationRaceFencesOldWorker(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	a := attempt()
-	go func() { _, e := f.Services[0].Reattest(ctx, a, protocol.Text(f.Bundle.Ref, "id")); done <- e }()
+	go func() { _, e := old.Reattest(ctx, a, protocol.Text(f.Bundle.Ref, "id")); done <- e }()
 	<-checked
-	f.boot(t, 0)
+	replacement := filepath.Join(t.TempDir(), "new-volume")
+	if e := os.Mkdir(replacement, 0700); e != nil {
+		t.Fatal(e)
+	}
+	f.replace(t, 0, replacement)
 	close(resume)
 	if e := <-done; !errors.Is(e, consensus.ErrConflict) {
 		t.Fatal("old-generation receipt published", e)
@@ -422,7 +474,7 @@ func TestMissingPinRecoveryAndIncompleteScan(t *testing.T) {
 		t.Fatal(e)
 	}
 	summary["protectedBundleCount"] = "0"
-	if _, e = f.Catalog.Activate(ctx, attempt(), s.ID, archiveRef, summary, classes); e == nil {
+	if _, e = f.Catalog.Activate(ctx, attempt(), s.ID, archiveRef, summary, classes, s.runtime); e == nil {
 		t.Fatal("incomplete inventory activated")
 	}
 }
@@ -440,7 +492,7 @@ func TestActivationRejectsLaterGenerationWithAllCopiesMissing(t *testing.T) {
 		t.Fatal(e)
 	}
 	f.boot(t, 0)
-	if _, e = f.Catalog.Activate(ctx, attempt(), s.ID, archiveRef, summary, classes); !errors.Is(e, consensus.ErrConflict) {
+	if _, e = f.Catalog.Activate(ctx, attempt(), s.ID, archiveRef, summary, classes, s.runtime); !errors.Is(e, consensus.ErrConflict) && !errors.Is(e, ErrRuntimeFenced) {
 		t.Fatal("old missing-data scan activated a new archive boot", e)
 	}
 	f.health(t, "UNAVAILABLE")

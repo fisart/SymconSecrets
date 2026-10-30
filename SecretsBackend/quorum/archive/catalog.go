@@ -13,13 +13,16 @@ import (
 
 	"github.com/fisart/SymconSecrets/SecretsBackend/quorum/consensus"
 	"github.com/fisart/SymconSecrets/SecretsBackend/quorum/protocol"
+	"github.com/fisart/SymconSecrets/SecretsBackend/quorum/trust"
 )
 
 type Registration struct {
-	Binding   protocol.Object `json:"binding"`
-	State     string          `json:"state"`
-	KeyID     string          `json:"keyId"`
-	PublicKey string          `json:"publicKey"`
+	Binding              protocol.Object `json:"binding"`
+	State                string          `json:"state"`
+	KeyID                string          `json:"keyId"`
+	PublicKey            string          `json:"publicKey"`
+	AdmissionDigest      string          `json:"admissionDigest"`
+	VolumeIdentityDigest string          `json:"volumeIdentityDigest"`
 }
 type Bundle struct {
 	Ref         protocol.Object `json:"ref"`
@@ -72,7 +75,7 @@ func (c *Catalog) View(ctx context.Context, archive, bundle string) (v View, err
 			return
 		}
 	}
-	v.Snapshot, err = c.Store.Read(ctx, "head", "reference-index", archiveKey(archive), bundleKey(bundle), deleteKey(archive, bundle), receiptKey(archive, bundle), inventoryKey(archive))
+	v.Snapshot, err = c.Store.Read(ctx, "head", "reference-index", archiveKey(archive), "admissions/"+archive, bundleKey(bundle), deleteKey(archive, bundle), receiptKey(archive, bundle), inventoryKey(archive))
 	if err != nil {
 		return
 	}
@@ -122,19 +125,30 @@ func has(xs []string, s string) bool {
 
 // Boot is called only after independent HostAdmission consumption. A later boot
 // changes the generation/registration so every older receipt stops counting.
-func (c *Catalog) Boot(ctx context.Context, a consensus.Attempt, previous, next Registration, admissionRef []byte) error {
-	if len(admissionRef) == 0 {
-		return errors.New("durably consumed independent admission required")
+func (c *Catalog) Boot(ctx context.Context, a consensus.Attempt, previous, next Registration, runtime *trust.AdmittedRuntime) error {
+	if e := c.matchesAdmission(next, runtime); e != nil {
+		return e
+	}
+	admission := runtime.Record()
+	if admission["bootOperationId"] != a.ID {
+		return errors.New("archive boot operation binding")
 	}
 	if e := c.Profile.Validate(next.Binding, "ArchiveBinding", ""); e != nil {
 		return e
 	}
 	id := protocol.Text(next.Binding, "archiveId")
-	v, e := c.Store.Read(ctx, archiveKey(id), "admissions/"+id)
+	v, e := c.Store.Read(ctx, archiveKey(id), "admissions/"+id, "head")
 	if e != nil {
 		return e
 	}
-	if string(v.Values[archiveKey(id)].Bytes) != string(consensus.JSON(previous)) || string(v.Values["admissions/"+id].Bytes) != string(admissionRef) {
+	var head protocol.Object
+	if e = decode(v.Values["head"].Bytes, &head); e != nil {
+		return e
+	}
+	if e = admissionLineage(head, runtime); e != nil {
+		return e
+	}
+	if string(v.Values[archiveKey(id)].Bytes) != string(consensus.JSON(previous)) {
 		return consensus.ErrConflict
 	}
 	if next.State != "VERIFYING" || previous.State == "REMOVED" || previous.State == "QUARANTINED" || next.KeyID != previous.KeyID || next.PublicKey != previous.PublicKey {
@@ -146,7 +160,7 @@ func (c *Catalog) Boot(ctx context.Context, a consensus.Attempt, previous, next 
 	if next.Binding["registrationVersion"] != increment(protocol.Text(previous.Binding, "registrationVersion")) {
 		return errors.New("archive registration version")
 	}
-	_, e = c.Store.Apply(ctx, a, v, []consensus.Write{{Key: archiveKey(id), Bytes: consensus.JSON(next)}}, "APPLIED", next)
+	_, e = c.Store.Apply(ctx, a, v, []consensus.Write{{Key: archiveKey(id), Bytes: consensus.JSON(next)}, {Key: "admissions/" + id, Bytes: consensus.JSON(admission)}}, "APPLIED", next)
 	return e
 }
 func increment(s string) string { // schema validation already bounds the operand
@@ -161,7 +175,16 @@ func increment(s string) string { // schema validation already bounds the operan
 	return "1" + string(digits)
 }
 
-func (c *Catalog) Register(ctx context.Context, a consensus.Attempt, v View, receipt protocol.Object) (protocol.Object, error) {
+func (c *Catalog) Register(ctx context.Context, a consensus.Attempt, v View, receipt protocol.Object, runtime *trust.AdmittedRuntime) (protocol.Object, error) {
+	if e := admissionLineage(v.Head, runtime); e != nil {
+		return nil, e
+	}
+	if e := c.matchesAdmission(v.Archive, runtime); e != nil {
+		return nil, e
+	}
+	if !sameAdmission(v.Snapshot, v.Archive, runtime) {
+		return nil, ErrRuntimeFenced
+	}
 	if e := c.Profile.Validate(receipt, "CommittedCopyReceipt", ""); e != nil {
 		return nil, e
 	}
@@ -190,7 +213,7 @@ func (c *Catalog) Register(ctx context.Context, a consensus.Attempt, v View, rec
 // Activate compares the complete classified inventory and every receipt version.
 // This checkpoint caps one inventory at 15 retained bundles; it fails closed
 // rather than accepting partial scans. Pagination is a release-gated follow-up.
-func (c *Catalog) Activate(ctx context.Context, a consensus.Attempt, archive string, expectedArchiveRef, report protocol.Object, classes Classification) (Registration, error) {
+func (c *Catalog) Activate(ctx context.Context, a consensus.Attempt, archive string, expectedArchiveRef, report protocol.Object, classes Classification, runtime *trust.AdmittedRuntime) (Registration, error) {
 	if e := c.Profile.Validate(expectedArchiveRef, "RecordRef", ""); e != nil {
 		return Registration{}, e
 	}
@@ -208,7 +231,7 @@ func (c *Catalog) Activate(ctx context.Context, a consensus.Attempt, archive str
 	if len(inv.BundleIDs) > 15 {
 		return Registration{}, errors.New("inventory capacity gate; partial activation forbidden")
 	}
-	keys := []string{"head", "reference-index", archiveKey(archive), inventoryKey(archive)}
+	keys := []string{"head", "reference-index", archiveKey(archive), "admissions/" + archive, inventoryKey(archive)}
 	for _, id := range inv.BundleIDs {
 		keys = append(keys, bundleKey(id), receiptKey(archive, id), deleteKey(archive, id))
 	}
@@ -231,6 +254,15 @@ func (c *Catalog) Activate(ctx context.Context, a consensus.Attempt, archive str
 	}
 	if !has([]string{"VERIFYING", "REPAIRING"}, reg.State) {
 		return reg, errors.New("archive activation state")
+	}
+	if e = c.matchesAdmission(reg, runtime); e != nil {
+		return reg, e
+	}
+	if e = admissionLineage(head, runtime); e != nil {
+		return reg, e
+	}
+	if !sameAdmission(v, reg, runtime) {
+		return reg, ErrRuntimeFenced
 	}
 	if !protocol.Equal(expectedArchiveRef, registrationRef(reg, v.Values[archiveKey(archive)].Revision)) {
 		return reg, consensus.ErrConflict
@@ -298,7 +330,7 @@ func (c *Catalog) Activate(ctx context.Context, a consensus.Attempt, archive str
 	return reg, e
 }
 func registrationRef(reg Registration, revision int64) protocol.Object {
-	record := protocol.Object{"binding": reg.Binding, "state": reg.State, "keyId": reg.KeyID, "publicKey": reg.PublicKey}
+	record := protocol.Object{"binding": reg.Binding, "state": reg.State, "keyId": reg.KeyID, "publicKey": reg.PublicKey, "admissionDigest": reg.AdmissionDigest, "volumeIdentityDigest": reg.VolumeIdentityDigest}
 	return protocol.Object{"id": reg.Binding["archiveId"], "version": strconv.FormatInt(revision, 10), "digest": protocol.MustDigest(record)}
 }
 func toAny(xs []string) []any {

@@ -425,11 +425,19 @@ func Unsigned(v Object) Object {
 }
 
 // ValidateResponse is required even after verifying the gateway signature.
-func (p *Profile) ValidateResponse(wire, request Object) error {
+func (p *Profile) ValidateResponse(wire, request Object, originals ...Object) error {
 	r := Obj(wire, "response")
 	op := Text(Obj(request, "action"), "operation")
+	if e := p.Validate(request, "Request", op); e != nil {
+		return e
+	}
 	if e := p.Validate(wire, "WireResponse", op); e != nil {
 		return e
+	}
+	if r["outcome"] == "SUCCESS" {
+		if e := p.requestRole(request); e != nil {
+			return e
+		}
 	}
 	for _, k := range []string{"version", "clusterId", "realmId", "incarnation", "trustRevision", "requestId", "nonce"} {
 		if r[k] != request[k] {
@@ -450,9 +458,20 @@ func (p *Profile) ValidateResponse(wire, request Object) error {
 	}
 	dec := Obj(r, "decision")
 	action := Obj(request, "action")
+	if expected := Obj(action, "expectedHead"); expected != nil && r["outcome"] == "SUCCESS" {
+		if e := headAtLeast(Obj(r, "currentHead"), expected); e != nil {
+			return e
+		}
+	}
+	if e := coordinatorAtLeast(Obj(r, "currentCoordinator"), Obj(action, "requiredCoordinator")); e != nil && r["outcome"] == "SUCCESS" {
+		return e
+	}
 	if dec != nil {
 		if dec["operationId"] != action["operationId"] || dec["operation"] != op || dec["actionDigest"] != ad || dec["incarnation"] != request["incarnation"] || dec["actorDigest"] != MustDigest(request["actor"]) {
 			return errors.New("decision action binding")
+		}
+		if e := p.decisionBinding(dec, request); e != nil {
+			return e
 		}
 	}
 	if r["outcome"] == "REJECTED" {
@@ -483,5 +502,5 @@ func (p *Profile) ValidateResponse(wire, request Object) error {
 			return errors.New("historical target binding")
 		}
 	}
-	return nil
+	return p.resultBinding(r, request, originals)
 }

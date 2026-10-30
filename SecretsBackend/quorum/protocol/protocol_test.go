@@ -34,7 +34,23 @@ func TestFrozenFixtures(t *testing.T) {
 			if e = p.Validate(wr, "WireRequest", op); e != nil {
 				t.Fatal(e)
 			}
-			if e = p.ValidateResponse(ws, req); e != nil {
+			var originals []Object
+			if name == "historicalStatus" {
+				originals = []Object{Obj(Obj(Obj(Obj(v, "wireOutcomes"), "authorized"), "wireRequest"), "request")}
+			}
+			if name == "rejectedReservation" {
+				if e = p.ValidateResponse(ws, req); e == nil {
+					t.Fatal("frozen contradictory null coordinator epoch accepted")
+				}
+				r["decision"].(map[string]any)["coordinatorEpoch"] = Obj(Obj(req, "action"), "requiredCoordinator")["epoch"]
+				seed := make([]byte, 32)
+				for i := range seed {
+					seed[i] = byte(64 + i)
+				}
+				ws["signature"], _ = p.Sign("response", r, ed25519.NewKeyFromSeed(seed))
+				x["canonicalResponseUtf8"], _ = func() (string, error) { b, e := Canonical(r); return string(b), e }()
+			}
+			if e = p.ValidateResponse(ws, req, originals...); e != nil {
 				t.Fatal(e)
 			}
 			pub, _ := Unbase(Text(x, "requestPublicKey"), 32)

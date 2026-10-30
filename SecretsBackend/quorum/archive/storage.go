@@ -16,6 +16,7 @@ import (
 	"github.com/fisart/SymconSecrets/SecretsBackend/quorum/consensus"
 	"github.com/fisart/SymconSecrets/SecretsBackend/quorum/durable"
 	"github.com/fisart/SymconSecrets/SecretsBackend/quorum/protocol"
+	"github.com/fisart/SymconSecrets/SecretsBackend/quorum/trust"
 )
 
 const MaxBundleBytes = 67108864
@@ -142,6 +143,7 @@ type Service struct {
 	ID        string
 	Key       ed25519.PrivateKey
 	Fault     func(string) error
+	runtime   *trust.AdmittedRuntime
 }
 type Reattested struct {
 	Receipt    protocol.Object
@@ -149,18 +151,57 @@ type Reattested struct {
 	Historical bool
 }
 
-func Open(path, id string, key ed25519.PrivateKey, catalog *Catalog) (*Service, error) {
+func Open(path, id string, key ed25519.PrivateKey, catalog *Catalog, runtime *trust.AdmittedRuntime) (*Service, error) {
 	if catalog == nil || len(key) != 64 {
 		return nil, errors.New("archive dependencies")
 	}
 	if e := catalog.Profile.Validate(id, "UUID", ""); e != nil {
 		return nil, e
 	}
+	if runtime == nil || runtime.Record()["componentKind"] != "ARCHIVE" || runtime.Record()["componentId"] != id {
+		return nil, ErrRuntimeFenced
+	}
 	d, e := durable.Open(path)
 	if e != nil {
 		return nil, e
 	}
-	return &Service{Directory: d, Catalog: catalog, ID: id, Key: key}, nil
+	if e = runtime.MatchesDirectory(d); e != nil {
+		d.Close()
+		return nil, e
+	}
+	// A new independently consumed admission can advance the local marker. An
+	// old capability cannot restore its marker over a later boot's counter.
+	e = d.Locked(func() error {
+		record := runtime.Record()
+		old, e := d.ReadDurable("admitted-runtime.json")
+		if e == nil {
+			var previous protocol.Object
+			if e = json.Unmarshal(old, &previous); e != nil {
+				return e
+			}
+			if e = catalog.Profile.Validate(previous, "HostAdmission", ""); e != nil {
+				return e
+			}
+			prior, next := protocol.Text(previous, "admissionCounter"), protocol.Text(record, "admissionCounter")
+			if len(prior) > len(next) || (len(prior) == len(next) && prior > next) {
+				return ErrRuntimeFenced
+			}
+			if prior == next && !protocol.Equal(previous, record) {
+				return ErrRuntimeFenced
+			}
+			if protocol.Equal(previous, record) {
+				return nil
+			}
+		} else if !os.IsNotExist(e) {
+			return e
+		}
+		return d.Replace("admitted-runtime.json", consensus.JSON(record))
+	})
+	if e != nil {
+		d.Close()
+		return nil, e
+	}
+	return &Service{Directory: d, Catalog: catalog, ID: id, Key: append(ed25519.PrivateKey(nil), key...), runtime: runtime}, nil
 }
 func (s *Service) Close() error { return s.Directory.Close() }
 func (s *Service) trip(point string) error {
@@ -181,6 +222,9 @@ func (s *Service) Preserve(expected Bundle, b []byte) error {
 	}
 	id := protocol.Text(expected.Ref, "id")
 	return s.Directory.Locked(func() error {
+		if e := s.physical(); e != nil {
+			return e
+		}
 		if e := s.Directory.PutImmutable(id+".bundle", b); e != nil {
 			return e
 		}
@@ -188,6 +232,9 @@ func (s *Service) Preserve(expected Bundle, b []byte) error {
 	})
 }
 func (s *Service) Reattest(ctx context.Context, a consensus.Attempt, bundle string) (result Reattested, err error) {
+	if e := s.current(ctx); e != nil {
+		return result, e
+	}
 	if old, e := s.Catalog.Store.Resolve(ctx, a); e != nil {
 		return result, e
 	} else if old != nil {
@@ -201,8 +248,14 @@ func (s *Service) Reattest(ctx context.Context, a consensus.Attempt, bundle stri
 		return result, nil
 	}
 	err = s.Directory.Locked(func() error {
+		if e := s.physical(); e != nil {
+			return e
+		}
 		v, e := s.Catalog.View(ctx, s.ID, bundle)
 		if e != nil {
+			return e
+		}
+		if e = s.Catalog.matchesAdmission(v.Archive, s.runtime); e != nil {
 			return e
 		}
 		pub := s.Key.Public().(ed25519.PublicKey)
@@ -244,7 +297,7 @@ func (s *Service) Reattest(ctx context.Context, a consensus.Attempt, bundle stri
 			return e
 		}
 		result.Receipt = receipt
-		result.Reference, e = s.Catalog.Register(ctx, a, v, receipt)
+		result.Reference, e = s.Catalog.Register(ctx, a, v, receipt, s.runtime)
 		if e != nil {
 			return e
 		}
@@ -255,7 +308,10 @@ func (s *Service) Reattest(ctx context.Context, a consensus.Attempt, bundle stri
 
 func (s *Service) Scan(ctx context.Context) (summary, archiveRef protocol.Object, classes Classification, err error) {
 	err = s.Directory.Locked(func() error {
-		first, e := s.Catalog.Store.Read(ctx, inventoryKey(s.ID), "head", "reference-index", archiveKey(s.ID))
+		if e := s.physical(); e != nil {
+			return e
+		}
+		first, e := s.Catalog.Store.Read(ctx, inventoryKey(s.ID), "head", "reference-index", archiveKey(s.ID), "admissions/"+s.ID)
 		if e != nil {
 			return e
 		}
@@ -272,6 +328,12 @@ func (s *Service) Scan(ctx context.Context) (summary, archiveRef protocol.Object
 		}
 		if len(inv.BundleIDs) > 15 {
 			return errors.New("inventory capacity gate")
+		}
+		if e = s.Catalog.matchesAdmission(reg, s.runtime); e != nil {
+			return e
+		}
+		if !sameAdmission(first, reg, s.runtime) {
+			return ErrRuntimeFenced
 		}
 		archiveRef = registrationRef(reg, first.Values[archiveKey(s.ID)].Revision)
 		verified := []string{}
@@ -331,6 +393,9 @@ func (s *Service) Scan(ctx context.Context) (summary, archiveRef protocol.Object
 }
 func (s *Service) Activate(ctx context.Context, a consensus.Attempt) (Registration, error) {
 	var result Registration
+	if e := s.current(ctx); e != nil {
+		return result, e
+	}
 	if old, e := s.Catalog.Store.Resolve(ctx, a); e != nil {
 		return result, e
 	} else if old != nil {
@@ -343,6 +408,9 @@ func (s *Service) Activate(ctx context.Context, a consensus.Attempt) (Registrati
 		return result, e
 	}
 	e = s.Directory.Locked(func() error {
+		if e := s.physical(); e != nil {
+			return e
+		}
 		// Revalidate physical state under this second lock, before final CAS. A
 		// concurrent deletion cannot be hidden behind a previously checked report.
 		if e := s.recheckClassified(ctx, summary, classes); e != nil {
@@ -352,7 +420,7 @@ func (s *Service) Activate(ctx context.Context, a consensus.Attempt) (Registrati
 			return e
 		}
 		var err error
-		result, err = s.Catalog.Activate(ctx, a, s.ID, archiveRef, summary, classes)
+		result, err = s.Catalog.Activate(ctx, a, s.ID, archiveRef, summary, classes, s.runtime)
 		if err != nil {
 			return err
 		}

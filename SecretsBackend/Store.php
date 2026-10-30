@@ -132,7 +132,7 @@ final class SecretsBackendStore
         return $state;
     }
 
-    /** Stable OS lock shared by publication grants and exclusive runtime transitions. */
+    /** Stable OS lock shared by final grants/advances and exclusive runtime transitions. */
     private function transition(int $mode, callable $callback)
     {
         $path = $this->keyDirectory . '/runtime.lock';
@@ -233,7 +233,24 @@ final class SecretsBackendStore
             return ['body' => $body, 'core' => $core];
         });
         $this->trip('after_prepare');
-        $reply = $this->anchor->call('advance', $prepared['body']);
+        $reply = $this->transition(LOCK_SH, function () use ($expectedHead, $prepared): array {
+            // Preparation is not irrevocable authorization. Invalidation may have
+            // won since SQLite prepared the successor. Claim the exact pending
+            // operation again while excluding reload/disable through advance.
+            $this->transaction(function () use ($expectedHead, $prepared): void {
+                $owner = $this->ownerCheck();
+                if (!SecretsBackendCodec::same($owner, $prepared['body']['expectedOwner'])
+                    || !SecretsBackendCodec::same($this->current()['head'], $expectedHead)
+                    || $this->meta('pending') !== $prepared['core']['head']['commitId']
+                    || $this->meta('advance') !== SecretsBackendCodec::json($prepared['body'])) {
+                    throw new RuntimeException('Prepared ownership claim changed; recovery is required.');
+                }
+            });
+            $this->trip('before_advance');
+            // HTTPS transport is bounded. An uncertain result keeps the exact
+            // pending identity for recovery; no cancellation is invented.
+            return $this->anchor->call('advance', $prepared['body']);
+        });
         if (($reply['result']['status'] ?? '') !== 'APPLIED' || !SecretsBackendCodec::same($reply['result']['head'], $prepared['core']['head'])) throw new RuntimeException('Commit was not authorized; recovery is required.');
         $this->trip('after_anchor');
         $this->transaction(function () use ($expectedHead, $prepared): void {

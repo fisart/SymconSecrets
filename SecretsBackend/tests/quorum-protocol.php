@@ -9,7 +9,15 @@ foreach ($vectors['wireOutcomes'] as $name => $vector) {
     $request = $vector['wireRequest']['request']; $wire = $vector['wireResponse']; $response = $wire['response'];
     $trust = $vectors['recoveryManifest']['trustedContext']['acceptedTrustPack'];
     $gateways = [$response['serverId'] => ['keyId' => $wire['keyId'], 'publicKey' => $vector['gatewayPublicKey']]];
-    $observed = $codec->verifyResponse(SecretsBackendCodec::json($wire), $request, $trust, $gateways);
+    $original = $name === 'historicalStatus' ? $vectors['wireOutcomes']['authorized']['wireRequest']['request'] : null;
+    if ($name === 'rejectedReservation') {
+        $expectReject(fn() => $codec->verifyResponse(SecretsBackendCodec::json($wire), $request, $trust, $gateways));
+        $wire['response']['decision']['coordinatorEpoch'] = $request['action']['requiredCoordinator']['epoch'];
+        $serverKey = sodium_crypto_sign_secretkey(sodium_crypto_sign_seed_keypair(hex2bin($vectors['publicTestSeedsOnly']['gatewayEd25519SeedHex'])));
+        $wire['signature'] = SecretsBackendCodec::b64(sodium_crypto_sign_detached($profile['domains']['response'] . SecretsBackendCodec::canonical($wire['response']), $serverKey));
+        $response = $wire['response'];
+    }
+    $observed = $codec->verifyResponse(SecretsBackendCodec::json($wire), $request, $trust, $gateways, $original);
     if (!SecretsBackendCodec::same($observed, $response)) throw new RuntimeException('Quorum response changed.');
     $codec->verify('request', $request, $vector['wireRequest']['signature'], SecretsBackendCodec::unb64($vector['requestPublicKey'], 32));
     $seed = hex2bin($vectors['publicTestSeedsOnly']['nodeEd25519SeedHex']); $key = sodium_crypto_sign_secretkey(sodium_crypto_sign_seed_keypair($seed));

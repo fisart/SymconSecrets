@@ -73,7 +73,7 @@ func (j *AdmissionJournal) Consume(record protocol.Object, c AdmissionContext) (
 	hash := protocol.MustDigest(record)
 	contextHash := protocol.MustDigest(c.Expected)
 	err = j.directory.Locked(func() error {
-		b, e := j.directory.Read("admission.json")
+		b, e := j.directory.ReadDurable("admission.json")
 		if e != nil {
 			return e
 		}
@@ -167,8 +167,9 @@ func (j *RecoveryJournal) Initialize(floor RecoveryFloor) error {
 	return j.directory.Locked(func() error { return j.directory.PutImmutable("recovery.json", mustJSON(recoveryState{Floor: floor})) })
 }
 func (j *RecoveryJournal) State() (floor RecoveryFloor, locked bool, err error) {
+	locked = true // Errors, including failed re-synchronization, never report unlocked.
 	err = j.directory.Locked(func() error {
-		b, e := j.directory.Read("recovery.json")
+		b, e := j.directory.ReadDurable("recovery.json")
 		if e != nil {
 			return e
 		}
@@ -252,7 +253,7 @@ func (j *RecoveryJournal) Apply(record protocol.Object, c RecoveryContext) (hist
 	}
 	hash := protocol.MustDigest(record)
 	err = j.directory.Locked(func() error {
-		b, e := j.directory.Read("recovery.json")
+		b, e := j.directory.ReadDurable("recovery.json")
 		if e != nil {
 			return e
 		}

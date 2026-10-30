@@ -271,6 +271,7 @@ func JSON(v any) []byte {
 	return b
 }
 func (s *Store) Client() *clientv3.Client { return s.client }
+func (s *Store) NativeID() string         { return fmt.Sprintf("%016x", s.native) }
 
 // Initialize is an independent provisioning primitive, not a runtime fallback.
 // Calling it against existing state cannot erase membership, heads or outcomes.
