@@ -2,6 +2,8 @@
 declare(strict_types=1);
 require_once __DIR__ . '/Store.php';
 require_once __DIR__ . '/Tree.php';
+require_once __DIR__ . '/HardwareTrust.php';
+require_once __DIR__ . '/SecurityConfiguration.php';
 require_once __DIR__ . '/../SecretsManager/libs/PortalSecurity.php';
 require_once __DIR__ . '/../SecretsManager/libs/WebAuthn/src/WebAuthn.php';
 
@@ -10,15 +12,16 @@ final class SecretsBackendApplication
 {
     private SecretsBackendStore $store;
     private array $settings;
+    private array $rejectionContext = [];
     public function __construct(SecretsBackendStore $store, array $settings) { $this->store = $store; $this->settings = $settings; }
     private function webauthn(bool $hardware = false): \lbuchs\WebAuthn\WebAuthn
     {
         $rp = (string)parse_url($this->settings['origin'], PHP_URL_HOST);
-        $auth = new \lbuchs\WebAuthn\WebAuthn('Secrets administration', $rp, $hardware ? ['packed', 'fido-u2f'] : ['none', 'packed', 'fido-u2f', 'apple', 'tpm', 'android-key'], true);
+        $auth = new \lbuchs\WebAuthn\WebAuthn('Secrets administration', $rp, $hardware ? ['packed'] : ['none', 'packed', 'fido-u2f', 'apple', 'tpm', 'android-key'], true);
         if ($hardware) {
             $roots = $this->settings['hardwareRoots'] ?? '';
             if (!is_dir($roots) || count(glob($roots . '/*.pem') ?: []) === 0 || empty($this->settings['hardwareAAGUIDs'])) throw new RuntimeException('No reviewed hardware trust profile is installed.');
-            $auth->addRootCertificates($roots, ['pem']);
+            // Root verification is exclusively performed by HardwareTrust; never the shared chain helper.
         }
         return $auth;
     }
@@ -56,12 +59,13 @@ final class SecretsBackendApplication
         $verifier->processGet($client, $authData, SecretsBackendCodec::unb64($response['signature']), $credential['publicKey'], SecretsBackendCodec::unb64($challenge['challenge'], 32), $credential['counter'], true, true);
         $data = new \lbuchs\WebAuthn\Attestation\AuthenticatorData($authData);
         if (!SecretsPortalSecurity::validateBackupFlags($data->getIsBackupEligible(), $data->getIsBackup(), $credential['backupEligible'])) throw new RuntimeException('Credential backup flags changed.');
-        if ($challenge['hardware'] && (!$credential['hardware'] || $data->getIsBackupEligible())) throw new RuntimeException('Hardware approval is required.');
+        if ($challenge['hardware'] && (!$credential['hardware'] || $data->getIsBackupEligible()
+            || $credential['trustVersion'] !== ($this->settings['hardwareTrustVersion'] ?? 'none'))) throw new RuntimeException('Hardware approval is required.');
         return (int)($verifier->getSignatureCounter() ?? 0);
     }
     private function challenge(array $current, array $credentials, bool $hardware, string $kind, array $context): array
     {
-        $ids = []; foreach ($credentials as $credential) if ($credential['active'] && (!$hardware || $credential['hardware'])) $ids[] = $credential['id'];
+        $ids = []; foreach ($credentials as $credential) if ($credential['active'] && (!$hardware || ($credential['hardware'] && $credential['trustVersion'] === ($this->settings['hardwareTrustVersion'] ?? 'none')))) $ids[] = $credential['id'];
         if (!$ids) throw new RuntimeException('No eligible administrator key. Use independent recovery if all keys are lost.');
         $verifier = $this->webauthn(); $args = $verifier->getGetArgs(array_map([SecretsBackendCodec::class, 'unb64'], $ids), 120, true, true, true, true, true, true);
         $id = SecretsBackendCodec::b64(random_bytes(32));
@@ -72,8 +76,9 @@ final class SecretsBackendApplication
     public function beginEnrollment(string $label, bool $hardware): string
     {
         if ($label === '' || strlen($label) > 80 || preg_match('/[\x00-\x1f]/', $label)) throw new InvalidArgumentException('Invalid administrator label.');
-        $this->store->read(); $token = SecretsBackendCodec::b64(random_bytes(32));
-        $this->store->put(hash('sha256', $token), 'enrollment', ['label' => $label, 'hardware' => $hardware, 'independentRecovery' => true], time() + 600);
+        $current = $this->store->read(); $token = SecretsBackendCodec::b64(random_bytes(32));
+        $this->store->put(hash('sha256', $token), 'enrollment', ['label' => $label, 'hardware' => $hardware, 'independentRecovery' => true], time() + 600,
+            $this->audit('enroll-recovery', 'independent-console-recovery', 'enrollment-authorization'));
         return $token;
     }
     private function enrollmentOptions(array $data): array
@@ -102,7 +107,11 @@ final class SecretsBackendApplication
         $id = SecretsBackendCodec::b64($created->credentialId);
         if ($id !== $credential['rawId'] || !SecretsPortalSecurity::validateBackupFlags($created->isBackupEligible, $created->isBackedUp)) throw new RuntimeException('Registration credential mismatch.');
         $aaguid = bin2hex($created->AAGUID);
-        if ($registration['hardware'] && ($created->rootValid !== true || $created->isBackupEligible || !in_array($aaguid, $this->settings['hardwareAAGUIDs'], true))) throw new RuntimeException('Hardware attestation does not satisfy the reviewed trust profile.');
+        if ($registration['hardware']) {
+            SecretsBackendHardwareTrust::verify(SecretsBackendCodec::unb64($credential['response']['attestationObject']),
+                $this->settings['hardwareRoots'], $this->settings['hardwareAAGUIDs'], $created->AAGUID);
+            if ($created->isBackupEligible) throw new RuntimeException('Backup-eligible credentials cannot approve hardware actions.');
+        }
         $current = $this->store->read();
         $entry = ['id' => $id, 'publicKey' => $created->credentialPublicKey, 'label' => $registration['label'], 'active' => true, 'administrator' => $current['state']['identity']['ownerId'],
             'hardware' => $registration['hardware'], 'aaguid' => $aaguid, 'attestationFormat' => $created->attestationFormat,
@@ -111,14 +120,29 @@ final class SecretsBackendApplication
         $this->store->change($registration['head'], SecretsBackendCodec::uuid(), hash('sha256', SecretsBackendCodec::json($entry)), static function (array $state) use ($id, $entry): array {
             if (isset($state['identity']['credentials'][$id])) throw new RuntimeException('Credential already exists.');
             $state['identity']['credentials'][$id] = $entry; $state['identity']['revocation'] = SecretsBackendCodec::increment($state['identity']['revocation']); return $state;
-        });
+        }, $this->audit('enroll-recovery', 'independent-console-recovery', $id));
         return ['registered' => true];
     }
+    private function audit(string $action, string $actor, string $target): array
+    {
+        return ['action' => $action, 'actor' => $actor, 'target' => $target,
+            'backend' => $this->settings['backend'], 'frontend' => $this->settings['frontend']];
+    }
     public function handle(string $action, array $data, array $request): array
+    {
+        $this->rejectionContext = [];
+        try { return $this->dispatch($action, $data, $request); }
+        catch (Throwable $exception) {
+            try { $this->store->auditRejected($this->rejectionContext); } catch (Throwable $ignored) {}
+            throw $exception;
+        }
+    }
+    private function dispatch(string $action, array $data, array $request): array
     {
         if (($request['origin'] ?? '') !== $this->settings['origin']) throw new RuntimeException('Origin mismatch.');
         $this->store->rate(hash('sha256', ($request['remote'] ?? '') . ':' . $action), in_array($action, ['authOptions', 'authVerify', 'enrollmentOptions', 'enrollmentVerify'], true) ? 10 : 120);
         $current = $this->store->read();
+        if (isset($this->settings['managementProfile']) && SecretsBackendSecurityConfiguration::digest($this->settings['managementProfile']) !== SecretsBackendSecurityConfiguration::digest($current['state']['policy']['management'])) throw new RuntimeException('Security profile changed; repeat complete validation.');
         if ($current['state']['policy']['origin'] !== $this->settings['origin'] || $current['state']['policy']['frontend'] !== (string)$this->settings['frontend']) throw new RuntimeException('Protected origin or frontend binding differs; use independent recovery.');
         if ($action === 'status') { self::exact($data, []); return ['data' => ['ready' => true, 'enrollmentNeeded' => count($current['state']['identity']['credentials']) === 0]]; }
         if ($action === 'enrollmentOptions') return ['data' => $this->enrollmentOptions($data)];
@@ -128,26 +152,41 @@ final class SecretsBackendApplication
             self::exact($data, ['challengeId', 'credential']); $challenge = $this->store->get($data['challengeId'], 'login', true);
             $id = $data['credential']['rawId'] ?? ''; $entry = $current['state']['identity']['credentials'][$id] ?? null;
             if (!is_array($entry) || !$entry['active']) throw new RuntimeException('Credential is not an administrator.');
+            $this->rejectionContext = $this->audit('login', $id, 'session');
             $counter = $this->credential($entry, $challenge, $data['credential']);
-            $this->store->change($challenge['head'], SecretsBackendCodec::uuid(), hash('sha256', $data['challengeId']), static function (array $state) use ($id, $counter): array { $state['identity']['credentials'][$id]['counter'] = $counter; return $state; });
-            $this->store->authorize('login', hash('sha256', $id . ':' . $data['challengeId']));
-            $current = $this->store->read(); $raw = SecretsBackendCodec::b64(random_bytes(32)); $csrf = SecretsBackendCodec::b64(random_bytes(32));
+            $committed = $this->store->change($challenge['head'], SecretsBackendCodec::uuid(), hash('sha256', $data['challengeId']), static function (array $state) use ($id, $counter): array { $state['identity']['credentials'][$id]['counter'] = $counter; return $state; }, $this->audit('login', $id, 'session'));
+            $current = $this->store->read();
+            if (!SecretsBackendCodec::same($current['head'], $committed)) throw new RuntimeException('Login state changed before authorization.');
+            $this->store->authorize('login', hash('sha256', $id . ':' . $data['challengeId']), $current, static function (array $checked) use ($id, $entry): void {
+                if (($checked['state']['identity']['credentials'][$id]['active'] ?? false) !== true
+                    || $checked['state']['identity']['credentials'][$id]['administrator'] !== $entry['administrator']) throw new RuntimeException('Login credential was revoked.');
+            }, $this->audit('login', $id, 'session'));
+             $raw = SecretsBackendCodec::b64(random_bytes(32)); $csrf = SecretsBackendCodec::b64(random_bytes(32));
             $this->store->put(hash('sha256', $raw), 'session', ['credential' => $id, 'administrator' => $entry['administrator'], 'revocation' => $current['state']['identity']['revocation'], 'csrf' => $csrf,
                 'origin' => $this->settings['origin'], 'created' => time(), 'last' => time()], time() + 3600);
             return ['data' => ['authenticated' => true, 'csrf' => $csrf], 'cookie' => $this->cookieName() . '=' . $raw . '; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=3600'];
         }
         $session = $this->session($request, $current);
+        $this->rejectionContext = $this->audit('request', $session['credential'], 'management');
         if ($action !== 'session') $this->requireCsrf($request, $session);
         if ($action === 'logout') { self::exact($data, []); $this->store->delete($session['hash']); return ['data' => ['loggedOut' => true], 'cookie' => $this->cookieName() . '=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0']; }
         if ($action === 'session' || $action === 'list') {
-            self::exact($data, []); $this->store->authorize('metadata', hash('sha256', $session['hash'] . ':' . $current['head']['digest']));
+            self::exact($data, []); $this->store->authorize('metadata', hash('sha256', $session['hash'] . ':' . $current['head']['digest']), $current,
+                function (array $checked) use ($request): void { $this->session($request, $checked); }, $this->audit('metadata', $session['credential'], 'listing'));
             $session['last'] = time(); $this->store->replace($session['hash'], 'session', array_diff_key($session, ['hash' => true]), $session['created'] + 3600);
             return ['data' => ['authenticated' => true, 'csrf' => $session['csrf'], 'revision' => $current['state']['vault']['revision'], 'hardware' => $current['state']['policy']['hardware'],
                 'global' => SecretsBackendTree::listing($current['state']['vault']['global']), 'local' => SecretsBackendTree::listing($current['state']['vault']['local']),
                 'credentials' => array_map(static fn($c) => array_intersect_key($c, array_flip(['id', 'label', 'active', 'hardware'])), array_values($current['state']['identity']['credentials']))]];
         }
+        if ($action === 'configurationPreview') {
+            self::exact($data, []); $candidate = $this->candidateProfile($current['state']);
+            $this->store->authorize('metadata', SecretsBackendSecurityConfiguration::digest($candidate), $current,
+                function (array $checked) use ($request): void { $this->session($request, $checked); }, $this->audit('metadata', $session['credential'], 'configuration-preview'));
+            return ['data' => ['profile' => $candidate, 'digest' => SecretsBackendSecurityConfiguration::digest($candidate)]];
+        }
         if ($action === 'prepare') {
             self::exact($data, ['operation']); $operation = $this->operation($data['operation'], $current['state']);
+            $this->rejectionContext = $this->audit($operation['kind'], $session['credential'], SecretsBackendCodec::json(array_intersect_key($operation, array_flip(['kind', 'scope', 'path', 'credentialId']))));
             $class = in_array($operation['kind'], ['save', 'delete'], true) ? 'write' : ($operation['kind'] === 'reveal' ? 'reveal' : 'identity');
             $hardware = $class === 'identity' ? in_array(true, $current['state']['policy']['hardware'], true) : $current['state']['policy']['hardware'][$class];
             if ($operation['kind'] === 'policy' && in_array(true, $operation['hardware'], true)) $hardware = true;
@@ -163,13 +202,21 @@ final class SecretsBackendApplication
             $entry = $current['state']['identity']['credentials'][$approvalCredential] ?? null;
             if (!is_array($entry) || !$entry['active'] || $entry['administrator'] !== $session['administrator']) throw new RuntimeException('Approval administrator mismatch.');
             $counter = $this->credential($entry, $challenge, $data['credential']); $operation = $this->operation($challenge['context']['operation'], $current['state']);
+            $this->rejectionContext = $this->audit($operation['kind'], $approvalCredential, SecretsBackendCodec::json(array_intersect_key($operation, array_flip(['kind', 'scope', 'path', 'credentialId']))));
             $id = $approvalCredential; $operationId = $challenge['context']['operationId'];
             $digest = hash('sha256', SecretsBackendCodec::json(['operation' => $operation, 'session' => $session['hash'], 'credential' => $id, 'approval' => $data['challengeId']]));
-            $this->store->change($challenge['head'], $operationId, $digest, function (array $state) use ($operation, $id, $counter): array {
+            $committed = $this->store->change($challenge['head'], $operationId, $digest, function (array $state) use ($operation, $id, $counter): array {
                 $state = $this->apply($operation, $state); $state['identity']['credentials'][$id]['counter'] = $counter; return $state;
-            });
+            }, $this->audit($operation['kind'], $id, SecretsBackendCodec::json(array_intersect_key($operation, array_flip(['kind', 'scope', 'path', 'credentialId'])))));
             if ($operation['kind'] === 'reveal') {
-                $this->store->authorize('reveal', $digest); $latest = $this->store->read();
+                $latest = $this->store->read();
+                if (!SecretsBackendCodec::same($latest['head'], $committed)) throw new RuntimeException('Reveal state changed before authorization.');
+                $this->store->authorize('reveal', $digest, $latest, function (array $checked) use ($request, $id, $challenge): void {
+                    $session = $this->session($request, $checked);
+                    $credential = $checked['state']['identity']['credentials'][$id] ?? null;
+                    if (!is_array($credential) || !$credential['active'] || $credential['administrator'] !== $session['administrator']
+                        || ($checked['state']['policy']['hardware']['reveal'] && (!$challenge['hardware'] || !$credential['hardware']))) throw new RuntimeException('Reveal authority changed.');
+                }, $this->audit('reveal', $id, SecretsBackendCodec::json([$operation['scope'], $operation['path']])));
                 // The protected counter commit is not permission to read a different record revision.
                 if ($latest['state']['vault']['revision'] !== $operation['revision']) throw new RuntimeException('Record changed before reveal.');
                 return ['data' => ['fields' => SecretsBackendTree::reveal(SecretsBackendTree::at($latest['state']['vault'][$operation['scope']], $operation['path'])), 'clearAfterSeconds' => 30]];
@@ -190,11 +237,27 @@ final class SecretsBackendApplication
         } elseif ($kind === 'revoke') {
             self::exact($operation, ['kind', 'credentialId']);
             if (!isset($state['identity']['credentials'][$operation['credentialId']])) throw new RuntimeException('Unknown credential.');
+        } elseif ($kind === 'configuration') {
+            self::exact($operation, ['kind', 'profile']);
+            if (!is_array($operation['profile']) || SecretsBackendSecurityConfiguration::digest($operation['profile']) !== SecretsBackendSecurityConfiguration::digest($this->candidateProfile($state))) throw new RuntimeException('Security configuration candidate changed; review again.');
         } elseif ($kind === 'policy') {
             self::exact($operation, ['kind', 'hardware']); self::exact($operation['hardware'], ['write', 'identity', 'export', 'reveal']);
             foreach ($operation['hardware'] as $required) if (!is_bool($required)) throw new InvalidArgumentException('Invalid hardware policy.');
         } else throw new InvalidArgumentException('Unknown operation.');
         return $operation;
+    }
+    private function candidateProfile(array $state): array
+    {
+        if (!is_callable($this->settings['candidateProfile'] ?? null) || !is_array($state['policy']['management'])) throw new RuntimeException('Security configuration changes are unavailable.');
+        $candidate = ($this->settings['candidateProfile'])(); $old = $state['policy']['management'];
+        if (!SecretsBackendSecurityConfiguration::sameFoundation($old['settings'], $candidate['settings'])
+            || SecretsBackendSecurityConfiguration::digest($old['frontendSecurity']) !== SecretsBackendSecurityConfiguration::digest($candidate['frontendSecurity'])) throw new RuntimeException('Foundation changes require independent reprovisioning, not ordinary configuration import/apply.');
+        if (SecretsBackendSecurityConfiguration::digest($old) !== SecretsBackendSecurityConfiguration::digest($candidate)
+            && $old['settings']['HardwareTrustVersion'] === $candidate['settings']['HardwareTrustVersion']) throw new RuntimeException('Every hardware trust-profile change requires a new reviewed revision.');
+        if ($old['settings']['HardwareTrustVersion'] !== $candidate['settings']['HardwareTrustVersion']) {
+            foreach ($state['identity']['credentials'] as $credential) if ($credential['hardware'] && $credential['trustVersion'] === $candidate['settings']['HardwareTrustVersion']) throw new RuntimeException('Hardware trust revisions already used by credentials cannot be reused.');
+        }
+        return $candidate;
     }
     private function apply(array $operation, array $state): array
     {
@@ -217,8 +280,11 @@ final class SecretsBackendApplication
             $active = array_filter($state['identity']['credentials'], static fn($credential) => $credential['active']);
             if (!$active || (in_array(true, $state['policy']['hardware'], true) && !array_filter($active, static fn($credential) => $credential['hardware']))) throw new RuntimeException('Cannot revoke the last eligible administrator.');
             $state['identity']['revocation'] = SecretsBackendCodec::increment($state['identity']['revocation']);
+        } elseif ($operation['kind'] === 'configuration') {
+            $state['policy']['management'] = $operation['profile'];
+            $state['policy']['version'] = SecretsBackendCodec::increment($state['policy']['version']);
         } elseif ($operation['kind'] === 'policy') {
-            $eligible = array_filter($state['identity']['credentials'], static fn($credential) => $credential['active'] && $credential['hardware']);
+            $eligible = array_filter($state['identity']['credentials'], fn($credential) => $credential['active'] && $credential['hardware'] && $credential['trustVersion'] === ($this->settings['hardwareTrustVersion'] ?? 'none'));
             if (in_array(true, $operation['hardware'], true) && count($eligible) < 2) throw new RuntimeException('Enroll and test two separate approved hardware credentials before enforcement.');
             $state['policy']['hardware'] = $operation['hardware']; $state['policy']['version'] = SecretsBackendCodec::increment($state['policy']['version']);
         }

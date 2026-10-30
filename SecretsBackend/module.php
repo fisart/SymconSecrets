@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/Application.php';
+require_once __DIR__ . '/SecurityConfiguration.php';
 
 class SecretsBackend extends IPSModule
 {
@@ -9,6 +10,8 @@ class SecretsBackend extends IPSModule
     public function Create(): void
     {
         parent::Create();
+        $this->RegisterAttributeString('StorageBinding', '');
+        $this->RegisterAttributeBoolean('ProvisioningSealed', false);
         $this->RegisterPropertyBoolean('Enabled', false); $this->RegisterPropertyBoolean('DebugEnabled', false);
         $this->RegisterPropertyInteger('FrontendInstanceID', 0);
         foreach (self::STRINGS as $name) $this->RegisterPropertyString($name, $name === 'HardwareAAGUIDs' ? '[]' : ($name === 'HardwareTrustVersion' ? 'none' : ''));
@@ -21,11 +24,24 @@ class SecretsBackend extends IPSModule
     }
     public function ApplyChanges(): void
     {
-        parent::ApplyChanges(); $this->SetBuffer('Runtime', ''); $this->SetBuffer('Setup', '');
+        $lock = 'SECB.Runtime.' . $this->InstanceID;
+        if (!IPS_SemaphoreEnter($lock, 500)) throw new RuntimeException('Runtime transition is busy; repeat apply after recovery.');
+        try {
+        parent::ApplyChanges(); $this->SetBuffer('Runtime', SecretsBackendCodec::b64(random_bytes(32))); $this->SetBuffer('Setup', '');
+        $this->SetBuffer('RecoveryDelay', '1000');
+        if ($this->ReadAttributeString('StorageBinding') !== '') {
+            try { $this->store(true)->invalidate(); }
+            catch (Throwable $exception) {
+                $this->SetStatus(200); $this->SetValue('Status', 'Reload invalidation failed; backend locked. Retry recovery.');
+                $this->SetTimerInterval('Recovery', $this->ReadPropertyBoolean('Enabled') ? 1000 : 0);
+                throw $exception;
+            }
+        }
         $this->SetValue('DebugEnabled', $this->ReadPropertyBoolean('DebugEnabled'));
         $this->SetTimerInterval('Recovery', $this->ReadPropertyBoolean('Enabled') && IPS_GetKernelRunlevel() === 10103 ? 100 : 0);
         $this->SetStatus($this->ReadPropertyBoolean('Enabled') ? 200 : 104);
         $this->SetValue('Status', $this->ReadPropertyBoolean('Enabled') ? 'Recovery check pending.' : 'Disabled. Storage wizard can be authorized from this console.');
+        } finally { IPS_SemaphoreLeave($lock); }
     }
     public function MessageSink($TimeStamp, $SenderID, $Message, $Data): void
     {
@@ -59,40 +75,107 @@ class SecretsBackend extends IPSModule
         }
         return $paths;
     }
+    private function boundPaths(): array
+    {
+        $raw = $this->ReadAttributeString('StorageBinding');
+        if ($raw === '') return $this->paths();
+        $binding = json_decode($raw, true, 8, JSON_THROW_ON_ERROR);
+        if (($binding['backend'] ?? 0) !== $this->InstanceID) throw new RuntimeException('Storage binding belongs to a different backend instance.');
+        return $binding['paths'];
+    }
     private function identity(): array
     {
-        $paths = $this->paths();
+        $paths = $this->boundPaths();
         if (!is_file($paths['vault'] . '/vault.sqlite') || is_link($paths['vault'] . '/vault.sqlite') || (fileperms($paths['vault'] . '/vault.sqlite') & 0077) !== 0) throw new RuntimeException('Private storage has not been created.');
         $db = new PDO('sqlite:' . $paths['vault'] . '/vault.sqlite');
         $identity = $db->query("SELECT value FROM metadata WHERE name='identity'")->fetchColumn();
         return json_decode($identity, true, 8, JSON_THROW_ON_ERROR);
     }
-    private function store(): SecretsBackendStore
+    private function bootstrap(): ?array
     {
-        $paths = $this->paths(); $identity = $this->identity();
-        $anchor = new SecretsBackendAnchorClient($identity + ['url' => $this->ReadPropertyString('AnchorURL'), 'anchorPublicKey' => $this->ReadPropertyString('AnchorPublicKey'),
-            'anchorKeyId' => $this->ReadPropertyString('AnchorKeyID'), 'signingKeyFile' => $paths['keys'] . '/anchor-sign.key', 'clientCertificate' => $this->ReadPropertyString('ClientCertificatePath'),
-            'clientKey' => $this->ReadPropertyString('ClientKeyPath'), 'caFile' => $this->ReadPropertyString('AnchorCAFile')]);
-        return new SecretsBackendStore($paths['vault'], $paths['keys'], $this->GetBuffer('Runtime'), $anchor);
+        $paths = $this->boundPaths(); $file = $paths['keys'] . '/management-bootstrap.json';
+        if (!is_file($file)) {
+            if ($this->ReadAttributeBoolean('ProvisioningSealed')) throw new RuntimeException('Pinned provisioning file is missing; independent recovery is required.');
+            return null;
+        }
+        $identity = $this->identity();
+        $data = json_decode(SecretsBackendCodec::open(SecretsBackendCodec::privateFile($file), SecretsBackendCodec::privateFile($paths['keys'] . '/master.key'),
+            'management-bootstrap:' . $identity['deploymentId']), true, 32, JSON_THROW_ON_ERROR);
+        if (($data['backend'] ?? 0) !== $this->InstanceID || $data['deployment'] !== $identity['deploymentId']) throw new RuntimeException('Duplicate deployment or different backend binding.');
+        return $data;
+    }
+    private function frontendSecurity(): array
+    {
+        $id = $this->ReadPropertyInteger('FrontendInstanceID');
+        if ($id <= 0 || !IPS_InstanceExists($id) || strtoupper(IPS_GetInstance($id)['ModuleInfo']['ModuleID'] ?? '') !== self::FRONTEND) throw new RuntimeException('Select the dedicated frontend.');
+        if (IPS_GetProperty($id, 'BackendInstanceID') !== $this->InstanceID
+            || SecretsFrontendConfiguration::origin(IPS_GetProperty($id, 'AdminOrigin')) !== SecretsFrontendConfiguration::origin($this->ReadPropertyString('AdminOrigin'))) throw new RuntimeException('The frontend must reciprocally bind this backend and its exact HTTPS origin.');
+        return ['instance' => $id, 'backend' => IPS_GetProperty($id, 'BackendInstanceID'),
+            'origin' => SecretsFrontendConfiguration::origin(IPS_GetProperty($id, 'AdminOrigin')),
+            'proxies' => json_decode(IPS_GetProperty($id, 'TrustedHTTPSProxyIPs'), true, 8, JSON_THROW_ON_ERROR)];
+    }
+    private function candidate(): array { return SecretsBackendSecurityConfiguration::profile($this->configuration(), $this->frontendSecurity()); }
+    private function assertOwnership(): void
+    {
+        $paths = $this->boundPaths();
+        foreach (IPS_GetInstanceListByModuleID('{52165EDD-B2C0-40EC-8A59-42A97319B6E2}') as $other) {
+            if ($other === $this->InstanceID) continue;
+            foreach (['DataDirectory' => 'vault', 'KeyDirectory' => 'keys'] as $field => $kind) {
+                $otherPath = IPS_GetProperty($other, $field);
+                if ($otherPath !== '' && realpath($otherPath) !== false && realpath($otherPath) === realpath($paths[$kind])) throw new RuntimeException('Another backend instance claims this storage.');
+            }
+        }
+    }
+    protected function anchor(array $identity, array $paths, array $settings): SecretsBackendAnchorClient
+    {
+        return new SecretsBackendAnchorClient($identity + ['url' => $settings['AnchorURL'], 'anchorPublicKey' => $settings['AnchorPublicKey'],
+            'anchorKeyId' => $settings['AnchorKeyID'], 'signingKeyFile' => $paths['keys'] . '/anchor-sign.key', 'clientCertificate' => $settings['ClientCertificatePath'],
+            'clientKey' => $settings['ClientKeyPath'], 'caFile' => $settings['AnchorCAFile']]);
+    }
+    protected function store(bool $allowDrift = false): SecretsBackendStore
+    {
+        $paths = $this->boundPaths(); $identity = $this->identity(); $bootstrap = $this->bootstrap();
+        if ($bootstrap !== null) {
+            if (!$allowDrift && !SecretsBackendSecurityConfiguration::sameFoundation($bootstrap['profile']['settings'], $this->configuration())) throw new RuntimeException('Provisioned foundation settings changed; ordinary apply/import cannot replace anchor trust or storage.');
+            $settings = $bootstrap['profile']['settings'];
+        } else $settings = $this->configuration();
+        if (!$allowDrift) $this->assertOwnership();
+        return $this->openStore($paths, $this->GetBuffer('Runtime'), $this->anchor($identity, $paths, $settings));
+    }
+    protected function openStore(array $paths, string $runtime, SecretsBackendAnchorClient $anchor): SecretsBackendStore
+    {
+        return new SecretsBackendStore($paths['vault'], $paths['keys'], $runtime, $anchor);
     }
     public function Recover(): bool
     {
+        $lock = 'SECB.Runtime.' . $this->InstanceID;
+        if (!IPS_SemaphoreEnter($lock, 100)) return false;
+        try {
         $this->SetTimerInterval('Recovery', 0);
         if (!$this->ReadPropertyBoolean('Enabled')) return false;
         try {
             $this->configuration();
             if ($this->GetBuffer('Runtime') === '') $this->SetBuffer('Runtime', SecretsBackendCodec::b64(random_bytes(32)));
             $head = $this->store()->recover();
+            $this->SetBuffer('RecoveryDelay', '1000');
             $this->SetValue('Status', 'Development backend active; anchored commit ' . $head['index'] . '. Release verification remains pending.');
             $this->SetValue('StorageStatus', 'Separate encrypted vault and key storage are available.'); $this->SetStatus(102); $this->debug('recovery-ok'); return true;
         } catch (Throwable $exception) {
             $this->SetStatus(200); $this->SetValue('Status', 'Locked: ' . $exception->getMessage()); $this->debug('recovery-locked');
-            if ($this->ReadPropertyBoolean('Enabled')) $this->SetTimerInterval('Recovery', 30000);
+            $this->scheduleRecovery();
             return false;
         }
+        } finally { IPS_SemaphoreLeave($lock); }
+    }
+    private function scheduleRecovery(): void
+    {
+        if (!$this->ReadPropertyBoolean('Enabled')) return;
+        $delay = max(1000, min(30000, (int)$this->GetBuffer('RecoveryDelay')));
+        $this->SetTimerInterval('Recovery', $delay); $this->SetBuffer('RecoveryDelay', (string)min(30000, $delay * 2));
     }
     public function BeginStorageSetup(): string
     {
+        if ($this->ReadAttributeString('StorageBinding') !== '') throw new RuntimeException('This instance is already bound to storage; initial setup cannot replace an existing deployment.');
         $settings = $this->configuration(); $paths = $this->paths();
         if ($settings['FrontendInstanceID'] <= 0 || $settings['AdminOrigin'] === '' || $paths['vault'] === '' || $paths['keys'] === '') throw new RuntimeException('Select the new frontend, exact HTTPS origin and two separate absolute directory paths first.');
         if (is_file($paths['vault'] . '/vault.sqlite')) throw new RuntimeException('A vault already exists. Setup never replaces storage.');
@@ -122,6 +205,7 @@ class SecretsBackend extends IPSModule
             if (count($data) !== 2 || !is_string($data['planId'] ?? null) || $setup['plan'] === '' || !hash_equals($setup['plan'], $data['planId'])) throw new RuntimeException('Review the exact storage plan before creation.');
             $this->SetBuffer('Setup', ''); $this->UpdateFormField('SetupCredential', 'value', ''); // Consume BEFORE filesystem changes.
             $info = $this->initializeStorage($paths, $settings);
+            $this->WriteAttributeString('StorageBinding', SecretsBackendCodec::json(['backend' => $this->InstanceID, 'paths' => $paths]));
             $this->SetValue('StorageStatus', 'Both storages created. Provision the independent anchor before enabling access.'); $this->debug('storage-created');
             return ['data' => ['created' => true, 'provisioning' => $info]];
         } finally {
@@ -138,12 +222,44 @@ class SecretsBackend extends IPSModule
         $code = $this->application()->beginEnrollment($Label, $Hardware);
         $this->UpdateFormField('EnrollmentCredential', 'value', $code); $this->debug('enrollment-authorized'); return $code;
     }
+    /** Independent initial provisioning ONLY; never a fallback for existing administrator rights. */
+    public function SecurityConfigurationDigest(): string
+    {
+        $digest = SecretsBackendSecurityConfiguration::digest($this->candidate());
+        $this->UpdateFormField('ProvisioningDigest', 'value', $digest); return $digest;
+    }
+    public function SealInitialSecurityConfiguration(string $ExpectedDigest): bool
+    {
+        if (!$this->ReadPropertyBoolean('Enabled') || IPS_HasChanges($this->InstanceID)) throw new RuntimeException('Apply provisioning settings and recover the backend first.');
+        $store = $this->store(); $current = $store->read();
+        if ($current['state']['identity']['credentials'] || $current['state']['policy']['management'] !== null) throw new RuntimeException('Initial provisioning is closed; normal updates require action approval.');
+        $profile = $this->candidate();
+        if (!hash_equals(SecretsBackendSecurityConfiguration::digest($profile), $ExpectedDigest)) throw new RuntimeException('Review the exact current provisioning digest.');
+        $paths = $this->boundPaths(); $file = $paths['keys'] . '/management-bootstrap.json';
+        $bootstrap = $this->bootstrap();
+        if ($bootstrap === null) {
+            SecretsBackendCodec::writeNew($file, SecretsBackendCodec::seal(SecretsBackendCodec::json(['backend' => $this->InstanceID,
+                'deployment' => $store->identity()['deploymentId'], 'profile' => $profile]), SecretsBackendCodec::privateFile($paths['keys'] . '/master.key'),
+                'management-bootstrap:' . $store->identity()['deploymentId']));
+        } elseif (SecretsBackendSecurityConfiguration::digest($bootstrap['profile']) !== $ExpectedDigest) throw new RuntimeException('Provisioning was already pinned to different settings.');
+        $this->WriteAttributeBoolean('ProvisioningSealed', true);
+        try { $store->change($current['head'], SecretsBackendCodec::uuid(), $ExpectedDigest, static function ($state) use ($profile) {
+            $state['policy']['management'] = $profile; return $state;
+        }, ['action' => 'provisioning', 'actor' => 'independent-console-provisioning', 'target' => $ExpectedDigest, 'backend' => $this->InstanceID, 'frontend' => $this->ReadPropertyInteger('FrontendInstanceID')]);
+        } catch (Throwable $exception) { $this->SetStatus(200); $this->scheduleRecovery(); throw $exception; }
+        return true;
+    }
     private function application(): SecretsBackendApplication
     {
         if (!$this->ReadPropertyBoolean('Enabled')) throw new RuntimeException('Backend is disabled.');
-        return new SecretsBackendApplication($this->store(), ['origin' => $this->configuration()['AdminOrigin'], 'frontend' => $this->ReadPropertyInteger('FrontendInstanceID'), 'backend' => $this->InstanceID,
-            'hardwareRoots' => $this->ReadPropertyString('HardwareRootsDirectory'), 'hardwareAAGUIDs' => json_decode($this->ReadPropertyString('HardwareAAGUIDs'), true, 8, JSON_THROW_ON_ERROR),
-            'hardwareTrustVersion' => $this->ReadPropertyString('HardwareTrustVersion')]);
+        $store = $this->store(); $current = $store->read(); $profile = $current['state']['policy']['management'];
+        if (!is_array($profile)) throw new RuntimeException('Seal initial security configuration explicitly in the backend console before enrollment.');
+        SecretsBackendSecurityConfiguration::verify($profile, $this->frontendSecurity());
+        $active = $profile['settings'];
+        return new SecretsBackendApplication($store, ['origin' => $active['AdminOrigin'], 'frontend' => $active['FrontendInstanceID'], 'backend' => $this->InstanceID,
+            'hardwareRoots' => $active['HardwareRootsDirectory'], 'hardwareAAGUIDs' => json_decode($active['HardwareAAGUIDs'], true, 8, JSON_THROW_ON_ERROR),
+            'hardwareTrustVersion' => $active['HardwareTrustVersion'], 'managementProfile' => $profile,
+            'candidateProfile' => fn() => $this->candidate()]);
     }
     /** Local backend entry point; browser routes never accept an instance ID or arbitrary function. */
     public function HandleFrontendRequest(int $FrontendInstanceID, string $RequestJSON): string
@@ -168,6 +284,9 @@ class SecretsBackend extends IPSModule
             return SecretsBackendCodec::json(['status' => 200, 'data' => $result['data'], 'cookie' => $result['cookie'] ?? '']);
         } catch (Throwable $exception) {
             $this->debug('request-rejected');
+            try {
+                if ($this->store(true)->recoveryRequired()) { $this->SetStatus(200); $this->scheduleRecovery(); }
+            } catch (Throwable $ignored) { if ($this->ReadPropertyBoolean('Enabled')) $this->scheduleRecovery(); }
             $this->SetValue('Status', 'Request refused: ' . $exception->getMessage());
             // No exception text, secret input or filesystem details are sent to unauthenticated clients.
             return SecretsBackendCodec::json(['status' => 403, 'data' => ['error' => 'Request refused. Check login, revision, approval and backend status.'], 'cookie' => '']);
@@ -186,6 +305,8 @@ class SecretsBackend extends IPSModule
         if (count($data) !== 2 || ($data['schema'] ?? '') !== 'SECB.Config.v1' || !is_array($data['configuration'] ?? null)) throw new InvalidArgumentException('Expected SECB.Config.v1.');
         if (IPS_HasChanges($this->InstanceID)) throw new RuntimeException('Apply or discard pending console edits before import.');
         $settings = self::validate($data['configuration']); $settings['Enabled'] = false;
+        $bootstrap = $this->bootstrap();
+        if ($bootstrap !== null && !SecretsBackendSecurityConfiguration::sameFoundation($bootstrap['profile']['settings'], $settings)) throw new RuntimeException('Import cannot replace provisioned anchor trust, pairing or storage. Hardware settings are staged for explicit approval.');
         foreach ($settings as $key => $value) IPS_SetProperty($this->InstanceID, $key, $value);
         IPS_ApplyChanges($this->InstanceID); $this->debug('configuration-imported-disabled'); return true;
     }
@@ -203,5 +324,12 @@ class SecretsBackend extends IPSModule
         $lines = array_filter(explode("\n", (string)$this->GetValue('Debug'))); $lines[] = gmdate('Y-m-d H:i:s') . ' UTC | ' . $code;
         $this->SetValue('Debug', implode("\n", array_slice($lines, -50)));
     }
-    public function GetConfigurationForm(): string { return (string)file_get_contents(__DIR__ . '/form.json'); }
+    public function GetConfigurationForm(): string
+    {
+        $form = json_decode((string)file_get_contents(__DIR__ . '/form.json'), true, 32, JSON_THROW_ON_ERROR);
+        if ($this->bootstrap() !== null) foreach ($form['elements'] as &$element) {
+            if (in_array($element['name'] ?? '', SecretsBackendSecurityConfiguration::FOUNDATION, true)) $element['enabled'] = false;
+        }
+        return SecretsBackendCodec::json($form);
+    }
 }

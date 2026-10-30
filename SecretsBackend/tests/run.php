@@ -26,7 +26,7 @@ check('pending prepare discarded when unanchored; old worker fenced', static fun
     secReject(static fn() => $store->change($before['head'], SecretsBackendCodec::uuid(), hash('sha256', 'prepare'), static fn($s) => $s), 'Fault injection did not run.');
     $new = new SecretsBackendStore($directory . '/data', $directory . '/keys', SecretsBackendCodec::b64(random_bytes(32)), $client, 'DELETE'); $new->recover();
     secExpect(SecretsBackendCodec::same($new->read()['head'], $before['head']), 'Unanchored state published.');
-    secReject(static fn() => $store->authorize('metadata', hash('sha256', 'old')), 'Old runtime reauthorized after fence.');
+    secRejectReason(static fn() => $store->authorize('metadata', hash('sha256', 'old'), $before, static function ($current): void {}), 'Runtime is fenced');
 });
 check('anchored prepare recovered after crash before publication', static function (): void {
     $fail = false; [$store, $witness, $client, $directory] = secFixture(static function ($point) use (&$fail): void { if ($fail && $point === 'after_anchor') throw new RuntimeException('Crash'); });

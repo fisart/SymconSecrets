@@ -63,19 +63,35 @@ final class SecretsBackendCodec
     }
     public static function privateDirectory(string $path): void
     {
-        if ($path === '' || $path[0] !== '/' || str_contains($path, "\0") || preg_match('~(?:^|/)\.\.(?:/|$)~', $path)) throw new RuntimeException('Use an absolute storage directory.');
+        if ($path === '' || $path[0] !== '/' || str_contains($path, "\0") || preg_match('~(?:^|/)\.{1,2}(?:/|$)~', $path)) throw new RuntimeException('Use an absolute storage directory.');
         $current = '';
-        foreach (explode('/', trim($path, '/')) as $component) { $current .= '/' . $component; if (is_link($current)) throw new RuntimeException('Symlinked storage is not allowed.'); }
-        if (!is_dir($path) && !mkdir($path, 0700, true)) throw new RuntimeException('Cannot create private storage.');
+        foreach (explode('/', trim($path, '/')) as $component) {
+            $current .= '/' . $component;
+            if (is_link($current)) throw new RuntimeException('Symlinked storage is not allowed.');
+            if (!is_dir($current)) {
+                if (!mkdir($current, 0700)) throw new RuntimeException('Cannot create private storage.');
+                self::syncDirectory(dirname($current));
+            }
+        }
         if (!is_writable($path) || (fileperms($path) & 0077) !== 0) throw new RuntimeException('Storage directory must have mode 0700.');
     }
     public static function writeNew(string $path, string $bytes): void
     {
-        $handle = fopen($path, 'x+b');
+        $oldMask = umask(0077);
+        try { $handle = fopen($path, 'x+b'); } finally { umask($oldMask); }
         if ($handle === false) throw new RuntimeException('Refusing to overwrite an existing security file.');
         try {
             if (!chmod($path, 0600) || fwrite($handle, $bytes) !== strlen($bytes) || !fflush($handle) || (function_exists('fsync') && !fsync($handle))) throw new RuntimeException('Security file was not durably written.');
         } finally { fclose($handle); }
+        self::syncDirectory(dirname($path));
+    }
+    /** Linux/Symcon storage: fail closed if directory entry durability is unavailable. */
+    public static function syncDirectory(string $directory): void
+    {
+        $handle = fopen($directory, 'r');
+        if ($handle === false) throw new RuntimeException('Cannot open storage directory for synchronization.');
+        try { if (!function_exists('fsync') || !fsync($handle)) throw new RuntimeException('Storage directory synchronization is required.'); }
+        finally { fclose($handle); }
     }
     public static function privateFile(string $path): string
     {

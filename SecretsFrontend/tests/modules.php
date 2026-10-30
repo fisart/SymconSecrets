@@ -6,11 +6,17 @@ $GLOBALS['instances'] = []; $GLOBALS['changed'] = []; $GLOBALS['locks'] = [];
 class IPSModule
 {
     public int $InstanceID;
-    public array $properties = [], $values = [], $buffers = [], $form = [], $timers = [], $positions = [];
+    public array $attributes = [], $properties = [], $values = [], $buffers = [], $form = [], $timers = [], $positions = [];
     public int $status = 104;
     public function __construct(int $id) { $this->InstanceID = $id; $GLOBALS['instances'][$id] = $this; }
     public function Create(): void { }
     public function ApplyChanges(): void { }
+    protected function RegisterAttributeBoolean($k, $v): void { if (!isset($this->attributes[$k])) $this->attributes[$k] = $v; }
+    protected function ReadAttributeBoolean($k): bool { return $this->attributes[$k]; }
+    protected function WriteAttributeBoolean($k, $v): void { $this->attributes[$k] = $v; }
+    protected function RegisterAttributeString($k, $v): void { if (!isset($this->attributes[$k])) $this->attributes[$k] = $v; }
+    protected function ReadAttributeString($k): string { return $this->attributes[$k]; }
+    protected function WriteAttributeString($k, $v): void { $this->attributes[$k] = $v; }
     protected function RegisterPropertyBoolean($k, $v): void { $this->properties[$k] = $v; }
     protected function RegisterPropertyInteger($k, $v): void { $this->properties[$k] = $v; }
     protected function RegisterPropertyString($k, $v): void { $this->properties[$k] = $v; }
@@ -50,10 +56,22 @@ require_once __DIR__ . '/../../SecretsBackend/module.php';
 
 class SecretsBackendTestModule extends SecretsBackend
 {
+    public ?SecretsTestWitness $witness = null;
+    public $fault = null;
     protected function initializeStorage(array $paths, array $settings): array
     {
         // The real module always uses WAL and enforces the patched version.
-        return SecretsBackendStore::initialize($paths['vault'], $paths['keys'], $settings['AdminOrigin'], $settings['FrontendInstanceID'], 'DELETE');
+        $info = SecretsBackendStore::initialize($paths['vault'], $paths['keys'], $settings['AdminOrigin'], $settings['FrontendInstanceID'], 'DELETE');
+        $this->witness = new SecretsTestWitness(dirname($paths['vault']), $info);
+        return $info;
+    }
+    protected function anchor(array $identity, array $paths, array $settings): SecretsBackendAnchorClient
+    {
+        return new SecretsBackendAnchorClient($identity + ['signingKeyFile' => $paths['keys'] . '/anchor-sign.key', 'anchorPublicKey' => SecretsBackendCodec::b64($this->witness->public), 'anchorKeyId' => $this->witness->keyId], [$this->witness, 'transport']);
+    }
+    protected function openStore(array $paths, string $runtime, SecretsBackendAnchorClient $anchor): SecretsBackendStore
+    {
+        return new SecretsBackendStore($paths['vault'], $paths['keys'], $runtime, $anchor, 'DELETE', $this->fault);
     }
 }
 

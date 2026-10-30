@@ -7,6 +7,7 @@ final class SecretsBackendAnchorClient
 {
     private array $settings;
     private $transport;
+    private array $lastEvidence = [];
     public function __construct(array $settings, ?callable $transport = null) { $this->settings = $settings; $this->transport = $transport; }
     public function call(string $operation, array $body): array
     {
@@ -26,7 +27,84 @@ final class SecretsBackendAnchorClient
         if (($response['version'] ?? '') !== '1' || ($response['deploymentId'] ?? '') !== $request['deploymentId']
             || ($response['requestId'] ?? '') !== $request['requestId'] || ($response['nonce'] ?? '') !== $request['nonce']
             || ($response['requestDigest'] ?? '') !== hash('sha256', $canonical) || ($response['anchorKeyId'] ?? '') !== $this->settings['anchorKeyId']) throw new RuntimeException('Stale or foreign anchor response.');
+        self::validateResponse($response, $request);
+        $this->lastEvidence = $data;
         return $response;
+    }
+    public function evidence(): array { return $this->lastEvidence; }
+    private static function fields($value, array $fields): void
+    {
+        if (!is_array($value) || array_diff(array_keys($value), $fields) || array_diff($fields, array_keys($value))) throw new RuntimeException('Invalid closed anchor schema.');
+    }
+    private static function number($value): void
+    {
+        if (!is_string($value) || !preg_match('/^(0|[1-9][0-9]{0,18})$/D', $value)
+            || (strlen($value) === 19 && strcmp($value, '9223372036854775807') > 0)) throw new RuntimeException('Invalid anchor counter.');
+    }
+    private static function uuid($value): void
+    {
+        if (!is_string($value) || !preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/D', $value)) throw new RuntimeException('Invalid anchor operation identity.');
+    }
+    private static function digest($value): void
+    {
+        if (!is_string($value) || !preg_match('/^[a-f0-9]{64}$/D', $value)) throw new RuntimeException('Invalid anchor digest.');
+    }
+    private static function head($head): void
+    {
+        self::fields($head, ['generation', 'index', 'digest', 'commitId']);
+        SecretsBackendCodec::unb64($head['generation'], 32); self::number($head['index']); self::digest($head['digest']); self::uuid($head['commitId']);
+    }
+    private static function owner($owner): void
+    {
+        self::fields($owner, ['fence', 'bootId', 'clientId']); self::number($owner['fence']);
+        SecretsBackendCodec::unb64($owner['bootId'], 32); self::uuid($owner['clientId']);
+    }
+    private static function validateResponse(array $response, array $request): void
+    {
+        self::fields($response, ['version', 'deploymentId', 'requestId', 'nonce', 'requestDigest', 'anchorKeyId', 'head', 'owner', 'credentialRevision', 'result']);
+        self::head($response['head']); self::owner($response['owner']); self::number($response['credentialRevision']);
+        $operation = $request['operation']; $body = $request['body']; $decision = $response['result'];
+        if ($operation === 'read') { if ($decision !== null) throw new RuntimeException('Unexpected read decision.'); return; }
+        self::fields($decision, ['operationId', 'operationDigest', 'operation', 'status', 'head', 'owner', 'actionDigest', 'reason']);
+        self::head($decision['head']); self::owner($decision['owner']);
+        $expectedDigest = $operation === 'status' ? $body['operationDigest'] : self::operationDigest($request['deploymentId'], $request['clientId'], $operation, $body);
+        if ($decision['operationId'] !== $body['operationId'] || $decision['operationDigest'] !== $expectedDigest
+            || !in_array($decision['status'], ['APPLIED', 'AUTHORIZED', 'REJECTED', 'NOT_FOUND'], true)
+            || !in_array($decision['reason'], ['NONE', 'HEAD', 'OWNER', 'LIMIT', 'ID_REUSE', 'NOT_FOUND'], true)) throw new RuntimeException('Anchor decision binding mismatch.');
+        if ($response['head']['generation'] !== $decision['head']['generation'] || (int)$response['head']['index'] < (int)$decision['head']['index']
+            || (int)$response['owner']['fence'] < (int)$decision['owner']['fence']
+            || ($response['head']['index'] === $decision['head']['index'] && !SecretsBackendCodec::same($response['head'], $decision['head']))
+            || ($response['owner']['fence'] === $decision['owner']['fence'] && !SecretsBackendCodec::same($response['owner'], $decision['owner']))) throw new RuntimeException('Anchor envelope precedes or contradicts its durable decision.');
+        if ($operation === 'status') {
+            if (!in_array($decision['operation'], ['acquire', 'advance', 'authorize', null], true)) throw new RuntimeException('Invalid status operation.');
+            if ($decision['status'] === 'NOT_FOUND') {
+                if ($decision['operation'] !== null || $decision['reason'] !== 'NOT_FOUND' || $decision['actionDigest'] !== null) throw new RuntimeException('Invalid missing decision.');
+                return;
+            }
+            if ($decision['actionDigest'] !== null) self::digest($decision['actionDigest']);
+            if ($decision['status'] === 'REJECTED') {
+                if (!in_array($decision['reason'], ['HEAD', 'OWNER', 'LIMIT', 'ID_REUSE'], true)) throw new RuntimeException('Invalid rejected status decision.');
+                if ($decision['operation'] === null && $decision['reason'] !== 'ID_REUSE') throw new RuntimeException('Rejected status decision lacks its operation.');
+                if ($decision['operation'] !== 'authorize' && $decision['actionDigest'] !== null) throw new RuntimeException('Unexpected status action digest.');
+                return;
+            }
+            if ($decision['reason'] !== 'NONE' || !in_array($decision['operation'], ['acquire', 'advance', 'authorize'], true)
+                || $decision['status'] !== ($decision['operation'] === 'authorize' ? 'AUTHORIZED' : 'APPLIED')
+                || ($decision['operation'] === 'authorize' ? $decision['actionDigest'] === null : $decision['actionDigest'] !== null)) throw new RuntimeException('Invalid successful status decision.');
+            return;
+        }
+        if ($decision['operation'] !== $operation || $decision['status'] === 'NOT_FOUND') throw new RuntimeException('Unexpected anchor operation decision.');
+        if ($decision['status'] === 'REJECTED') {
+            if (!in_array($decision['reason'], ['HEAD', 'OWNER', 'LIMIT', 'ID_REUSE'], true)) throw new RuntimeException('Rejected decision lacks a reason.');
+            if ($decision['actionDigest'] !== ($body['actionDigest'] ?? null) && !($decision['reason'] === 'ID_REUSE' && $decision['actionDigest'] === null)) throw new RuntimeException('Rejected action digest mismatch.');
+            return;
+        }
+        if ($decision['reason'] !== 'NONE' || $decision['status'] !== ($operation === 'authorize' ? 'AUTHORIZED' : 'APPLIED')
+            || $decision['actionDigest'] !== ($body['actionDigest'] ?? null)) throw new RuntimeException('Invalid successful anchor decision.');
+        $expectedHead = $operation === 'advance' ? $body['target'] : $body['expectedHead'];
+        $expectedOwner = $operation === 'acquire' ? ['fence' => SecretsBackendCodec::increment($body['expectedOwner']['fence']), 'bootId' => $body['newBootId'], 'clientId' => $request['clientId']] : $body['expectedOwner'];
+        if (!SecretsBackendCodec::same($decision['head'], $expectedHead) || !SecretsBackendCodec::same($decision['owner'], $expectedOwner)) throw new RuntimeException('Successful anchor decision describes a different state.');
+        // Envelope head/owner describe NOW; an idempotent historical decision may describe an older state.
     }
     private function https(string $wire): string
     {

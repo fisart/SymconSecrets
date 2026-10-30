@@ -2,7 +2,11 @@
   "elements": [
     {
       "type": "Label",
-      "caption": "Separate Secrets Backend \u2014 development only; does not read or change the old vault. Requires PHP 8.2+, sodium, OpenSSL, curl, PDO SQLite and SQLite 3.51.3+ for WAL."
+      "caption": "Separate Secrets Backend — development only; does not read or change the old vault. Requires PHP 8.2+, sodium, OpenSSL, curl, PDO SQLite and SQLite 3.51.3+ for WAL."
+    },
+    {
+      "type": "Label",
+      "caption": "Initial provisioning must be explicitly sealed before enrolling administrators. After sealing, foundation settings are pinned; hardware trust edits/imports are staged and need exact passkey approval on the HTML page. Changing a file behind an approved path locks management."
     },
     {
       "type": "CheckBox",
@@ -111,6 +115,31 @@
       ]
     },
     {
+      "type": "ExpansionPanel",
+      "caption": "2. Explicit initial security provisioning (before administrator enrollment only)",
+      "items": [
+        {
+          "type": "Label",
+          "caption": "Apply the exact HTTPS/mTLS/anchor settings, provision the independent witness, and recover. Review the digest; sealing pins this deployment and records the profile in the anchored vault. This action is unavailable once administrators exist."
+        },
+        {
+          "type": "Button",
+          "caption": "Review provisioning digest",
+          "onClick": "SECB_SecurityConfigurationDigest($id);"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "ProvisioningDigest",
+          "caption": "Reviewed security configuration digest (SHA-256)"
+        },
+        {
+          "type": "Button",
+          "caption": "Seal this initial provisioning",
+          "onClick": "SECB_SealInitialSecurityConfiguration($id, $ProvisioningDigest);"
+        }
+      ]
+    },
+    {
       "type": "Button",
       "caption": "2. Recover / check independent anchor",
       "onClick": "SECB_Recover($id);"
@@ -169,7 +198,7 @@
         },
         {
           "type": "Button",
-          "caption": "Import configuration \u2014 leave disabled",
+          "caption": "Import configuration — leave disabled",
           "onClick": "SECB_ImportConfiguration($id, $ImportJSON);"
         }
       ]

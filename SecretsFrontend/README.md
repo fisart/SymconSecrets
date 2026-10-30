@@ -11,7 +11,7 @@ Development implementation 0.1.0. These are **two new modules in SymconSecrets**
 - Both modules have strict configuration import/export. Imports leave the target disabled. Exports contain settings and file references only: no vault contents, master/private keys, passkeys, sessions, setup codes or pending approvals.
 - The frontend can add its link to the existing Portal's **AdditionalPages → Administration** setting. This is an explicit console action; it preserves existing rows and does not change Portal source code.
 
-Read [the release status](RELEASE_STATUS.md) before testing. A working development flow is not evidence that the complete v1.3 suite has passed.
+Read [the audit remediation and evidence](AUDIT_REMEDIATION.md) and [the release status](RELEASE_STATUS.md) before testing. A working development flow is not evidence that the complete v1.3 suite has passed.
 
 ## Install on the separate test system
 
@@ -21,8 +21,8 @@ Read [the release status](RELEASE_STATUS.md) before testing. A working developme
 4. Configure the frontend's trusted reverse-proxy IPs if that proxy terminates HTTPS. Only exact listed proxy addresses may supply forwarded host/protocol information. Enable the frontend and apply settings. Keep the backend disabled until the anchor is provisioned.
 5. Open the frontend URL shown below its instance. Run the **Setup wizard** described below.
 6. Provision the independent anchor, install its client TLS certificate/key and CA file, and configure its URL, signature key ID and pinned public key in SecretsBackend. See [anchor operation](../SecretsBackend/anchor/README.md).
-7. Enable the new backend and run **Recover / check independent anchor**. Normal restart recovery runs automatically; failed recovery retries after 30 seconds without ignoring a mismatch.
-8. In the backend console, issue a temporary administrator-enrollment credential. Use it in the frontend wizard to enroll a new passkey, then sign in. Old Portal/admin-password sessions cannot grant rights in this backend.
+7. Enable the new backend and run **Recover / check independent anchor**. Normal restart recovery runs automatically; failed recovery retries with a bounded 1–30 second backoff without ignoring a mismatch.
+8. In the backend console, review the **initial security configuration digest** and explicitly **Seal this initial provisioning**. This pins storage, frontend/proxy binding, TLS files and the anchor trust separately and anchors the active profile. It is available only before administrator enrollment. Then issue a temporary administrator-enrollment credential. Use it in the frontend wizard to enroll a new passkey, then sign in. Old Portal/admin-password sessions cannot grant rights in this backend.
 9. Select the Portal instance in the frontend, apply settings and click **Add to Portal → Administration**. The link is a registered local hook; if the Portal has a different hostname, the frontend GET redirects only to its fixed configured HTTPS origin. POST requests are never redirected with credentials.
 
 The module needs PHP 8.2+, sodium, OpenSSL, curl and PDO SQLite. This implementation requires **SQLite 3.51.3 or later for WAL** and refuses to initialize a WAL vault on an older version. There is no runtime switch to ignore that check. Unit tests explicitly use a separate DELETE-journal harness on older developer runtimes; that is not a production WAL test or a supported bypass.
@@ -47,9 +47,19 @@ The backend stores typed JSON nodes. `{}` and `[]`, numeric object names and num
 
 Names and types are loaded after administrator authentication. Values are not prefilled in editors. Enter a new JSON value and explicitly choose Create or Replace; an empty editor makes no change. Every save/delete is reviewed and bound to a fresh passkey assertion and current vault revision. Stale changes are refused. Revealing an object returns only its immediate scalar fields, not values in nested records; visible values clear after 30 seconds, page hiding, navigation or logout.
 
+The new backend verifies hardware chains separately from the untouched legacy verifier: supplied intermediates never become trust anchors. The first supported hardware profile is **packed ES256**, with the certificate subject/basic constraints and signed matching AAGUID/model extension checked. U2F-only devices and devices without that signed model extension are refused for hardware approval. Real-device compatibility remains unverified.
+
 Hardware-only actions require an active credential enrolled with validated attestation, an approved AAGUID/trust profile, user presence, user verification and consistent non-backup-eligible flags. No roots/model profile is trusted by default. Certificate/metadata maintenance and real devices must be reviewed before enabling this policy. A label or USB transport hint is not proof of hardware.
 
 The present enrollment route is explicitly **independent console enrollment/recovery**: an ordinary web session cannot issue its own enrollment code or activate a new approver. Key revocation/policy changes use bound WebAuthn approval; whenever any hardware action is enabled, identity/policy changes also require an eligible hardware key. There is no normal web bypass through a weaker action-class setting. Two eligible hardware credentials must exist before enforcement; the operator must separately establish that these are two physical keys and test both.
+
+## Security configuration and audit
+
+After initial sealing, ordinary form saves/imports cannot replace storage paths, anchor pins/TLS references, administrator origin or frontend binding. These controls are disabled in the sealed backend form; import rejects differing foundation fields before changing properties. Their eventual relocation/rotation needs the independent recovery tooling, which is not released yet. The encrypted `management-bootstrap.json` and persistent storage binding must remain intact. Missing or changed protected trust files lock management. Debug/cosmetic settings require no passkey approval.
+
+Hardware trust settings saved/imported in the console are **staged**. On the HTML Configuration & backup tab, review their exact revision, roots, models and fingerprints, then approve the configuration operation. Whenever any action requires hardware, an existing eligible hardware credential must approve it. Every changed profile needs a new reviewed revision; credentials from the old trust revision cannot approve under the new profile and need independent recovery enrollment. Stage new root files separately rather than replacing files belonging to the active profile. Do not turn an unavailable key into a weaker fallback.
+
+Mutations have structured, secret-free audit context inside the anchored core. Grant claims and verified signed receipts are encrypted locally and correlated with the witness, with bounded rejected-request telemetry. These records supplement the short Debug variable; production audit retention, safe GC and investigation tooling still need acceptance.
 
 ## Portal, Dokumentation and configuration backup
 

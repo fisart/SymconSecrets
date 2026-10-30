@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../Application.php';
 
 function secExpect(bool $ok, string $message): void { if (!$ok) throw new RuntimeException($message); }
+function secRejectReason(callable $callback, string $reason): void { try { $callback(); } catch (Throwable $exception) { secExpect(str_contains($exception->getMessage(), $reason), 'Wrong rejection: ' . $exception->getMessage()); return; } throw new RuntimeException('Expected rejection: ' . $reason); }
 function secReject(callable $callback, string $message): void { try { $callback(); } catch (Throwable $exception) { return; } throw new RuntimeException($message); }
 
 /** Signed test witness with a separate durable decision file; never available as a runtime mode. */
@@ -34,7 +35,7 @@ final class SecretsTestWitness
             if (isset($state['decisions'][$id])) {
                 $result = $state['decisions'][$id];
                 if ($result['operationDigest'] !== $digest) $result['status'] = 'REJECTED';
-            } elseif ($operation === 'status') $result = ['status' => 'NOT_FOUND'];
+            } elseif ($operation === 'status') $result = ['operationId' => $id, 'operationDigest' => $digest, 'operation' => null, 'status' => 'NOT_FOUND', 'head' => $state['head'], 'owner' => $state['owner'], 'actionDigest' => null, 'reason' => 'NOT_FOUND'];
             else {
                 $ok = SecretsBackendCodec::same($body['expectedHead'], $state['head']) && SecretsBackendCodec::same($body['expectedOwner'], $state['owner']);
                 if ($ok && $operation === 'advance') $state['head'] = $body['target'];
@@ -68,7 +69,9 @@ function secOptions(array $response): array { return json_decode(SecretsBackendC
 function secKey(): array
 {
     $private = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
-    return ['private' => $private, 'details' => openssl_pkey_get_details($private), 'id' => SecretsBackendCodec::b64(random_bytes(32))];
+    $details = openssl_pkey_get_details($private);
+    foreach (['x', 'y'] as $coordinate) $details['ec'][$coordinate] = str_pad($details['ec'][$coordinate], 32, "\0", STR_PAD_LEFT);
+    return ['private' => $private, 'details' => $details, 'id' => SecretsBackendCodec::b64(random_bytes(32))];
 }
 function secAssertion(array $key, string $challenge, int $counter, string $origin = 'https://secrets.example.test', int $flags = 5): array
 {

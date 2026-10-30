@@ -7,7 +7,7 @@ const original=fs.readFileSync(path.join(__dirname,'../page.html'),'utf8');
 const html=original.replaceAll('%%NONCE%%','test-nonce').replace('%%BOOT%%',JSON.stringify({path:'/hook/secrets_frontend_123',theme:'system'})).replace('%%NAVIGATION%%','');
 const calls=[];let failPreview=false;let createWasVolatile=false;
 const errors=[];const console=new VirtualConsole();console.on('jsdomError',error=>errors.push(error));
-const dom=new JSDOM(html,{url:'https://secrets.example.test/hook/secrets_frontend_123',runScripts:'dangerously',virtualConsole:console,beforeParse(window){
+const dom=new JSDOM(html,{url:'https://secrets.example.test/hook/secrets_frontend_123',runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:console,beforeParse(window){
  window.fetch=async(url,options)=>{
   const data=JSON.parse(options.body);calls.push({url,options,request:data});
   let result={};let ok=true;

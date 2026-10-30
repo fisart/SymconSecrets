@@ -2,6 +2,8 @@
 
 This branch creates the two new modules and their first integrated development implementation. It is **not production-approved**, does not migrate the old vault and does not assert that v1.3's 92 acceptance tests or the 11 hardware-option checks have passed.
 
+The first implementation audit found A01–A07 defects on commit `c0e995d8f355a36c19349e2b56ad223184accf4f`. Corrections and targeted regression tests are now implemented; independent re-review is pending. See the [remediation evidence](AUDIT_REMEDIATION.md). Passing these targeted tests does not close the remaining release gates.
+
 ## Implemented and locally exercised
 
 - Typed JSON hierarchy and configuration validation, including duplicate-key rejection.
@@ -9,6 +11,7 @@ This branch creates the two new modules and their first integrated development i
 - Signed external-anchor client/service, durable decisions, stable acquire retries and local Prepare/advance/Publish recovery.
 - New administrator registration/login, fresh bound changes and selected-record reveal; no old Portal/password session reuse.
 - One-use volatile-credential storage wizard, two-path review, fixed frontend/backend binding and disabled-on-import settings.
+- Exact-head final grant claims; isolated configured-root hardware verification; staged/anchored security configuration; structured encrypted audit context; UI generation cancellation; reload transition locks and request-time recovery scheduling.
 - Debug child variables, Portal additional-page registration and fail-closed HTTPS/origin checks.
 
 Local tests cover interrupted prepare/publish, lost acquire acknowledgements, stale backups, superseded workers, altered signatures/nonces, real cryptographic WebAuthn assertions, masked listings, selected-record disclosure and replay refusal. PHP/Python tests use the actual message signatures across languages. DOM tests cover credential clearing and wizard requests. These are narrower implementation tests, not a substitute for the full acceptance suite.

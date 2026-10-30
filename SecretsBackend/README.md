@@ -2,7 +2,7 @@
 
 Separate development backend for [SecretsFrontend](../SecretsFrontend/README.md). Module ID `{52165EDD-B2C0-40EC-8A59-42A97319B6E2}`, prefix `SECB`. It creates its own encrypted vault, administrator credentials and external-anchor identity. It never uses the old SecretsManager instance or imports its storage automatically.
 
-Read the [installation and wizard guide](../SecretsFrontend/README.md) and [release gates](../SecretsFrontend/RELEASE_STATUS.md) before enabling it on a test installation.
+See [audit remediation evidence](../SecretsFrontend/AUDIT_REMEDIATION.md). Read the [installation and wizard guide](../SecretsFrontend/README.md) and [release gates](../SecretsFrontend/RELEASE_STATUS.md) before enabling it on a test installation.
 
 The `Debug` string variable and `DebugEnabled` switch are registered below every instance. `ExportConfiguration` / `ImportConfiguration` handle only `SECB.Config.v1` settings; private key bytes, vault contents, credentials, sessions and setup/enrollment codes are excluded. Import leaves `Enabled=false`.
 
@@ -15,11 +15,16 @@ Run local tests from the repository root:
 ```sh
 php SecretsBackend/tests/run.php
 php SecretsBackend/tests/interoperability.php
-php SecretsFrontend/tests/modules.php
+php SecretsBackend/tests/hardware.php
+php SecretsBackend/tests/audit-races.php
+php SecretsBackend/tests/anchor-responses.php
+php SecretsBackend/tests/runtime-lock.php
+php SecretsFrontend/tests/module-security.php
 python3 SecretsBackend/tests/anchor_test.py
 cd SecretsFrontend/tests
 npm ci --ignore-scripts
 npm test
+npm run test:security
 ```
 
 Python interoperability/service tests require `cryptography` (tested with 50.0.2). Those tests inject a local transport; the production client always uses verified mutual-TLS HTTPS plus a pinned Ed25519 response key. The test-only DELETE journal is not configurable in the installed module.

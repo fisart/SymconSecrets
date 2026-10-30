@@ -13,6 +13,9 @@ final class SecretsBackendStore
     private string $runtime;
     private SecretsBackendAnchorClient $anchor;
     private $fault;
+    private string $directory;
+    private string $keyDirectory;
+    private bool $inTransaction = false;
 
     public function __construct(string $directory, string $keyDirectory, string $runtime, SecretsBackendAnchorClient $anchor, string $journal = 'WAL', ?callable $fault = null)
     {
@@ -24,6 +27,8 @@ final class SecretsBackendStore
         self::pragmas($this->db, $journal);
         $this->identity = json_decode($this->meta('identity'), true, 8, JSON_THROW_ON_ERROR);
         $this->runtime = $runtime; $this->anchor = $anchor; $this->fault = $fault;
+        $this->directory = $directory; $this->keyDirectory = $keyDirectory;
+        $this->db->exec('CREATE TABLE IF NOT EXISTS audit_events (id INTEGER PRIMARY KEY, bucket TEXT NOT NULL, sealed TEXT NOT NULL);');
     }
 
     private static function pragmas(PDO $db, string $journal): void
@@ -60,7 +65,7 @@ final class SecretsBackendStore
         $state = [
             'vault' => ['global' => ['type' => 'object', 'entries' => []], 'local' => ['type' => 'object', 'entries' => []], 'revision' => '0'],
             'identity' => ['credentials' => [], 'revocation' => '0', 'ownerId' => SecretsBackendCodec::b64(random_bytes(32))],
-            'policy' => ['origin' => $origin, 'frontend' => (string)$frontend, 'version' => '1', 'hardware' => ['write' => false, 'identity' => false, 'export' => false, 'reveal' => false]],
+            'policy' => ['origin' => $origin, 'frontend' => (string)$frontend, 'version' => '1', 'management' => null, 'hardware' => ['write' => false, 'identity' => false, 'export' => false, 'reveal' => false]],
             'pairing' => ['peers' => []], 'stream' => ['globalRevision' => '0', 'next' => [], 'received' => []],
             'operations' => ['outcomes' => [], 'audit' => []], 'outbox' => ['jobs' => []],
         ];
@@ -71,6 +76,8 @@ final class SecretsBackendStore
             foreach (['identity' => SecretsBackendCodec::json($identity), 'active' => $core['head']['commitId'], 'pending' => '', 'runtime' => '', 'status' => 'RECOVERY_CHECK', 'owner' => '', 'acquire' => ''] as $name => $value) $db->prepare('INSERT INTO metadata VALUES (?, ?)')->execute([$name, $value]);
             $db->commit();
         } catch (Throwable $exception) { if ($db->inTransaction()) $db->rollBack(); throw $exception; }
+        $db = null;
+        SecretsBackendCodec::syncDirectory($keyDirectory); SecretsBackendCodec::syncDirectory($directory);
         return $identity + ['head' => $core['head'], 'clientPublicKey' => SecretsBackendCodec::b64(sodium_crypto_sign_publickey($anchorKey)), 'syncPublicKey' => SecretsBackendCodec::b64(sodium_crypto_sign_publickey($syncKey))];
     }
 
@@ -79,9 +86,12 @@ final class SecretsBackendStore
     private function set(string $name, string $value): void { $this->db->prepare('INSERT INTO metadata(name,value) VALUES (?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value')->execute([$name, $value]); }
     private function transaction(callable $callback)
     {
+        if ($this->inTransaction) return $callback();
         $this->db->exec('BEGIN IMMEDIATE');
+        $this->inTransaction = true;
         try { $result = $callback(); $this->db->exec('COMMIT'); return $result; }
-        catch (Throwable $exception) { $this->db->exec('ROLLBACK'); throw $exception; }
+        catch (Throwable $exception) { try { $this->db->exec('ROLLBACK'); } catch (Throwable $ignored) {} throw $exception; }
+        finally { $this->inTransaction = false; }
     }
     private function current(string $which = 'active'): array
     {
@@ -95,9 +105,9 @@ final class SecretsBackendStore
         return json_decode($this->meta('owner'), true, 8, JSON_THROW_ON_ERROR);
     }
     private function trip(string $point): void { if ($this->fault !== null) ($this->fault)($point); }
-    private static function pack(array $state, string $key, array $identity, ?array $parent): array
+    private static function pack(array $state, string $key, array $identity, ?array $parent, ?string $commitId = null): array
     {
-        $index = $parent === null ? '0' : SecretsBackendCodec::increment($parent['index']); $id = SecretsBackendCodec::uuid(); $roots = []; $payloads = [];
+        $index = $parent === null ? '0' : SecretsBackendCodec::increment($parent['index']); $id = $commitId ?? SecretsBackendCodec::uuid(); $roots = []; $payloads = [];
         foreach (self::KINDS as $kind) {
             $objectId = SecretsBackendCodec::b64(random_bytes(32));
             $context = $identity['deploymentId'] . ':' . $identity['generation'] . ':' . $kind . ':' . $objectId;
@@ -122,7 +132,38 @@ final class SecretsBackendStore
         return $state;
     }
 
+    /** Stable OS lock shared by publication grants and exclusive runtime transitions. */
+    private function transition(int $mode, callable $callback)
+    {
+        $path = $this->keyDirectory . '/runtime.lock';
+        if (is_link($path)) throw new RuntimeException('Unsafe runtime lock.');
+        $mask = umask(0077);
+        try { $handle = fopen($path, 'c+b'); } finally { umask($mask); }
+        if ($handle === false || (fileperms($path) & 0077) !== 0) throw new RuntimeException('Private runtime lock is required.');
+        try {
+            if (!flock($handle, $mode | LOCK_NB)) throw new RuntimeException('Runtime transition is busy; retry later.');
+            return $callback();
+        } finally { flock($handle, LOCK_UN); fclose($handle); }
+    }
+    /** Called synchronously at reload/disable, before scheduling any remote recovery. */
+    public function invalidate(): void
+    {
+        $this->transition(LOCK_EX, function (): void {
+            $this->transaction(function (): void {
+                $this->set('runtime', $this->runtime); $this->set('status', 'INSTALLING');
+                $this->set('acquire', ''); $this->db->exec('DELETE FROM ephemeral');
+            });
+        });
+    }
+    public function recoveryRequired(): bool
+    {
+        return $this->meta('runtime') === $this->runtime && ($this->meta('status') !== 'ACTIVE' || $this->meta('pending') !== '');
+    }
     public function recover(): array
+    {
+        return $this->transition(LOCK_EX, fn() => $this->recoverLocked());
+    }
+    private function recoverLocked(): array
     {
         $retry = $this->transaction(function (): ?array {
             if ($this->meta('runtime') === $this->runtime && $this->meta('status') === 'INSTALLING' && $this->meta('acquire') !== '') return json_decode($this->meta('acquire'), true, 12, JSON_THROW_ON_ERROR);
@@ -136,7 +177,15 @@ final class SecretsBackendStore
         // One stable acquire operation survives a lost transport response in this start attempt.
         $this->transaction(function () use ($acquire): void { if ($this->meta('runtime') !== $this->runtime) throw new RuntimeException('Superseded recovery.'); $this->set('acquire', SecretsBackendCodec::json($acquire)); });
         $reply = $this->anchor->call('acquire', $acquire);
-        if (($reply['result']['status'] ?? '') !== 'APPLIED' || !SecretsBackendCodec::same($reply['owner'], $reply['result']['owner'])) throw new RuntimeException('Runtime acquisition was rejected or superseded.');
+        if (($reply['result']['status'] ?? '') === 'REJECTED') {
+            // A signed durable rejection is final. A timeout is NOT: leave that ID intact.
+            $this->transaction(function () use ($acquire): void {
+                if ($this->meta('runtime') !== $this->runtime || $this->meta('acquire') !== SecretsBackendCodec::json($acquire)) throw new RuntimeException('Superseded recovery.');
+                $this->set('acquire', '');
+            });
+            throw new RuntimeException('Acquisition definitively rejected; automatic recovery will recheck the new head.');
+        }
+        if (($reply['result']['status'] ?? '') !== 'APPLIED' || !SecretsBackendCodec::same($reply['owner'], $reply['result']['owner'])) throw new RuntimeException('Runtime acquisition was superseded; independent recovery is required.');
         $this->transaction(function () use ($reply, $active, $pending): void {
             if ($this->meta('runtime') !== $this->runtime || $this->meta('status') !== 'INSTALLING' || $this->meta('active') !== $active['head']['commitId']) throw new RuntimeException('Superseded recovery publication.');
             if ($pending !== null && SecretsBackendCodec::same($reply['head'], $pending['head'])) $this->set('active', $pending['head']['commitId']);
@@ -148,8 +197,11 @@ final class SecretsBackendStore
 
     public function read(bool $fresh = true): array
     {
-        $owner = $this->ownerCheck(); $core = $this->current();
-        if ($this->meta('pending') !== '') throw new RuntimeException('A commit outcome requires recovery.');
+        [$owner, $core] = $this->transaction(function (): array {
+            $owner = $this->ownerCheck(); $core = $this->current();
+            if ($this->meta('pending') !== '') throw new RuntimeException('A commit outcome requires recovery.');
+            return [$owner, $core];
+        });
         if ($fresh) {
             $reply = $this->anchor->call('read', []);
             if (!SecretsBackendCodec::same($reply['head'], $core['head']) || !SecretsBackendCodec::same($reply['owner'], $owner)) throw new RuntimeException('Anchor mismatch or superseded runtime.');
@@ -157,9 +209,9 @@ final class SecretsBackendStore
         return ['head' => $core['head'], 'state' => $this->unpack($core), 'owner' => $owner];
     }
 
-    public function change(array $expectedHead, string $operationId, string $requestDigest, callable $mutate): array
+    public function change(array $expectedHead, string $operationId, string $requestDigest, callable $mutate, array $audit = []): array
     {
-        $prepared = $this->transaction(function () use ($expectedHead, $operationId, $requestDigest, $mutate): array {
+        $prepared = $this->transaction(function () use ($expectedHead, $operationId, $requestDigest, $mutate, $audit): array {
             $owner = $this->ownerCheck(); $active = $this->current();
             if ($this->meta('pending') !== '' || !SecretsBackendCodec::same($active['head'], $expectedHead)) throw new RuntimeException('Revision conflict; reload before saving.');
             $state = $this->unpack($active);
@@ -167,10 +219,13 @@ final class SecretsBackendStore
                 if ($state['operations']['outcomes'][$operationId]['requestDigest'] !== $requestDigest) throw new RuntimeException('Operation ID reused with different data.');
                 throw new RuntimeException('Operation already committed; use a status query.');
             }
+            $beforeRevision = $state['vault']['revision'];
             $state = $mutate($state);
+            $commitId = SecretsBackendCodec::uuid();
             $state['operations']['outcomes'][$operationId] = ['requestDigest' => $requestDigest, 'index' => SecretsBackendCodec::increment($expectedHead['index']), 'result' => 'committed'];
-            $state['operations']['audit'][] = ['operationId' => $operationId, 'index' => SecretsBackendCodec::increment($expectedHead['index']), 'at' => gmdate('c')];
-            $core = self::pack($state, $this->key, $this->identity, $expectedHead);
+            $state['operations']['audit'][] = $this->auditEvent($audit, $operationId, 'committed', $expectedHead, $state['vault']['revision'])
+                + ['anchorOperationId' => $commitId, 'beforeRevision' => $beforeRevision, 'afterRevision' => $state['vault']['revision'], 'afterIndex' => SecretsBackendCodec::increment($expectedHead['index'])];
+            $core = self::pack($state, $this->key, $this->identity, $expectedHead, $commitId);
             if (strlen($core['payloads']) > 32 * 1024 * 1024) throw new RuntimeException('Vault size limit exceeded.');
             $body = ['operationId' => $core['head']['commitId'], 'expectedHead' => $expectedHead, 'expectedOwner' => $owner, 'target' => $core['head']];
             $this->db->prepare('INSERT INTO cores VALUES (?, ?, ?, ?)')->execute([$core['head']['commitId'], SecretsBackendCodec::json($core['head']), $core['manifest'], $core['payloads']]);
@@ -189,22 +244,79 @@ final class SecretsBackendStore
         return $prepared['core']['head'];
     }
 
-    public function authorize(string $kind, string $actionDigest): array
+    /** Never substitute a newer head for the snapshot whose permissions the caller checked. */
+    public function authorize(string $kind, string $actionDigest, array $validated, callable $validate, array $audit = []): array
     {
-        $current = $this->read();
-        $body = ['operationId' => SecretsBackendCodec::uuid(), 'expectedHead' => $current['head'], 'expectedOwner' => $current['owner'], 'kind' => $kind, 'actionDigest' => $actionDigest, 'audience' => null];
-        $id = $body['operationId']; $this->put($id, 'authorization', $body, time() + 3600);
-        $reply = $this->anchor->call('authorize', $body);
-        if (($reply['result']['status'] ?? '') !== 'AUTHORIZED') throw new RuntimeException('Action authorization was rejected.');
-        return $reply;
+        return $this->transition(LOCK_SH, function () use ($kind, $actionDigest, $validated, $validate, $audit): array {
+            $body = $this->transaction(function () use ($kind, $actionDigest, $validated, $validate, $audit): array {
+                $owner = $this->ownerCheck(); $core = $this->current();
+                if ($this->meta('pending') !== '' || !SecretsBackendCodec::same($core['head'], $validated['head'])
+                    || !SecretsBackendCodec::same($owner, $validated['owner'])) throw new RuntimeException('Authorization state changed; repeat complete validation.');
+                $current = ['head' => $core['head'], 'owner' => $owner, 'state' => $this->unpack($core)];
+                $validate($current); // Revalidate session, credential and policy in the claim transaction.
+                $body = ['operationId' => SecretsBackendCodec::uuid(), 'expectedHead' => $current['head'], 'expectedOwner' => $owner,
+                    'kind' => $kind, 'actionDigest' => $actionDigest, 'audience' => null];
+                $event = $this->auditEvent($audit + ['action' => $kind], $body['operationId'], 'claimed', $current['head'], $current['state']['vault']['revision']);
+                $body['actionDigest'] = hash('sha256', SecretsBackendCodec::json(['operationDigest' => $actionDigest, 'audit' => $event]));
+                $this->insertEphemeral($body['operationId'], 'authorization', $body, time() + 3600, $owner);
+                $this->appendAudit($event + ['actionDigest' => $body['actionDigest'], 'operationDigest' => $actionDigest, 'requestBody' => $body,
+                    'anchorOperationDigest' => SecretsBackendAnchorClient::operationDigest($this->identity['deploymentId'], $this->identity['clientId'], 'authorize', $body)], 'grant');
+                return $body;
+            });
+            $reply = $this->anchor->call('authorize', $body);
+            $evidence = $this->anchor->evidence();
+            $this->transaction(function () use ($body, $reply, $audit, $evidence): void {
+                $this->appendAudit($this->auditEvent($audit + ['action' => $body['kind']], $body['operationId'],
+                    $reply['result']['status'] === 'AUTHORIZED' ? 'authorized' : 'rejected', $body['expectedHead'], null)
+                    + ['actionDigest' => $body['actionDigest'], 'anchorDecision' => $reply['result'], 'signedReceipt' => $evidence], 'grant');
+            });
+            if (($reply['result']['status'] ?? '') !== 'AUTHORIZED') throw new RuntimeException('Action authorization was rejected.');
+            return $reply; // Only the exact validated snapshot may supply the response bytes.
+        });
+    }
+    private function insertEphemeral(string $id, string $kind, array $body, int $expires, array $owner): void
+    {
+        $sealed = SecretsBackendCodec::seal(SecretsBackendCodec::json($body), $this->key, $kind . ':' . $id . ':' . $owner['bootId']);
+        $this->db->prepare('INSERT INTO ephemeral VALUES (?, ?, ?, ?, ?)')->execute([$id, $kind, $owner['bootId'], $expires, $sealed]);
+    }
+    public function opaque(string $value): string { return hash_hmac('sha256', $value, $this->key); }
+    private function auditEvent(array $context, string $operationId, string $result, array $head, ?string $revision): array
+    {
+        $allowed = ['system', 'enroll-recovery', 'login', 'metadata', 'reveal', 'save', 'delete', 'revoke', 'policy', 'configuration', 'provisioning', 'request'];
+        $action = $context['action'] ?? 'system';
+        if (!in_array($action, $allowed, true)) throw new InvalidArgumentException('Invalid audit action.');
+        return ['operationId' => $operationId, 'at' => gmdate('c'), 'deployment' => $this->identity['deploymentId'],
+            'backend' => (string)($context['backend'] ?? '0'), 'frontend' => (string)($context['frontend'] ?? '0'),
+            'actor' => $this->opaque((string)($context['actor'] ?? 'system')), 'action' => $action,
+            'target' => $this->opaque((string)($context['target'] ?? 'none')), 'beforeIndex' => $head['index'],
+            'revision' => $revision, 'result' => $result];
+    }
+    private function appendAudit(array $event, string $bucket): void
+    {
+        $this->db->prepare('INSERT INTO audit_events(bucket,sealed) VALUES (?,?)')->execute([$bucket,
+            SecretsBackendCodec::seal(SecretsBackendCodec::json($event), $this->key, 'audit:' . $this->identity['deploymentId'])]);
+    }
+    /** Bounded rejected-request telemetry; no request body, code, secret, signature or error text. */
+    public function auditRejected(array $context = []): void
+    {
+        $this->transaction(function () use ($context): void {
+            $bucket = 'rejected:' . intdiv(time(), 60);
+            $s = $this->db->prepare('SELECT COUNT(*) FROM audit_events WHERE bucket=?'); $s->execute([$bucket]);
+            if ((int)$s->fetchColumn() >= 20) return;
+            $this->db->exec("DELETE FROM audit_events WHERE bucket LIKE 'rejected:%' AND id NOT IN (SELECT id FROM audit_events WHERE bucket LIKE 'rejected:%' ORDER BY id DESC LIMIT 999)");
+            $this->appendAudit($this->auditEvent($context + ['action' => 'request', 'actor' => 'unverified-request', 'target' => 'undetermined'], SecretsBackendCodec::uuid(), 'rejected', $this->head(), null), $bucket);
+        });
     }
 
-    public function put(string $id, string $kind, array $body, int $expires): void
+    public function put(string $id, string $kind, array $body, int $expires, ?array $audit = null): void
     {
-        $this->transaction(function () use ($id, $kind, $body, $expires): void {
+        $this->transaction(function () use ($id, $kind, $body, $expires, $audit): void {
             $owner = $this->ownerCheck();
-            $sealed = SecretsBackendCodec::seal(SecretsBackendCodec::json($body), $this->key, $kind . ':' . $id . ':' . $owner['bootId']);
-            $this->db->prepare('INSERT INTO ephemeral VALUES (?, ?, ?, ?, ?)')->execute([$id, $kind, $owner['bootId'], $expires, $sealed]);
+            $this->insertEphemeral($id, $kind, $body, $expires, $owner);
+            if ($audit !== null) {
+                $core = $this->current(); $state = $this->unpack($core);
+                $this->appendAudit($this->auditEvent($audit, SecretsBackendCodec::uuid(), 'issued', $core['head'], $state['vault']['revision']), 'console');
+            }
         });
     }
     public function get(string $id, string $kind, bool $consume = false): array

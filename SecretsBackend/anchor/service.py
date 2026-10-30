@@ -21,6 +21,14 @@ from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat
 QMAX = 9223372036854775807
 
 
+def sync_directory(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def b64(data):
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
@@ -135,6 +143,8 @@ class Witness:
         db.executescript("CREATE TABLE deployments(id TEXT PRIMARY KEY, head TEXT NOT NULL, owner TEXT NOT NULL, credential_revision TEXT NOT NULL, clients TEXT NOT NULL); CREATE TABLE decisions(deployment TEXT NOT NULL, operation_id TEXT NOT NULL, digest TEXT NOT NULL, client TEXT NOT NULL, audience TEXT, decision TEXT NOT NULL, PRIMARY KEY(deployment,operation_id));")
         db.commit()
         db.close()
+        sync_directory(path)
+        sync_directory(path.parent)
         return {"anchorPublicKey": b64(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)), "anchorKeyId": (path / "key-id").read_text()}
 
     def provision(self, info, certificate_sha256):
