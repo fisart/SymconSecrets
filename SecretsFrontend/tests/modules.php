@@ -67,6 +67,8 @@ $directory = sys_get_temp_dir() . '/symcon-setup-test-' . bin2hex(random_bytes(8
 $backend->properties = array_replace($backend->properties, ['FrontendInstanceID' => 123, 'AdminOrigin' => 'https://secrets.example.test', 'DataDirectory' => $directory . '/data', 'KeyDirectory' => $directory . '/keys', 'DebugEnabled' => true]);
 secExpect(isset($frontend->values['Debug'], $backend->values['Debug']) && $frontend->positions['Debug'] === 50, 'Debug child variables are absent.');
 secExpect($frontend->Refresh(), 'Frontend could not register its isolated hook.');
+$frontend->properties['AdminOrigin'] = 'https://Secrets.Example.Test/'; $backend->properties['AdminOrigin'] = 'https://Secrets.Example.Test/';
+secExpect($frontend->Refresh(), 'Equivalent normalized origin broke frontend/backend binding.');
 $frontend->AddToPortal(); $frontend->AddToPortal();
 $entries = json_decode($portal->properties['AdditionalPages'], true); secExpect(count($entries) === 2 && $entries[0]['Name'] === 'Existing' && $entries[1]['Cluster'] === 'admin', 'Portal registration lost or duplicated entries.');
 $frontend->ImportConfiguration($frontend->ExportConfiguration()); secExpect($frontend->properties['Enabled'] === false, 'Frontend import enabled web access.');

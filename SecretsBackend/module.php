@@ -141,7 +141,7 @@ class SecretsBackend extends IPSModule
     private function application(): SecretsBackendApplication
     {
         if (!$this->ReadPropertyBoolean('Enabled')) throw new RuntimeException('Backend is disabled.');
-        return new SecretsBackendApplication($this->store(), ['origin' => $this->ReadPropertyString('AdminOrigin'), 'frontend' => $this->ReadPropertyInteger('FrontendInstanceID'), 'backend' => $this->InstanceID,
+        return new SecretsBackendApplication($this->store(), ['origin' => $this->configuration()['AdminOrigin'], 'frontend' => $this->ReadPropertyInteger('FrontendInstanceID'), 'backend' => $this->InstanceID,
             'hardwareRoots' => $this->ReadPropertyString('HardwareRootsDirectory'), 'hardwareAAGUIDs' => json_decode($this->ReadPropertyString('HardwareAAGUIDs'), true, 8, JSON_THROW_ON_ERROR),
             'hardwareTrustVersion' => $this->ReadPropertyString('HardwareTrustVersion')]);
     }
@@ -159,7 +159,7 @@ class SecretsBackend extends IPSModule
             $request = SecretsFrontendConfiguration::decode($RequestJSON);
             if (count($request) !== 6 || !is_string($request['action'] ?? null) || !is_array($request['data'] ?? null)
                 || !is_string($request['origin'] ?? null) || !is_string($request['cookie'] ?? null) || !is_string($request['csrf'] ?? null) || !is_string($request['remote'] ?? null)
-                || $request['origin'] !== $this->ReadPropertyString('AdminOrigin')) throw new RuntimeException('Invalid frontend envelope.');
+                || $request['origin'] !== $this->configuration()['AdminOrigin']) throw new RuntimeException('Invalid frontend envelope.');
             $action = $request['action'];
             if (in_array($action, ['setupPreview', 'setupCreate'], true)) $result = $this->setup($action, $request['data']);
             elseif ($action === 'status' && (!is_file($this->paths()['vault'] . '/vault.sqlite') || !$this->ReadPropertyBoolean('Enabled') || $this->GetBuffer('Runtime') === '')) {

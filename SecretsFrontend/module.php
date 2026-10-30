@@ -49,7 +49,7 @@ class SecretsFrontend extends IPSModule
     {
         $id = $this->ReadPropertyInteger('BackendInstanceID');
         if ($id <= 0 || !IPS_InstanceExists($id) || strtoupper(IPS_GetInstance($id)['ModuleInfo']['ModuleID'] ?? '') !== self::BACKEND
-            || IPS_GetProperty($id, 'FrontendInstanceID') !== $this->InstanceID || IPS_GetProperty($id, 'AdminOrigin') !== $this->settings()['AdminOrigin']) throw new RuntimeException('Select the separate SecretsBackend and configure its matching frontend and HTTPS origin.');
+            || IPS_GetProperty($id, 'FrontendInstanceID') !== $this->InstanceID || SecretsFrontendConfiguration::origin((string)IPS_GetProperty($id, 'AdminOrigin')) !== $this->settings()['AdminOrigin']) throw new RuntimeException('Select the separate SecretsBackend and configure its matching frontend and HTTPS origin.');
         return $id;
     }
     public function Refresh(): bool
@@ -160,7 +160,9 @@ class SecretsFrontend extends IPSModule
     public function GetConfigurationForm(): string
     {
         $form = json_decode((string)file_get_contents(__DIR__ . '/form.json'), true, 32, JSON_THROW_ON_ERROR);
-        foreach ($form['elements'] as &$element) if (($element['name'] ?? '') === 'FrontendURL') $element['value'] = $this->ReadPropertyString('AdminOrigin') . $this->path();
+        try { $origin = SecretsFrontendConfiguration::origin($this->ReadPropertyString('AdminOrigin')); }
+        catch (Throwable $exception) { $origin = ''; }
+        foreach ($form['elements'] as &$element) if (($element['name'] ?? '') === 'FrontendURL') $element['value'] = $origin . $this->path();
         return SecretsFrontendConfiguration::encode($form);
     }
 }
