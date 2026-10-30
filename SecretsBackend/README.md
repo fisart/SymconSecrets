@@ -28,3 +28,12 @@ npm run test:security
 ```
 
 Python interoperability/service tests require `cryptography` (tested with 50.0.2). Those tests inject a local transport; the production client always uses verified mutual-TLS HTTPS plus a pinned Ed25519 response key. The test-only DELETE journal is not configurable in the installed module.
+# Peer/quorum development
+
+The accepted DC-01 v1.2 architecture is being implemented separately in
+[`quorum/`](quorum/README.md). Its first checkpoint supplies protocol, consensus,
+durable journal and archive-recovery components with real-process fault tests.
+It is not connected to this V1 Symcon runtime, has no deployment entry point and
+must not be represented as a completed quorum backend. The original password
+module remains unchanged. See the checkpoint's explicit remaining gates.
+

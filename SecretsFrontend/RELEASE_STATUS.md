@@ -28,3 +28,14 @@ Local tests cover interrupted prepare/publish, lost acquire acknowledgements, st
 8. **Security acceptance:** review exact frontend/backend/anchor commits and actual deployment settings against the stable v1.3 concept plus hardware note. Record PASS/FAIL/NOT_RUN/N/A and unresolved findings. Do not treat this file as a security certificate.
 
 The local commissioning/enrollment methods are explicitly independent recovery operations. They are not public browser routes that issue their own authority. Normal web management always needs the new backend's administrator checks. No request is delegated to the old password module's unrestricted APIs.
+# DC-01 peer/quorum implementation checkpoint
+
+The accepted DC-01 v1.2 protocol is now pinned in `SecretsBackend/quorum` with Go
+and PHP codecs, real-etcd transaction/fencing/election primitives, durable
+admission/recovery journals and committed archive re-attestation/activation.
+See `SecretsBackend/quorum/README.md` for implemented behavior, component tests
+and explicit unfinished work. This does not activate a quorum runtime in Symcon.
+The complete Q01-Q48 scenarios and production qualification remain unexecuted.
+The existing V1 development implementation and earlier evidence below remain
+separate. Earlier A01-A07 fixes still need independent replacement-commit review.
+
