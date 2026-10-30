@@ -1,0 +1,96 @@
+<?php
+declare(strict_types=1);
+
+/** Small Symcon lifecycle simulator; no production instance is contacted. */
+$GLOBALS['instances'] = []; $GLOBALS['changed'] = []; $GLOBALS['locks'] = [];
+class IPSModule
+{
+    public int $InstanceID;
+    public array $properties = [], $values = [], $buffers = [], $form = [], $timers = [], $positions = [];
+    public int $status = 104;
+    public function __construct(int $id) { $this->InstanceID = $id; $GLOBALS['instances'][$id] = $this; }
+    public function Create(): void { }
+    public function ApplyChanges(): void { }
+    protected function RegisterPropertyBoolean($k, $v): void { $this->properties[$k] = $v; }
+    protected function RegisterPropertyInteger($k, $v): void { $this->properties[$k] = $v; }
+    protected function RegisterPropertyString($k, $v): void { $this->properties[$k] = $v; }
+    protected function ReadPropertyBoolean($k): bool { return $this->properties[$k]; }
+    protected function ReadPropertyInteger($k): int { return $this->properties[$k]; }
+    protected function ReadPropertyString($k): string { return $this->properties[$k]; }
+    protected function RegisterVariableBoolean($k, $n, $p, $position): void { $this->values[$k] = false; $this->positions[$k] = $position; }
+    protected function RegisterVariableString($k, $n, $p, $position): void { $this->values[$k] = ''; $this->positions[$k] = $position; }
+    protected function EnableAction($k): void { }
+    protected function RegisterTimer($k, $interval, $script): void { $this->timers[$k] = $interval; }
+    protected function RegisterMessage($sender, $message): void { }
+    protected function SetTimerInterval($k, $v): void { $this->timers[$k] = $v; }
+    protected function SetValue($k, $v): void { $this->values[$k] = $v; }
+    protected function GetValue($k) { return $this->values[$k]; }
+    protected function SetBuffer($k, $v): void { $this->buffers[$k] = $v; }
+    protected function GetBuffer($k): string { return $this->buffers[$k] ?? ''; }
+    protected function SetStatus($code): void { $this->status = $code; }
+    protected function UpdateFormField($k, $field, $value): void { $this->form[$k][$field] = $value; }
+}
+function IPS_GetKernelRunlevel(): int { return 10103; }
+function IPS_GetKernelDir(): string { return '/var/lib/symcon/'; }
+function IPS_HasChanges(int $id): bool { return $GLOBALS['changed'][$id] ?? false; }
+function IPS_InstanceExists(int $id): bool { return isset($GLOBALS['instances'][$id]); }
+function IPS_GetInstance(int $id): array
+{
+    return ['ModuleInfo' => ['ModuleID' => $GLOBALS['moduleIDs'][$id] ?? '']];
+}
+function IPS_GetInstanceListByModuleID(string $id): array { return array_keys(array_filter($GLOBALS['moduleIDs'], static fn($value) => $value === $id)); }
+function IPS_GetProperty(int $id, string $name) { return $GLOBALS['instances'][$id]->properties[$name]; }
+function IPS_SetProperty(int $id, string $name, $value): void { $GLOBALS['instances'][$id]->properties[$name] = $value; }
+function IPS_ApplyChanges(int $id): void { $GLOBALS['instances'][$id]->ApplyChanges(); }
+function IPS_SemaphoreEnter(string $key, int $ms): bool { if ($GLOBALS['locks'][$key] ?? false) return false; $GLOBALS['locks'][$key] = true; return true; }
+function IPS_SemaphoreLeave(string $key): void { $GLOBALS['locks'][$key] = false; }
+require_once __DIR__ . '/../../SecretsBackend/tests/Fixture.php';
+require_once __DIR__ . '/../module.php';
+require_once __DIR__ . '/../../SecretsBackend/module.php';
+
+class SecretsBackendTestModule extends SecretsBackend
+{
+    protected function initializeStorage(array $paths, array $settings): array
+    {
+        // The real module always uses WAL and enforces the patched version.
+        return SecretsBackendStore::initialize($paths['vault'], $paths['keys'], $settings['AdminOrigin'], $settings['FrontendInstanceID'], 'DELETE');
+    }
+}
+
+$GLOBALS['moduleIDs'] = [123 => '{8D6AE8F7-EA3A-4513-AA14-C3F9613B0E83}', 456 => '{52165EDD-B2C0-40EC-8A59-42A97319B6E2}', 700 => '{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}', 800 => '{922E5A10-A048-463D-A973-97B4BBD9096B}'];
+$frontend = new SecretsFrontend(123); $frontend->Create();
+$backend = new SecretsBackendTestModule(456); $backend->Create();
+$hooks = new IPSModule(700); $hooks->properties['Hooks'] = '[{"Hook":"/hook/existing","TargetID":999}]';
+$portal = new IPSModule(800); $portal->properties['AdditionalPages'] = '[{"Name":"Existing","Description":"Keep","Cluster":"guides","Hook":"/hook/existing","TargetID":999}]';
+$frontend->properties = array_replace($frontend->properties, ['BackendInstanceID' => 456, 'AdminOrigin' => 'https://secrets.example.test', 'Enabled' => true, 'PortalInstanceID' => 800]);
+$directory = sys_get_temp_dir() . '/symcon-setup-test-' . bin2hex(random_bytes(8)); mkdir($directory, 0700);
+$backend->properties = array_replace($backend->properties, ['FrontendInstanceID' => 123, 'AdminOrigin' => 'https://secrets.example.test', 'DataDirectory' => $directory . '/data', 'KeyDirectory' => $directory . '/keys', 'DebugEnabled' => true]);
+secExpect(isset($frontend->values['Debug'], $backend->values['Debug']) && $frontend->positions['Debug'] === 50, 'Debug child variables are absent.');
+secExpect($frontend->Refresh(), 'Frontend could not register its isolated hook.');
+$frontend->AddToPortal(); $frontend->AddToPortal();
+$entries = json_decode($portal->properties['AdditionalPages'], true); secExpect(count($entries) === 2 && $entries[0]['Name'] === 'Existing' && $entries[1]['Cluster'] === 'admin', 'Portal registration lost or duplicated entries.');
+$frontend->ImportConfiguration($frontend->ExportConfiguration()); secExpect($frontend->properties['Enabled'] === false, 'Frontend import enabled web access.');
+$backend->ImportConfiguration($backend->ExportConfiguration()); secExpect($backend->properties['Enabled'] === false, 'Backend import enabled access.');
+$code = $backend->BeginStorageSetup();
+secExpect(!str_contains($backend->ExportConfiguration(), $code) && !str_contains($backend->values['Debug'], $code) && !str_contains(json_encode($backend->buffers), $code), 'Setup credential leaked to stored properties, Debug or buffers.');
+$request = static fn($action, $data) => json_encode(['action' => $action, 'data' => $data, 'origin' => 'https://secrets.example.test', 'remote' => '127.0.0.1', 'cookie' => '', 'csrf' => '']);
+$bad = json_decode($backend->HandleFrontendRequest(123, $request('setupCreate', ['code' => $code, 'planId' => 'unreviewed'])), true); secExpect($bad['status'] === 403, 'Unreviewed storage creation accepted.');
+$preview = json_decode($backend->HandleFrontendRequest(123, $request('setupPreview', ['code' => $code])), true);
+secExpect($preview['status'] === 200 && $preview['data']['vaultDirectory'] === $directory . '/data', 'Storage preview failed.');
+$create = json_decode($backend->HandleFrontendRequest(123, $request('setupCreate', ['code' => $code, 'planId' => $preview['data']['planId']])), true);
+secExpect($create['status'] === 200 && is_file($directory . '/data/vault.sqlite') && is_file($directory . '/keys/master.key'), 'Wizard did not create both independent stores.');
+secExpect(($backend->buffers['Setup'] ?? '') === '' && !str_contains($backend->values['Debug'], $code), 'Setup credential was retained.');
+$again = json_decode($backend->HandleFrontendRequest(123, $request('setupCreate', ['code' => $code, 'planId' => $preview['data']['planId']])), true); secExpect($again['status'] === 403, 'Consumed setup credential was accepted.');
+$wrongFrontend = json_decode($backend->HandleFrontendRequest(999, $request('status', [])), true); secExpect($wrongFrontend['status'] === 403, 'Foreign frontend accepted.');
+$frontend->properties['Enabled'] = true;
+$settings = SecretsFrontendConfiguration::validate(array_replace(SecretsFrontendConfiguration::DEFAULTS, ['Enabled' => true, 'AdminOrigin' => 'https://secrets.example.test']));
+$server = ['REQUEST_METHOD' => 'POST', 'REQUEST_URI' => '/hook/secrets_frontend_123', 'QUERY_STRING' => '', 'HTTPS' => 'on', 'HTTP_HOST' => 'secrets.example.test', 'HTTP_ORIGIN' => 'https://evil.example.test', 'CONTENT_TYPE' => 'application/json'];
+$called = false;
+$result = SecretsFrontendHttp::response($settings, 123, $server, '/hook/secrets_frontend_123', '', '', '{"action":"status","data":{}}', static function () use (&$called) { $called = true; return []; });
+secExpect($result['status'] === 403 && !$called, 'Cross-origin API reached backend.');
+$server['HTTP_ORIGIN'] = 'https://secrets.example.test'; $server['HTTP_HOST'] = 'other.example.test';
+$result = SecretsFrontendHttp::response($settings, 123, $server, '/hook/secrets_frontend_123', '', '', '{}'); secExpect($result['status'] === 403, 'POST redirected with credentials.');
+$server['REQUEST_METHOD'] = 'GET'; $result = SecretsFrontendHttp::response($settings, 123, $server, '/hook/secrets_frontend_123', '', ''); secExpect($result['status'] === 303 && $result['headers']['Location'] === 'https://secrets.example.test/hook/secrets_frontend_123', 'Portal link did not redirect to the fixed admin origin.');
+$server['HTTP_HOST'] = 'secrets.example.test'; $result = SecretsFrontendHttp::response($settings, 123, $server, '/hook/secrets_frontend_123', '', '');
+secExpect($result['status'] === 200 && !str_contains($result['body'], '%%') && str_contains($result['headers']['Content-Security-Policy'], "connect-src 'self'"), 'HTML/CSP rendering failed.');
+echo "PASS module lifecycle, Debug, import/export, Portal registration, one-use volatile setup wizard, binding, HTTPS/origin and CSP checks\n";

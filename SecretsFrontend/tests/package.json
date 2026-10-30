@@ -1,0 +1,7 @@
+{
+  "name": "symcon-secrets-frontend-tests",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {"test": "node ui.cjs"},
+  "devDependencies": {"jsdom": "26.1.0"}
+}

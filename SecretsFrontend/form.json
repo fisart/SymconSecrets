@@ -1,0 +1,143 @@
+{
+  "elements": [
+    {
+      "type": "Label",
+      "caption": "Secrets Frontend \u2014 separate development system; existing SecretsManager is unchanged."
+    },
+    {
+      "type": "CheckBox",
+      "name": "Enabled",
+      "caption": "Enable frontend"
+    },
+    {
+      "type": "SelectInstance",
+      "name": "BackendInstanceID",
+      "caption": "Separate SecretsBackend instance",
+      "validModules": [
+        "{52165EDD-B2C0-40EC-8A59-42A97319B6E2}"
+      ]
+    },
+    {
+      "type": "ValidationTextBox",
+      "name": "AdminOrigin",
+      "caption": "Exact administrator HTTPS origin, e.g. https://secrets.example.com"
+    },
+    {
+      "type": "ValidationTextBox",
+      "name": "TrustedHTTPSProxyIPs",
+      "caption": "Trusted TLS proxy IPs as JSON array; otherwise []"
+    },
+    {
+      "type": "SelectInstance",
+      "name": "PortalInstanceID",
+      "caption": "Portal instance",
+      "validModules": [
+        "{922E5A10-A048-463D-A973-97B4BBD9096B}"
+      ]
+    },
+    {
+      "type": "SelectInstance",
+      "name": "DocumentationInstanceID",
+      "caption": "Dokumentation instance",
+      "validModules": [
+        "{FBEB2EF6-8D23-49D7-A256-6D0C8D973B24}"
+      ]
+    },
+    {
+      "type": "Select",
+      "name": "Theme",
+      "caption": "Appearance",
+      "options": [
+        {
+          "caption": "System",
+          "value": "system"
+        },
+        {
+          "caption": "Light",
+          "value": "light"
+        },
+        {
+          "caption": "Dark",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "type": "CheckBox",
+      "name": "DebugEnabled",
+      "caption": "Sanitized Debug variable below the instance"
+    },
+    {
+      "type": "ValidationTextBox",
+      "name": "FrontendURL",
+      "caption": "Open this URL in your browser",
+      "enabled": false
+    }
+  ],
+  "actions": [
+    {
+      "type": "Button",
+      "caption": "Validate configuration / register webhook",
+      "onClick": "SECF_Refresh($id);"
+    },
+    {
+      "type": "Button",
+      "caption": "Add to Portal \u2192 Administration",
+      "onClick": "SECF_AddToPortal($id);"
+    },
+    {
+      "type": "Label",
+      "caption": "Portal registration uses its existing AdditionalPages setting, preserves other entries and requires applied Portal settings. No Portal source code is changed."
+    },
+    {
+      "type": "ExpansionPanel",
+      "caption": "Configuration export / import (no vault, keys or sessions)",
+      "items": [
+        {
+          "type": "Button",
+          "caption": "Export configuration",
+          "onClick": "SECF_ExportConfiguration($id);"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "ExportJSON",
+          "caption": "Configuration export",
+          "multiline": true
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "ImportJSON",
+          "caption": "Configuration to import",
+          "multiline": true
+        },
+        {
+          "type": "Button",
+          "caption": "Import configuration \u2014 leave disabled",
+          "onClick": "SECF_ImportConfiguration($id, $ImportJSON);"
+        }
+      ]
+    },
+    {
+      "type": "Button",
+      "caption": "Clear Debug",
+      "onClick": "SECF_ClearDebug($id);"
+    }
+  ],
+  "status": [
+    {
+      "code": 102,
+      "icon": "active",
+      "caption": "Frontend registered; separate backend owns authorization"
+    },
+    {
+      "code": 104,
+      "icon": "inactive",
+      "caption": "Disabled"
+    },
+    {
+      "code": 200,
+      "icon": "error",
+      "caption": "Check frontend settings and backend binding"
+    }
+  ]
+}
