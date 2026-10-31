@@ -33,6 +33,7 @@ module and every original repository blob remain unchanged.
 | Private durable storage | 0700 directories, 0600 regular files, root-relative paths, cross-process locks, fsync-before-acknowledgement, immutable content and directory persistence |
 | Admission consumption journal | Pinned independent signer/context verification, component/boot/volume/generation/trust binding and durable monotonic consumption; a retry resolves history rather than creating another boot |
 | Recovery journal | Pre-pinned recovery signer, actual evidence-digest checks, mandatory independent fencing/approval callbacks, PREPARED/locked state, conditional durable trust-floor advancement and idempotent lost-ack recovery |
+| Human core lifecycle | Separate original-user identity, signed approved intent, PREPARING/READY/commit/abort, current two-copy evidence, atomic outcome/audit/pins/outbox and unknown cancellation; see `core/README.md` for the internal contract and unconnected authorization/wire gates |
 | Committed archive recovery | Current-reference/generation/deletion comparisons, complete opaque bundle/manifest/object coverage checks, durable pins, separately signed first-copy re-attestation without source receipts, classified inventory activation and per-bundle copy health |
 
 Tests use actual three-member etcd clusters in separately killable processes.
@@ -69,9 +70,10 @@ a negative test; `tests/response-bindings.json` contains its signed correction.
 2. Full user/session/credential validation, challenges, one-use approvals and
    hardware policy connected to quorum. `Guarded` tests final CAS fencing; it is
    not a complete passkey authorization endpoint.
-3. Core reservation/READY/commit/abort protocol, outbox-in-commit behavior,
-   retention/deletion/repair tickets and all late-retry interleavings. Existing
-   committed-copy recovery tests do not test new vault commits or authorize GC.
+3. The bounded internal human core lifecycle and outbox-in-commit behavior are
+   now implemented and exercised in `core`. Original-user wire mapping, actual
+   authorizer/packer connection, machine/security/counter operations, GC/repair
+   and full lifecycle qualification remain release gates; see `core/README.md`.
 4. Symcon V2 store/client lifecycle and the storage wizard, peer key envelopes,
    local-only owner proposals, replacement/restore tooling and Portal integration
    through the new runtime. Existing V1 frontend features are not V2 acceptance.
@@ -88,7 +90,8 @@ archive** and caps transaction operations. Complete paginated inventory support
 is unfinished; it never accepts a partial scan as complete. Operation evidence is
 retained without GC. The production capacity/retention gates remain blocked.
 An ACTIVE archive can honestly have missing/quarantined copies. New core writers
-must enforce derived two-copy health; those writers are not implemented here.
+enforce derived two-copy health in the new bounded human core component. It is
+not yet exposed through a network or Symcon route.
 
 Archive `Boot` now requires an opaque runtime capability created only after
 signed independent admission consumption and an explicit volume verifier. It
@@ -109,26 +112,14 @@ useful input to those scenarios, not a claim that their complete required result
 have been established. Baseline/hardware suites remain required. A SIGKILL is not
 a physical power-loss test, and test loopback plaintext is not production TLS.
 
-## Next development checkpoint
+## Human core lifecycle checkpoint
 
-Complete the original browser-user operation contract and core candidate
-lifecycle before connecting management routes to V2. Keep user-operation identity,
-owner-proposal identity and transport/coordinator attempts distinct; retain the
-exact original digest and one immutable terminal outcome. An authorization or
-reservation-control decision must not be relabeled as a browser mutation.
-
-The next component work must cover PREPARING/READY transitions, two current
-independent durable copies of predecessor and candidate, exact H/P/N/U/C checks,
-atomic head/user-outcome/reservation/pins/audit/outbox changes and the competing
-terminal abort. Test lost acknowledgements, delayed originals after UNKNOWN,
-commit-versus-abort, owner/coordinator revocation, stale archive generations and
-recovery after worker death. Retain all current adversarial regressions.
-
-The frozen wire profile stays unchanged until any concrete original-user schema
-compatibility issue has a reviewed resolution. No permissive codec exception or
-V1 fallback may stand in for that contract. Request another implementation review
-when this security-critical behavior is connected or completed. The separate
-full-system Q01-Q48 acceptance checkpoint remains mandatory before migration.
+`core/README.md` documents the new internal original-user contract, human
+reservation/READY/commit/abort implementation, candidate archive path, immutable
+outbox and failure tests. This adds security-critical behavior after the reviewed
+FR-01/FR-02 closure; that closure does not approve this new code. Request an
+implementation review of this checkpoint. The frozen profile and old modules
+remain unchanged. Authorizer, wire, runtime and full-system gates remain open.
 
 ## Reproduce
 

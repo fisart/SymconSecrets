@@ -56,3 +56,18 @@ core reservation/READY/commit/abort lifecycle described in the quorum README.
 The original-user lifecycle and complete V2 integration are still unfinished;
 synthetic codec tests do not close them. All Q01-Q48 remain NOT_RUN end to end.
 No production or migration approval, merge or deployment follows from this review.
+
+## Internal human core lifecycle implementation
+
+The next component checkpoint adds `SecretsBackend/quorum/core`: an independent
+signed original-user record, human secret-change reservation/READY/commit/abort,
+actual archive candidate verification/receipts, atomic original outcome/audit/
+retention pins/outbox and cancellation tombstones. Tests include paused revocation
+races, competing terminal transitions and actual process death. See its README
+for the exact contract, limits and evidence. This new behavior requires review.
+
+No V2 management route is enabled. Authorization facts are provisioned in tests;
+the real WebAuthn/hardware/diff producer, original-user wire binding, PHP packer,
+key envelopes, authenticated dispatch and full runtime remain gates. Frozen
+v1.2 wire bytes and the existing password module remain unchanged. All Q01-Q48
+remain NOT_RUN end to end; no production or migration approval is implied.

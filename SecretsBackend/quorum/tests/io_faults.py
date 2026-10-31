@@ -44,13 +44,13 @@ with tempfile.TemporaryDirectory(prefix="symcon-ir02-") as folder:
     overlay_source = folder / "directory.go"
     overlay_source.write_text(text)
     replacements = {str(source): str(overlay_source)}
-    for package in ["trust", "durable"]:
+    for package in ["trust", "durable", "core"]:
         replacements[str(root / package / "ir_io_overlay_test.go")] = str(root / "tests" / f"io_faults_{package}.go.txt")
     overlay = folder / "overlay.json"
     overlay.write_text(json.dumps({"Replace": replacements}))
     output = Path(args.output).resolve()
     with output.open("w") as log:
-        result = subprocess.run(["go", "test", "-race", "-count=1", "-timeout=3m", "-json", "-overlay", str(overlay), "-run", "^TestIR", "./trust", "./durable"], cwd=root, stdout=log, stderr=subprocess.STDOUT)
+        result = subprocess.run(["go", "test", "-race", "-count=1", "-timeout=3m", "-json", "-overlay", str(overlay), "-run", "^TestIR", "./trust", "./durable", "./core"], cwd=root, stdout=log, stderr=subprocess.STDOUT)
 assert source.read_bytes() == before, "Fault overlay changed tracked source"
 rows = [json.loads(line) for line in output.read_text().splitlines() if line.startswith("{")]
 failures = [row for row in rows if row.get("Action") == "fail"]

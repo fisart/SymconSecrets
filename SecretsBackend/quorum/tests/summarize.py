@@ -47,7 +47,7 @@ report = {
     "limitations": [
         "No Symcon quorum runtime or browser end-to-end execution",
         "No real hardware-key, TLS/proxy or independent host-guard qualification",
-        "No full candidate commit/abort/GC, sync, OAuth or migration acceptance",
+        "No end-to-end core lifecycle/authorization/GC, sync, OAuth or migration acceptance",
         "SIGKILL and fsync fault hooks do not emulate storage-controller power loss",
         "Authority host trust/admission and fencing remain deployment prerequisites",
     ],

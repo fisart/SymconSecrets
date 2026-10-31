@@ -102,3 +102,13 @@ limitations remain as scoped by the independent review.
 Only the new modules and their development workflow are changed. The original
 SecretsManager/password module, its form.json editor and all 33 original repository
 blobs remain unchanged.
+
+## Subsequent human core implementation
+
+The [human core lifecycle checkpoint](CORE_LIFECYCLE_CHECKPOINT.md) adds new code
+after the independently closed correction baseline. It implements the bounded
+internal original-user/reservation/READY/commit/abort component and actual archive
+candidate path. Its separate internal contract does not change or weaken the
+frozen wire profile. The earlier closure does not approve this new behavior;
+request a new implementation review. Real authorization/wire/runtime integration
+and all end-to-end release gates remain pending.

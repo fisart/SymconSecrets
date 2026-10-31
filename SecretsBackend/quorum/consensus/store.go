@@ -383,6 +383,17 @@ func (s *Store) Elect(ctx context.Context, a Attempt, g Guard, lease clientv3.Le
 	if e = json.Unmarshal(g.Node, &node); e != nil {
 		return Outcome{}, e
 	}
+	// The core lifecycle stores the binding with its enrolled key and scope
+	// metadata. Guard still compares the complete record at the election CAS.
+	if binding := protocol.Obj(node, "binding"); binding != nil {
+		if node["active"] != true {
+			return Outcome{}, errors.New("inactive enrolled node")
+		}
+		if e = p.Validate(binding, "NodeBinding", ""); e != nil {
+			return Outcome{}, e
+		}
+		node = binding
+	}
 	for _, k := range []string{"nodeId", "bootId", "nodeFence"} {
 		if c[k] != node[k] {
 			return Outcome{}, errors.New("election node binding")

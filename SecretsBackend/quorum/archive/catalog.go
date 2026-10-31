@@ -25,10 +25,11 @@ type Registration struct {
 	VolumeIdentityDigest string          `json:"volumeIdentityDigest"`
 }
 type Bundle struct {
-	Ref         protocol.Object `json:"ref"`
-	Descriptor  protocol.Object `json:"descriptor"`
-	IndexDigest string          `json:"indexDigest"`
-	Protected   bool            `json:"protected"`
+	ReservationID string          `json:"reservationId,omitempty"`
+	Ref           protocol.Object `json:"ref"`
+	Descriptor    protocol.Object `json:"descriptor"`
+	IndexDigest   string          `json:"indexDigest"`
+	Protected     bool            `json:"protected"`
 }
 type Inventory struct {
 	Ref        protocol.Object `json:"ref"`
@@ -372,44 +373,14 @@ func strconvCount(o protocol.Object, k string) (int, error) {
 // Health never trusts a cached REDUNDANT label. It derives health from one
 // linearizable snapshot of all current archive generations and bundle receipts.
 func (c *Catalog) Health(ctx context.Context, bundle string, archiveIDs []string) (string, error) {
-	if len(archiveIDs) != 3 {
-		return "", errors.New("three enrolled archives required")
-	}
-	keys := []string{bundleKey(bundle)}
-	for _, id := range archiveIDs {
-		keys = append(keys, archiveKey(id), receiptKey(id, bundle), deleteKey(id, bundle))
-	}
-	v, e := c.Store.Read(ctx, keys...)
+	_, count, e := c.CopySnapshot(ctx, bundle, archiveIDs)
 	if e != nil {
 		return "", e
 	}
-	var b Bundle
-	if e = decode(v.Values[bundleKey(bundle)].Bytes, &b); e != nil {
-		return "", e
-	}
-	domains := map[string]bool{}
-	for _, id := range archiveIDs {
-		var reg Registration
-		var receipt protocol.Object
-		if decode(v.Values[archiveKey(id)].Bytes, &reg) != nil || decode(v.Values[receiptKey(id, bundle)].Bytes, &receipt) != nil {
-			continue
-		}
-		if reg.State != "ACTIVE" || len(v.Values[deleteKey(id, bundle)].Bytes) > 0 || !protocol.Equal(receipt["archive"], reg.Binding) || !protocol.Equal(receipt["bundleRef"], b.Ref) || !protocol.Equal(receipt["bundle"], b.Descriptor) {
-			continue
-		}
-		pub, e := protocol.Unbase(reg.PublicKey, 32)
-		if e != nil {
-			continue
-		}
-		if c.Profile.Verify("archiveReattestation", protocol.Unsigned(receipt), protocol.Text(receipt, "signature"), ed25519.PublicKey(pub)) != nil {
-			continue
-		}
-		domains[protocol.Text(reg.Binding, "failureDomainId")] = true
-	}
-	if len(domains) >= 2 {
+	if count >= 2 {
 		return "REDUNDANT", nil
 	}
-	if len(domains) == 1 {
+	if count == 1 {
 		return "DEGRADED", nil
 	}
 	return "UNAVAILABLE", nil
