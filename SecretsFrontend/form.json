@@ -82,7 +82,9 @@
     {
       "type": "ValidationTextBox",
       "name": "SetupAddress",
-      "caption": "HTTPS address you use for Symcon (paste the browser address)"
+      "caption": "Your Symcon HTTPS address — complete wizard URL appears below",
+      "onChange": "SECF_PreviewWizardURL($id, $SetupAddress);",
+      "width": "100%"
     },
     {
       "type": "ExpansionPanel",
@@ -101,23 +103,30 @@
       "onClick": "SECF_BeginGuidedSetup($id, $SetupAddress, $SetupProxyIPs);"
     },
     {
+      "type": "Label",
+      "caption": "Click the complete generated URL to open the HTML wizard, or select and copy the URL field below."
+    },
+    {
       "type": "Button",
       "name": "OpenWizard",
       "caption": "Open HTML wizard",
       "link": true,
-      "onClick": "echo SECF_GetWizardURL($id);",
-      "enabled": false
+      "onClick": "echo SECF_GetSetupWizardURL($id, $SetupAddress);",
+      "enabled": false,
+      "width": "100%"
     },
     {
       "type": "Button",
       "caption": "Show URL to copy",
       "link": false,
-      "onClick": "echo SECF_GetWizardURL($id);"
+      "onClick": "echo SECF_GetSetupWizardURL($id, $SetupAddress);",
+      "name": "CopyWizardURL",
+      "enabled": false
     },
     {
       "type": "ValidationTextBox",
       "name": "WizardURL",
-      "caption": "Complete HTML wizard URL — select and copy",
+      "caption": "Automatically generated HTML wizard URL — select and copy",
       "enabled": true,
       "width": "100%"
     },

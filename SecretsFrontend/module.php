@@ -58,12 +58,26 @@ class SecretsFrontend extends IPSModule
         if ($origin === '') throw new RuntimeException('Start HTML setup with the trusted Symcon HTTPS address first.');
         return $origin . $this->path();
     }
+    /** Form-only preview: combine the entered address with this instance's own ID. */
+    public function GetSetupWizardURL(string $Address): string
+    {
+        return SecretsFrontendCommissioning::address($Address) . $this->path();
+    }
+    public function PreviewWizardURL(string $Address): void
+    {
+        try { $url = $this->GetSetupWizardURL($Address); }
+        catch (InvalidArgumentException $exception) { $url = ''; }
+        $this->UpdateFormField('WizardURL', 'value', $url);
+        $this->UpdateFormField('OpenWizard', 'caption', $url !== '' ? $url : 'Open HTML wizard');
+        foreach (['OpenWizard', 'CopyWizardURL'] as $field) $this->UpdateFormField($field, 'enabled', $url !== '');
+    }
     private function updateWizardLinks(): void
     {
         $url = $this->GetWizardURL();
         $this->SetValue('FrontendURL', $url);
+        $this->UpdateFormField('OpenWizard', 'caption', $url);
         foreach (['WizardURL', 'FrontendURL'] as $field) $this->UpdateFormField($field, 'value', $url);
-        $this->UpdateFormField('OpenWizard', 'enabled', $this->ReadPropertyBoolean('Enabled'));
+        foreach (['OpenWizard', 'CopyWizardURL'] as $field) $this->UpdateFormField($field, 'enabled', true);
     }
     private function backend(): int
     {
@@ -191,7 +205,8 @@ class SecretsFrontend extends IPSModule
         catch (Throwable $exception) { $origin = ''; }
         $fill = function (array &$items) use (&$fill, $origin): void { foreach ($items as &$element) {
             if (in_array($element['name'] ?? '', ['FrontendURL', 'WizardURL'], true)) $element['value'] = $origin === '' ? '' : $origin . $this->path();
-            if (($element['name'] ?? '') === 'OpenWizard') $element['enabled'] = $origin !== '' && $this->ReadPropertyBoolean('Enabled');
+            if (in_array($element['name'] ?? '', ['OpenWizard', 'CopyWizardURL'], true)) $element['enabled'] = $origin !== '';
+            if (($element['name'] ?? '') === 'OpenWizard' && $origin !== '') $element['caption'] = $origin . $this->path();
             if (($element['name'] ?? '') === 'SetupAddress') $element['value'] = $origin;
             if (($element['name'] ?? '') === 'SetupProxyIPs') { try { $element['value'] = implode(', ', $this->settings()['TrustedHTTPSProxyIPs']); } catch (Throwable $ignored) {} }
             if (isset($element['items'])) $fill($element['items']);

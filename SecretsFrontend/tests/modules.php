@@ -128,7 +128,7 @@ $hookInstance->properties['Enabled'] = true;
 $form = json_decode($hookInstance->GetConfigurationForm(), true, 32, JSON_THROW_ON_ERROR);
 $fields = []; $collectFields = static function(array $items) use (&$collectFields, &$fields): void { foreach ($items as $item) { if (isset($item['name'])) $fields[$item['name']] = $item; if (isset($item['items'])) $collectFields($item['items']); } };
 $collectFields($form['actions']);
-secExpect($fields['OpenWizard']['type'] === 'Button' && $fields['OpenWizard']['link'] === true && $fields['OpenWizard']['enabled'] && $fields['OpenWizard']['onClick'] === 'echo SECF_GetWizardURL($id);', 'Wizard cannot be opened with the supported Symcon link button.');
+secExpect($fields['OpenWizard']['caption'] === $expectedWizard && $fields['OpenWizard']['type'] === 'Button' && $fields['OpenWizard']['link'] === true && $fields['OpenWizard']['enabled'] && $fields['OpenWizard']['onClick'] === 'echo SECF_GetSetupWizardURL($id, $SetupAddress);', 'Wizard cannot be opened with the supported Symcon link button.');
 secExpect($fields['WizardURL']['value'] === $expectedWizard && $fields['WizardURL']['enabled'] && $fields['FrontendURL']['value'] === $expectedWizard && $fields['FrontendURL']['enabled'], 'Full URLs cannot be selected/copied from actions.');
 secExpect(!array_key_exists('WizardURL', $hookInstance->properties) && !array_key_exists('SetupAccessCode', $hookInstance->properties), 'Display-only URL or temporary code became a stored property.');
 $hookInstance->properties['Enabled'] = false;
@@ -139,6 +139,20 @@ $hookInstance->properties['AdminOrigin'] = '';
 secReject(static fn() => $hookInstance->GetWizardURL(), 'Wizard invented an origin.');
 $blankForm = json_decode($hookInstance->GetConfigurationForm(), true, 32, JSON_THROW_ON_ERROR); $collectFields($blankForm['actions']);
 secExpect($fields['WizardURL']['value'] === '' && !$fields['OpenWizard']['enabled'], 'Unconfigured form exposed a misleading wizard URL.');
+$unconfigured = new SecretsFrontend(54321); $unconfigured->Create();
+$beforePreview = [$unconfigured->properties, $unconfigured->attributes];
+$unconfigured->PreviewWizardURL('https://test.hermitage.ap-fischer.de:46910/console/');
+$autoURL = 'https://test.hermitage.ap-fischer.de:46910/hook/secrets_frontend_54321';
+secExpect($unconfigured->form['OpenWizard']['caption'] === $autoURL && $unconfigured->form['WizardURL']['value'] === $autoURL && $unconfigured->form['OpenWizard']['enabled'] && $unconfigured->form['CopyWizardURL']['enabled'], 'Entering the system address did not automatically fill the complete form URL before setup.');
+secExpect($beforePreview === [$unconfigured->properties, $unconfigured->attributes], 'Previewing a URL altered instance configuration or setup authority.');
+secExpect($unconfigured->GetSetupWizardURL('https://test.hermitage.ap-fischer.de:46910/') === $autoURL, 'Open/copy action did not use the entered address and actual instance ID.');
+$previewForm = json_decode($unconfigured->GetConfigurationForm(), true, 32, JSON_THROW_ON_ERROR); $collectFields($previewForm['actions']);
+secExpect($fields['SetupAddress']['onChange'] === 'SECF_PreviewWizardURL($id, $SetupAddress);' && $fields['CopyWizardURL']['link'] === false, 'The address field lacks its automatic URL update event or copy action.');
+foreach (['', 'http://test.hermitage.ap-fischer.de:46910', 'https://user:password@example.test', 'javascript:alert(1)'] as $invalidAddress) {
+    $unconfigured->PreviewWizardURL($invalidAddress);
+    secExpect($unconfigured->form['WizardURL']['value'] === '' && !$unconfigured->form['OpenWizard']['enabled'] && !$unconfigured->form['CopyWizardURL']['enabled'], 'Invalid or cleared address retained a stale form URL.');
+}
+echo "PASS address-field change automatically generates the complete wizard URL without setup, stored changes, manual instance IDs or scripts\n";
 echo "PASS Symcon-generated webhook subclass, supported open-link button, copyable nonpersistent URL/code fields and custom HTTPS port\n";
 echo "PASS module lifecycle, Debug, import/export, Portal registration, one-use volatile setup wizard, binding, HTTPS/origin and CSP checks\n";
 
