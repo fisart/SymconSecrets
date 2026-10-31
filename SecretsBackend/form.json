@@ -2,7 +2,7 @@
   "elements": [
     {
       "type": "Label",
-      "caption": "Configure this new backend from SecretsFrontend → Start HTML setup. The wizard pairs both instances, suggests storage paths and checks requirements. No manual settings are required here for initial configuration."
+      "caption": "Configure this new backend from SecretsFrontend → Start HTML setup. The wizard saves instance references and storage settings only. The Symcon-native backend is not implemented yet; no vault is activated. Native setup requires no added database or anchor service."
     },
     {
       "type": "ValidationTextBox",
@@ -12,11 +12,11 @@
     },
     {
       "type": "ExpansionPanel",
-      "caption": "Advanced settings / independent recovery",
+      "caption": "Advanced: earlier V1 settings / independent recovery",
       "items": [
         {
           "type": "Label",
-          "caption": "Separate Secrets Backend — development only; does not read or change the old vault. Requires PHP 8.2+, sodium, OpenSSL, curl, PDO SQLite and SQLite 3.51.3+ for WAL."
+          "caption": "Earlier V1 prototype only: PHP 8.2+, sodium, OpenSSL, curl, PDO SQLite and SQLite 3.51.3+ for WAL. These historical dependencies do not apply to native setup. The existing SecretsManager remains unchanged."
         },
         {
           "type": "Label",
@@ -106,7 +106,7 @@
   "actions": [
     {
       "type": "ExpansionPanel",
-      "caption": "Advanced V1 development tools · not the quorum setup",
+      "caption": "Advanced: earlier V1 development tools · not native setup",
       "items": [
         {
           "type": "ExpansionPanel",
@@ -245,7 +245,12 @@
     {
       "code": 200,
       "icon": "error",
-      "caption": "Backend locked; check storage, SQLite and anchor"
+      "caption": "Backend unavailable; see the Backend status variable for details"
+    },
+    {
+      "code": 201,
+      "icon": "inactive",
+      "caption": "Symcon-native backend not implemented yet; vault operations disabled"
     }
   ]
 }

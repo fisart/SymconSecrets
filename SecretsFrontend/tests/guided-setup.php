@@ -59,7 +59,7 @@ secExpect(!str_contains($applied['body'],$code)&&!str_contains(json_encode($resu
 secExpect($invoke('guidedApply',['code'=>$code,'planId'=>$preview['planId']])['status']===403,'Consumed authorization replayed.');
 secExpect(json_decode($invoke('status',[])['body'],true)['configured']===true,'Saved configuration progress was lost.');
 secExpect($invoke('authOptions',[])['status']===503,'Guided V2 mode fell back to the old anchor application.');
-secRejectReason(static fn()=>$target->BeginStorageSetup(),'Quorum runtime connection pending');
+secRejectReason(static fn()=>$target->BeginStorageSetup(),'Symcon-native backend not implemented yet');
 $code=$guided->BeginGuidedSetup('https://wizard.example.test','');
 secExpect($invoke('guidedCancel',['code'=>$code])['status']===200&&$invoke('guidedDiscover',['code'=>$code])['status']===403,'Server cancellation failed.');
 secExpect($guided->form['SetupAccessCode']['value'] === '', 'Cancelled code remained displayed in the form.');
@@ -124,4 +124,5 @@ echo "PASS deployment plan exact review, native v2 export/import, preserved plac
 secExpect([$existingManager->properties, $existingManager->values, $existingManager->attributes] === $existingManagerBefore, 'Commissioning altered the existing SecretsManager portal, vault or settings.');
 echo "PASS existing SecretsManager cannot be selected as a new backend; portal enablement, encrypted vault and settings are preserved throughout commissioning\n";
 require __DIR__ . '/storage-paths-guided.php';
+require __DIR__ . '/backend-native-status.php';
 
