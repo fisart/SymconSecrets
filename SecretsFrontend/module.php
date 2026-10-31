@@ -51,6 +51,20 @@ class SecretsFrontend extends IPSModule
         return SecretsFrontendConfiguration::validate($settings);
     }
     private function path(): string { return '/hook/secrets_frontend_' . $this->InstanceID; }
+    /** Applied HTTPS origin and this actual instance ID; no code or session in the URL. */
+    public function GetWizardURL(): string
+    {
+        $origin = SecretsFrontendConfiguration::origin($this->ReadPropertyString('AdminOrigin'));
+        if ($origin === '') throw new RuntimeException('Start HTML setup with the trusted Symcon HTTPS address first.');
+        return $origin . $this->path();
+    }
+    private function updateWizardLinks(): void
+    {
+        $url = $this->GetWizardURL();
+        $this->SetValue('FrontendURL', $url);
+        foreach (['WizardURL', 'FrontendURL'] as $field) $this->UpdateFormField($field, 'value', $url);
+        $this->UpdateFormField('OpenWizard', 'enabled', $this->ReadPropertyBoolean('Enabled'));
+    }
     private function backend(): int
     {
         $id = $this->ReadPropertyInteger('BackendInstanceID');
@@ -66,7 +80,7 @@ class SecretsFrontend extends IPSModule
             if ($settings['Enabled'] && $settings['AdminOrigin'] === '') throw new RuntimeException('Configure an exact administrator HTTPS origin.');
             if ($settings['Enabled'] && !$this->guidedActive() && !$this->ReadAttributeBoolean('GuidedV2Only')) $this->backend();
             $this->syncHook($settings['Enabled']);
-            $this->SetValue('FrontendURL', $settings['AdminOrigin'] . $this->path());
+            if ($settings['AdminOrigin'] !== '') $this->updateWizardLinks();
             $this->SetValue('Status', !$settings['Enabled'] ? 'Disabled.' : ($this->ReadAttributeBoolean('GuidedV2Only') ? 'HTML setup available. Quorum connection pending; vault operations disabled.' : 'Development frontend available. Backend authorizes every administrative operation.'));
             $this->SetValue('IntegrationStatus', 'Portal: use Add to Portal below. Documentation: bundled manual and catalog entry. Central backup: registration review required; exports contain configuration only.');
             $this->SetStatus($settings['Enabled'] ? 102 : 104); $this->debug('configuration-checked'); return true;
@@ -124,7 +138,8 @@ class SecretsFrontend extends IPSModule
         $id = $this->ReadPropertyInteger('DocumentationInstanceID');
         return $id > 0 && IPS_InstanceExists($id) && strtoupper(IPS_GetInstance($id)['ModuleInfo']['ModuleID'] ?? '') === self::DOCS && IPS_GetProperty($id, 'Enabled') === true ? '/hook/alarm_documentation_' . $id : '';
     }
-    public function ProcessHookData(): void
+    // Symcon generates an untyped HookInstance override; keep this entry point untyped.
+    public function ProcessHookData()
     {
         try {
             $settings = $this->settings(); $input = '';
@@ -175,11 +190,13 @@ class SecretsFrontend extends IPSModule
         try { $origin = SecretsFrontendConfiguration::origin($this->ReadPropertyString('AdminOrigin')); }
         catch (Throwable $exception) { $origin = ''; }
         $fill = function (array &$items) use (&$fill, $origin): void { foreach ($items as &$element) {
-            if (in_array($element['name'] ?? '', ['FrontendURL', 'WizardURL'], true)) $element['value'] = $origin . $this->path();
+            if (in_array($element['name'] ?? '', ['FrontendURL', 'WizardURL'], true)) $element['value'] = $origin === '' ? '' : $origin . $this->path();
+            if (($element['name'] ?? '') === 'OpenWizard') $element['enabled'] = $origin !== '' && $this->ReadPropertyBoolean('Enabled');
             if (($element['name'] ?? '') === 'SetupAddress') $element['value'] = $origin;
             if (($element['name'] ?? '') === 'SetupProxyIPs') { try { $element['value'] = implode(', ', $this->settings()['TrustedHTTPSProxyIPs']); } catch (Throwable $ignored) {} }
             if (isset($element['items'])) $fill($element['items']);
-        } }; $fill($form['elements']);
+        } }; $fill($form['elements']); $fill($form['actions']);
         return SecretsFrontendConfiguration::encode($form);
     }
 }
+

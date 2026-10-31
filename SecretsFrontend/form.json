@@ -1,52 +1,6 @@
 {
   "elements": [
     {
-      "type": "Label",
-      "caption": "Start here: the HTML wizard discovers the instances, suggests private folders and applies the reviewed settings. The V2 quorum runtime is not connected yet; no vault is activated."
-    },
-    {
-      "type": "ValidationTextBox",
-      "name": "SetupAddress",
-      "caption": "HTTPS address you use for Symcon (paste the browser address)"
-    },
-    {
-      "type": "ExpansionPanel",
-      "caption": "Advanced connection · trusted TLS proxy, if needed",
-      "items": [
-        {
-          "type": "ValidationTextBox",
-          "name": "SetupProxyIPs",
-          "caption": "Only if TLS ends at a reverse proxy: trusted proxy IPs, comma separated"
-        }
-      ]
-    },
-    {
-      "type": "Button",
-      "caption": "Start HTML setup · authorize for 10 minutes",
-      "onClick": "SECF_BeginGuidedSetup($id, $SetupAddress, $SetupProxyIPs);"
-    },
-    {
-      "type": "ValidationTextBox",
-      "name": "WizardURL",
-      "caption": "Open the wizard at this address",
-      "enabled": false
-    },
-    {
-      "type": "ValidationTextBox",
-      "name": "SetupAccessCode",
-      "caption": "Copy this one-use setup code into the HTML page",
-      "enabled": false
-    },
-    {
-      "type": "Button",
-      "caption": "Cancel setup authorization",
-      "onClick": "SECF_CancelGuidedSetup($id);"
-    },
-    {
-      "type": "Label",
-      "caption": "One console authorization protects a new empty installation. Origin and proxy trust are never guessed from browser headers. The remaining settings are in the HTML wizard."
-    },
-    {
       "type": "ExpansionPanel",
       "caption": "Advanced settings / existing development installation",
       "items": [
@@ -116,17 +70,80 @@
           "type": "CheckBox",
           "name": "DebugEnabled",
           "caption": "Sanitized Debug variable below the instance"
-        },
-        {
-          "type": "ValidationTextBox",
-          "name": "FrontendURL",
-          "caption": "Open this URL in your browser",
-          "enabled": false
         }
       ]
     }
   ],
   "actions": [
+    {
+      "type": "Label",
+      "caption": "Start here: the HTML wizard discovers the instances, suggests private folders and applies the reviewed settings. The V2 quorum runtime is not connected yet; no vault is activated."
+    },
+    {
+      "type": "ValidationTextBox",
+      "name": "SetupAddress",
+      "caption": "HTTPS address you use for Symcon (paste the browser address)"
+    },
+    {
+      "type": "ExpansionPanel",
+      "caption": "Advanced connection · trusted TLS proxy, if needed",
+      "items": [
+        {
+          "type": "ValidationTextBox",
+          "name": "SetupProxyIPs",
+          "caption": "Only if TLS ends at a reverse proxy: trusted proxy IPs, comma separated"
+        }
+      ]
+    },
+    {
+      "type": "Button",
+      "caption": "Start HTML setup · authorize for 10 minutes",
+      "onClick": "SECF_BeginGuidedSetup($id, $SetupAddress, $SetupProxyIPs);"
+    },
+    {
+      "type": "Button",
+      "name": "OpenWizard",
+      "caption": "Open HTML wizard",
+      "link": true,
+      "onClick": "echo SECF_GetWizardURL($id);",
+      "enabled": false
+    },
+    {
+      "type": "Button",
+      "caption": "Show URL to copy",
+      "link": false,
+      "onClick": "echo SECF_GetWizardURL($id);"
+    },
+    {
+      "type": "ValidationTextBox",
+      "name": "WizardURL",
+      "caption": "Complete HTML wizard URL — select and copy",
+      "enabled": true,
+      "width": "100%"
+    },
+    {
+      "type": "ValidationTextBox",
+      "name": "SetupAccessCode",
+      "caption": "Copy this one-use setup code into the HTML page",
+      "enabled": true,
+      "width": "100%"
+    },
+    {
+      "type": "Button",
+      "caption": "Cancel setup authorization",
+      "onClick": "SECF_CancelGuidedSetup($id);"
+    },
+    {
+      "type": "Label",
+      "caption": "One console authorization protects a new empty installation. Origin and proxy trust are never guessed from browser headers. The remaining settings are in the HTML wizard."
+    },
+    {
+      "type": "ValidationTextBox",
+      "name": "FrontendURL",
+      "caption": "Administration URL — select and copy",
+      "enabled": true,
+      "width": "100%"
+    },
     {
       "type": "Button",
       "caption": "Validate configuration / register webhook",

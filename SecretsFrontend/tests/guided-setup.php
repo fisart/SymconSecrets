@@ -63,7 +63,7 @@ $result=$direct('guidedApply',['code'=>$code2,'planId'=>$plan['planId']]);
 secExpect($result['status']===403&&!$failedBackend->properties['Enabled']&&$interrupted->attributes['GuidedV2Only']&&$failedBackend->attributes['GuidedV2Only'],'Partial apply escaped disabled quorum mode.');
 secExpect($direct('guidedApply',['code'=>$code2,'planId'=>$plan['planId']])['status']===403,'Uncertain apply was replayed.');
 secExpect(!file_exists($choice2['vaultDirectory'])&&!file_exists($choice2['keyDirectory']),'Partial apply created storage.');
-$form=json_decode($interrupted->GetConfigurationForm(),true);secExpect($form['elements'][1]['value']==='https://wizard.example.test','Saved origin was not offered as the default.');
+$form=json_decode($interrupted->GetConfigurationForm(),true);secExpect(array_values(array_filter($form['actions'],static fn($field)=>($field['name']??'')==='SetupAddress'))[0]['value']==='https://wizard.example.test','Saved origin was not offered as the default.');
 $target->attributes['ProvisioningSealed']=true;$form=json_decode($target->GetConfigurationForm(),true);$fields=[];$walk=static function($items)use(&$walk,&$fields){foreach($items as $item){if(isset($item['name']))$fields[$item['name']]=$item;if(isset($item['items']))$walk($item['items']);}};$walk($form['elements']);secExpect(($fields['DataDirectory']['enabled']??true)===false,'Collapsed form lost pinned-field protection.');
 echo "PASS partial-apply one-use recovery, disabled V2-only state, saved defaults and nested pinned-field protection\n";
 
@@ -98,3 +98,4 @@ secExpect(!$restoredDraft->properties['Enabled']&&$restoredDraft->attributes['Gu
 secExpect(json_decode($restoredDraft->attributes['DeploymentDraft'],true)===$draftChoice['deployment'],'Draft choices did not survive import.');
 $decoded['deploymentDraft']['activationAllowed']=true;secReject(static fn()=>$restoredDraft->ImportConfiguration(json_encode($decoded)),'Draft import accepted activation authority.');
 echo "PASS deployment plan exact review, native v2 export/import, preserved placement, disabled V2-only restore and no authority creation\n";
+
