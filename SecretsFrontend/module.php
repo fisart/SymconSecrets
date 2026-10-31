@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/Http.php';
+require_once __DIR__ . '/Transport.php';
 require_once __DIR__ . '/GuidedSetup.php';
 require_once __DIR__ . '/../libs/SystemPortalNavigation.php';
 
@@ -164,7 +165,7 @@ class SecretsFrontend extends IPSModule
             $portal = AFSystemPortalNavigationV1::path(0, $settings['PortalInstanceID']);
             $reply = SecretsFrontendHttp::response($settings, $this->InstanceID, $_SERVER, $this->path(), $portal, $this->documentationPath(), $input, function (array $request): array {
                 return $this->gateway($request);
-            }, ['guidedV2Only' => $this->ReadAttributeBoolean('GuidedV2Only')]);
+            }, ['guidedV2Only' => $this->ReadAttributeBoolean('GuidedV2Only'), 'nativeTLS' => SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'] ?? [], $_SERVER)]);
             http_response_code($reply['status']); foreach ($reply['headers'] as $name => $value) header($name . ': ' . $value); echo $reply['body'];
         } catch (Throwable $exception) { http_response_code(503); header('Cache-Control: no-store'); echo 'Frontend configuration is unavailable.'; $this->debug('request-refused'); }
     }

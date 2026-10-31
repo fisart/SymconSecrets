@@ -26,8 +26,10 @@ final class SecretsFrontendHttp
         if ($origin === '') return $reply(503, 'Configure the administrator HTTPS origin in the instance.');
         $proxy = in_array($server['REMOTE_ADDR'] ?? '', $settings['TrustedHTTPSProxyIPs'], true);
         $directTLS = in_array(strtolower((string)($server['HTTPS'] ?? '')), ['on', '1'], true);
+        // Only the module supplies this flag, using the engine's calling WebServer.
+        $nativeTLS = ($ui['nativeTLS'] ?? false) === true;
         $forwardedTLS = $proxy && strtolower((string)($server['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https';
-        if (!$directTLS && !$forwardedTLS) return $reply(403, 'HTTPS is required.');
+        if (!$directTLS && !$nativeTLS && !$forwardedTLS) return $reply(403, 'HTTPS is required. Use an active SSL-enabled Symcon WebServer. If a reverse proxy terminates TLS, configure its exact IP in the frontend trusted HTTPS proxy settings.');
         $host = $proxy && isset($server['HTTP_X_FORWARDED_HOST']) ? $server['HTTP_X_FORWARDED_HOST'] : ($server['HTTP_HOST'] ?? '');
         try { $requestOrigin = SecretsFrontendConfiguration::origin('https://' . $host); }
         catch (Throwable $exception) { return $reply(403, 'Invalid request host.'); }
