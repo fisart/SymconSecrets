@@ -203,11 +203,14 @@ func (c *Controller) candidateCopies(ctx context.Context, r Reservation, v conse
 		}
 		var receipt protocol.Object
 		if e = load(v, key, &receipt); e != nil {
-			return v, nil, e
+			continue // Retain unusable evidence as history; it is not a live copy.
+		}
+		if protocol.Text(protocol.Obj(receipt, "archive"), "archiveId") != aid {
+			continue
 		}
 		domain, err := c.verifyReceipt(v, r, receipt)
 		if err != nil {
-			return v, nil, err
+			continue
 		}
 		domains[domain] = true
 		refs = append(refs, Ref(aid, "1", receipt))
@@ -219,6 +222,31 @@ func (c *Controller) candidateCopies(ctx context.Context, r Reservation, v conse
 		return v, nil, errors.New("candidate requires two current independent copies")
 	}
 	return v, refs, nil
+}
+
+// A READY candidate may lose an optional copy. Commitment can use a surviving
+// subset of the exact READY evidence, never a replacement or newly added receipt.
+func survivingReadyCopies(ready any, current []any) bool {
+	approved, ok := ready.([]any)
+	if !ok || len(current) < 2 {
+		return false
+	}
+	refs := map[string]any{}
+	for _, value := range approved {
+		ref, ok := value.(map[string]any)
+		if !ok || protocol.Text(ref, "id") == "" || refs[protocol.Text(ref, "id")] != nil {
+			return false
+		}
+		refs[protocol.Text(ref, "id")] = value
+	}
+	for _, value := range current {
+		ref, ok := value.(map[string]any)
+		if !ok || !protocol.Equal(refs[protocol.Text(ref, "id")], value) {
+			return false
+		}
+		delete(refs, protocol.Text(ref, "id"))
+	}
+	return true
 }
 func (c *Controller) Ready(ctx context.Context, commandID, id string, ref, actor protocol.Object) (Reservation, error) {
 	var inputErr error
@@ -283,7 +311,8 @@ func (c *Controller) Commit(ctx context.Context, commandID, id string, ref, acto
 	if e != nil {
 		return out, e
 	}
-	if !protocol.Equal(refs, r.Record["receiptRefs"]) {
+	readyRefs := r.Record["receiptRefs"]
+	if !survivingReadyCopies(readyRefs, refs) {
 		return out, consensus.ErrConflict
 	}
 	catalog, _ := archive.NewCatalog(c.Store)
@@ -334,6 +363,7 @@ func (c *Controller) Commit(ctx context.Context, commandID, id string, ref, acto
 	}
 	r.Record["state"] = "COMMITTED"
 	r.Record["version"] = version
+	r.Record["receiptRefs"] = refs
 	out = UserOutcome{Version: "1", UserOperationID: i.UserOperationID, IntentDigest: Digest(i), Result: "COMMITTED", Head: i.CandidateHead, Reason: "NONE"}
 	b := i.Bundle
 	b.Protected = true
@@ -346,8 +376,12 @@ func (c *Controller) Commit(ctx context.Context, commandID, id string, ref, acto
 		return out, e
 	}
 	index := Ref(protocol.Text(oldIndex, "id"), indexVersion, map[string]any{"previous": oldIndex, "retained": oldPin, "current": b.Ref})
-	audit := map[string]any{"original": object(out), "reviewRef": r.Record["auditRef"], "approvalRef": r.Record["approvalRef"], "coordinator": r.Record["coordinator"], "scope": i.Scope, "changeClass": i.ChangeClass}
+	audit := map[string]any{"original": object(out), "reviewRef": r.Record["auditRef"], "approvalRef": r.Record["approvalRef"], "coordinator": r.Record["coordinator"], "scope": i.Scope, "changeClass": i.ChangeClass, "readyReceiptRefs": readyRefs, "committedReceiptRefs": refs}
 	writes := []consensus.Write{{Key: "head", Bytes: consensus.JSON(i.CandidateHead)}, {Key: reservationKey(id), Bytes: consensus.JSON(r)}, {Key: outcomeKey(i.UserOperationID), Bytes: consensus.JSON(out)}, {Key: pendingKey(), Delete: true}, {Key: "core/revision", Bytes: []byte(protocol.Text(i.CandidateHead, "index"))}, {Key: "core/head-pin", Bytes: consensus.JSON(b.Ref)}, {Key: scopeKey(i), Bytes: consensus.JSON(nextScope)}, {Key: "bundles/" + id, Bytes: consensus.JSON(b)}, {Key: "reference-index", Bytes: consensus.JSON(index)}, {Key: auditKey(id), Bytes: consensus.JSON(audit)}}
+	selected := map[string]bool{}
+	for _, ref := range refs {
+		selected[protocol.Text(ref.(map[string]any), "id")] = true
+	}
 	for _, aid := range m.Archives {
 		key := "inventory/" + aid
 		var inv archive.Inventory
@@ -366,7 +400,7 @@ func (c *Controller) Commit(ctx context.Context, commandID, id string, ref, acto
 		inv.Ref = Ref(protocol.Text(inv.Ref, "id"), n, map[string]any{"bundles": toAny(inv.BundleIDs), "archives": toAny(inv.ArchiveIDs)})
 		writes = append(writes, consensus.Write{Key: key, Bytes: consensus.JSON(inv)})
 		receipt := v.Values[candidateReceiptKey(id, aid)].Bytes
-		if len(receipt) > 0 {
+		if selected[aid] {
 			writes = append(writes, consensus.Write{Key: "receipts/" + aid + "/" + id, Bytes: receipt})
 		}
 	}

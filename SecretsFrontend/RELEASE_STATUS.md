@@ -1,5 +1,25 @@
 # Development status and release gates
 
+## Current direction and independent audit of 154d575
+
+The user requires a Symcon-native replacement with standalone operation and
+optional two/three/larger sets, without added runtime services or extensions.
+[NATIVE_PROTOCOL.md](NATIVE_PROTOCOL.md) specifies the proposed persistence,
+recovery and synchronization contract. It is **not implemented**. The external
+Go/Python/SQLite components described below are retained development history,
+not prerequisites or permitted fallbacks for the replacement.
+
+The independent audit of `154d575` reproduced storage-path aliasing and a third
+archive restart blocking two surviving valid copies. Source corrections and
+regressions are recorded in [AUDIT_CORRECTIONS_154d575.md](AUDIT_CORRECTIONS_154d575.md);
+independent correction review is pending. Authorized plaintext requests remain
+possible at the current adapter, so actual TLS/listener isolation is a separate
+unverified deployment gate. The native storage/synchronization design gaps and
+standalone rollback limitation remain explicit. The wizard still ends at
+connection pending and does not initialize a functioning native vault.
+
+## Earlier development architecture and evidence
+
 This branch creates the two new modules and their first integrated development implementation. It is **not production-approved**, does not migrate the old vault and does not assert that v1.3's 92 acceptance tests or the 11 hardware-option checks have passed.
 
 The first implementation audit found A01–A07 defects on commit `c0e995d8f355a36c19349e2b56ad223184accf4f`. Corrections and targeted regression tests are now implemented; independent re-review is pending. See the [remediation evidence](AUDIT_REMEDIATION.md). Passing these targeted tests does not close the remaining release gates.

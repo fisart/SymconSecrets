@@ -120,4 +120,5 @@ $decoded['deploymentDraft']['activationAllowed']=true;secReject(static fn()=>$re
 echo "PASS deployment plan exact review, native v2 export/import, preserved placement, disabled V2-only restore and no authority creation\n";
 secExpect([$existingManager->properties, $existingManager->values, $existingManager->attributes] === $existingManagerBefore, 'Commissioning altered the existing SecretsManager portal, vault or settings.');
 echo "PASS existing SecretsManager cannot be selected as a new backend; portal enablement, encrypted vault and settings are preserved throughout commissioning\n";
+require __DIR__ . '/storage-paths-guided.php';
 

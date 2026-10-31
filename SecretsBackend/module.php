@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/Application.php';
 require_once __DIR__ . '/SecurityConfiguration.php';
+require_once __DIR__ . '/StoragePaths.php';
 
 class SecretsBackend extends IPSModule
 {
@@ -76,12 +77,8 @@ class SecretsBackend extends IPSModule
     }
     private function paths(): array
     {
-        $paths = ['vault' => rtrim($this->ReadPropertyString('DataDirectory'), '/'), 'keys' => rtrim($this->ReadPropertyString('KeyDirectory'), '/')];
-        $kernel = rtrim(IPS_GetKernelDir(), '/') . '/';
-        foreach ($paths as $path) {
-            if ($path !== '' && ($path[0] !== '/' || str_contains($path, "\0") || preg_match('~(?:^|/)\.{1,2}(?:/|$)~', $path) || str_starts_with($path . '/', $kernel))) throw new RuntimeException('Storage must use private absolute paths outside the Symcon kernel/web/module tree.');
-        }
-        return $paths;
+        $paths = SecretsBackendStoragePaths::pair($this->ReadPropertyString('DataDirectory'), $this->ReadPropertyString('KeyDirectory'), IPS_GetKernelDir(), false, true);
+        return ['vault' => $paths['vaultDirectory'], 'keys' => $paths['keyDirectory']];
     }
     private function boundPaths(): array
     {
@@ -265,7 +262,9 @@ class SecretsBackend extends IPSModule
     }
     protected function initializeStorage(array $paths, array $settings): array
     {
-        return SecretsBackendStore::initialize($paths['vault'], $paths['keys'], $settings['AdminOrigin'], $settings['FrontendInstanceID']);
+        // Recheck after review and immediately before any key/state creation.
+        $checked = SecretsBackendStoragePaths::pair($paths['vault'], $paths['keys'], IPS_GetKernelDir());
+        return SecretsBackendStore::initialize($checked['vaultDirectory'], $checked['keyDirectory'], $settings['AdminOrigin'], $settings['FrontendInstanceID']);
     }
     public function BeginAdminEnrollment(string $Label, bool $Hardware): string
     {

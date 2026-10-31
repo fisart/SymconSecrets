@@ -2,6 +2,14 @@
 
 Development implementation 0.1.0. These are **two new modules in SymconSecrets**, not an update or replacement of the existing `SecretsManager` module. Existing module source, storage, passkeys and configuration remain unchanged. Do not migrate production data yet.
 
+**Current direction:** a Symcon-native replacement, standalone by default with
+optional two/three/larger sets and no added runtime services or extensions. The
+[native protocol review draft](NATIVE_PROTOCOL.md) is **not implemented**. The
+external-runtime components documented below are earlier development work and
+are not the replacement's architecture. The [response to the independent audit
+of 154d575](AUDIT_CORRECTIONS_154d575.md) records the two source corrections,
+regressions and remaining TLS/native implementation gates.
+
 ## Current V2 availability
 
 The HTML setup assistant provides discovery, defaults, exact review, settings

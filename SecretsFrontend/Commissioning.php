@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/Configuration.php';
 require_once __DIR__ . '/Deployment.php';
+require_once __DIR__ . '/../SecretsBackend/StoragePaths.php';
 
 /** Settings-only initial commissioning. No vault, trust enrollment or runtime activation. */
 final class SecretsFrontendCommissioning
@@ -24,16 +25,7 @@ final class SecretsFrontendCommissioning
     }
     public static function paths(string $vault, string $keys, string $kernel): array
     {
-        $paths = ['vaultDirectory' => rtrim($vault, '/'), 'keyDirectory' => rtrim($keys, '/')];
-        foreach ($paths as $path) {
-            if ($path === '' || $path === '/' || strlen($path) > 1024 || $path[0] !== '/' || preg_match('~[\x00-\x1f\x7f\\\\]|(?:^|/)\.{1,2}(?:/|$)~', $path)
-                || str_starts_with($path . '/', rtrim($kernel, '/') . '/')) throw new InvalidArgumentException('Choose private absolute folders outside the Symcon installation.');
-            $part = '';
-            foreach (explode('/', ltrim($path, '/')) as $segment) { $part .= '/' . $segment; if (is_link($part) || (file_exists($part) && !is_dir($part))) throw new InvalidArgumentException('Use ordinary folders without symbolic links or file components.'); }
-            if (is_dir($path) && count(scandir($path) ?: []) > 2) throw new InvalidArgumentException('Choose new or empty storage folders. Existing data is never adopted.');
-        }
-        if (str_starts_with($paths['vaultDirectory'] . '/', $paths['keyDirectory'] . '/') || str_starts_with($paths['keyDirectory'] . '/', $paths['vaultDirectory'] . '/')) throw new InvalidArgumentException('Vault and key folders must be separate and must not contain each other.');
-        return $paths;
+        return SecretsBackendStoragePaths::pair($vault, $keys, $kernel);
     }
     public static function writable(string $path): bool
     {
