@@ -2,7 +2,7 @@
 
 Review baseline: `ffe0e8d4818b82c6ea48611c08a25cee3e588947`.
 [Independent review and runnable reproducers](https://chatgpt.com/library?file_id=libfile_516c34e7c6748191a1617d4148e8b483&account_id=personal).
-Disposition: corrections implemented; independent replacement-commit review pending.
+Disposition: IR-01/IR-02 and the original IR-03/G-01 paths have independent component review; follow-up FR-01/FR-02 are independently closed at the exact commit identified below. Full-system acceptance remains pending.
 No merge, deployment, production acceptance or migration is implied.
 
 The original reproducers were executed against that baseline and reproduced all
@@ -18,6 +18,17 @@ The committed regressions instead require rejection or locked recovery.
 | G-01 | Archive construction requires an opaque independently admitted runtime capability. It binds signed boot/generation/volume/target identity to a specific opened directory, with a durable monotonic local marker. Catalog boot installs admission and registration together. Before-work and final-CAS checks compare the same admitted context. | A pre-validation stale service cannot adopt or activate a replacement, transfer its capability to an empty new directory, or restore an old local marker. The during-validation race remains covered. Restart and worker fixtures construct genuinely admitted runtimes. Real host-guard issuance/fencing infrastructure remains unfinished. |
 
 ## Follow-up FR-01 and FR-02
+
+**Independent closure: 31 October 2026, commit
+`79c6a0fe5186f687c6b030d0fb46b2ef13c7c67c`.**
+[Independent correction review](https://chatgpt.com/library?file_id=libfile_4b429795c00c8191865fa1e16b9793dd&account_id=personal)
+closes FR-01 for the reviewed admission paths and FR-02 for the reviewed codec
+paths. The reviewer independently reproduced 156 passing Go test/subtest events,
+19 injected-I/O events, all 20 regression commands, static/module checks and the
+additional rejection tests; exact-commit GitHub CI was successful. No additional
+confirmed defect emerged in that focused delta review. These event counts are
+component evidence, not completed end-to-end requirements. The closure does not
+apply automatically to subsequent code changes or qualify production/migration.
 
 Follow-up review baseline: `165b99b5515cd2b13834c9a5f1df5fdf08e951a6`.
 [Full independent follow-up and original reproducers](https://chatgpt.com/library?file_id=libfile_de1472e1d0e08191a90963046e922f87&account_id=personal).

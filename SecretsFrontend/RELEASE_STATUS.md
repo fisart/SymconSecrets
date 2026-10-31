@@ -39,3 +39,20 @@ The complete Q01-Q48 scenarios and production qualification remain unexecuted.
 The existing V1 development implementation and earlier evidence below remain
 separate. Earlier A01-A07 fixes still need independent replacement-commit review.
 
+
+## Independent correction closure — 31 October 2026
+
+The [independent correction review](https://chatgpt.com/library?file_id=libfile_4b429795c00c8191865fa1e16b9793dd&account_id=personal)
+reviewed `79c6a0fe5186f687c6b030d0fb46b2ef13c7c67c` and closes FR-01
+(archive admission ordering) and FR-02 (operation-aware historical outcomes) for
+the tested component behavior. The reviewer independently reran 156 passing Go
+test/subtest events, 19 injected-I/O events and 20 regression commands, plus the
+additional rejection checks, and confirmed exact-commit CI success. No additional
+confirmed defect emerged in the focused review. The earlier scoped IR-01/IR-02
+closures and response/runtime binding corrections remain in place.
+
+Development may continue. The next checkpoint is the original-user contract and
+core reservation/READY/commit/abort lifecycle described in the quorum README.
+The original-user lifecycle and complete V2 integration are still unfinished;
+synthetic codec tests do not close them. All Q01-Q48 remain NOT_RUN end to end.
+No production or migration approval, merge or deployment follows from this review.

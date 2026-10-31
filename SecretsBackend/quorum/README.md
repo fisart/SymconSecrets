@@ -54,7 +54,11 @@ future V2 PHP packer; it is not an import path for the V1 store.
 
 IR-01--IR-03, G-01 and follow-up FR-01--FR-02 corrections are described in
 [`../../SecretsFrontend/IMPLEMENTATION_REVIEW_FIXES.md`](../../SecretsFrontend/IMPLEMENTATION_REVIEW_FIXES.md).
-They require independent re-review at the replacement commit. The frozen example
+The [independent correction review](https://chatgpt.com/library?file_id=libfile_4b429795c00c8191865fa1e16b9793dd&account_id=personal)
+closes FR-01 and FR-02 for their tested component paths at
+`79c6a0fe5186f687c6b030d0fb46b2ef13c7c67c`; no additional confirmed defect
+emerged in that focused review. Subsequent security-critical behavior needs its
+own review, and full-system acceptance remains pending. The frozen example
 with a null rejection epoch for a coordinator-bound reservation is retained as
 a negative test; `tests/response-bindings.json` contains its signed correction.
 
@@ -104,6 +108,27 @@ All formal **Q01-Q48 remain NOT_RUN end to end**. Targeted component evidence is
 useful input to those scenarios, not a claim that their complete required results
 have been established. Baseline/hardware suites remain required. A SIGKILL is not
 a physical power-loss test, and test loopback plaintext is not production TLS.
+
+## Next development checkpoint
+
+Complete the original browser-user operation contract and core candidate
+lifecycle before connecting management routes to V2. Keep user-operation identity,
+owner-proposal identity and transport/coordinator attempts distinct; retain the
+exact original digest and one immutable terminal outcome. An authorization or
+reservation-control decision must not be relabeled as a browser mutation.
+
+The next component work must cover PREPARING/READY transitions, two current
+independent durable copies of predecessor and candidate, exact H/P/N/U/C checks,
+atomic head/user-outcome/reservation/pins/audit/outbox changes and the competing
+terminal abort. Test lost acknowledgements, delayed originals after UNKNOWN,
+commit-versus-abort, owner/coordinator revocation, stale archive generations and
+recovery after worker death. Retain all current adversarial regressions.
+
+The frozen wire profile stays unchanged until any concrete original-user schema
+compatibility issue has a reviewed resolution. No permissive codec exception or
+V1 fallback may stand in for that contract. Request another implementation review
+when this security-critical behavior is connected or completed. The separate
+full-system Q01-Q48 acceptance checkpoint remains mandatory before migration.
 
 ## Reproduce
 
