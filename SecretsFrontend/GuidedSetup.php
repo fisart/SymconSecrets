@@ -146,7 +146,7 @@ trait SecretsFrontendGuidedSetup
             $this->WriteAttributeString('DeploymentDraft', SecretsFrontendConfiguration::encode($plan['deployment']));
             $this->WriteAttributeBoolean('GuidedConfigured', true);
             return ['configured' => true, 'quorumConnected' => false, 'vaultCreated' => false, 'portalRegistered' => $plan['addPortalLink'],
-                'message' => 'Configuration saved. Quorum runtime connection is the next development step; vault operations remain disabled.',
+                'message' => 'Configuration saved. The Symcon-native backend is not implemented yet; vault operations remain disabled.',
                 'configurationExport' => ['deployment' => SecretsFrontendDeployment::describe($plan['deployment'], $grant['origin']), 'frontend' => json_decode($this->ExportConfiguration(), true, 16, JSON_THROW_ON_ERROR), 'backend' => json_decode(SECB_ExportConfiguration($plan['backend']), true, 16, JSON_THROW_ON_ERROR)]];
         } finally { IPS_SemaphoreLeave($lock); }
     }
@@ -157,7 +157,7 @@ trait SecretsFrontendGuidedSetup
             catch (Throwable $exception) { return ['status' => 403, 'data' => ['error' => $exception->getMessage()], 'cookie' => '']; }
         }
         if ($this->ReadAttributeBoolean('GuidedV2Only')) return ['status' => $request['action'] === 'status' ? 200 : 503,
-            'data' => $request['action'] === 'status' ? ['ready' => false, 'configured' => $this->ReadAttributeBoolean('GuidedConfigured'), 'guidedV2Only' => true, 'setupAvailable' => $this->guidedActive(), 'message' => 'Open the setup wizard. Quorum runtime connection is pending; vault operations remain disabled.'] : ['error' => 'Quorum runtime connection is pending. This setup does not use the older anchor backend.'], 'cookie' => ''];
+            'data' => $request['action'] === 'status' ? ['ready' => false, 'configured' => $this->ReadAttributeBoolean('GuidedConfigured'), 'guidedV2Only' => true, 'setupAvailable' => $this->guidedActive(), 'message' => 'Open the setup wizard. The Symcon-native backend is not implemented yet; vault operations remain disabled.'] : ['error' => 'The Symcon-native backend is not implemented yet. Vault operations remain disabled; this setup does not use the older anchor backend.'], 'cookie' => ''];
         if (!function_exists('SECB_HandleFrontendRequest')) throw new RuntimeException('The separate backend API is not installed.');
         return json_decode(SECB_HandleFrontendRequest($this->backend(), $this->InstanceID, SecretsFrontendConfiguration::encode($request)), true, 32, JSON_THROW_ON_ERROR);
     }

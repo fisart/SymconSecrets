@@ -34,11 +34,16 @@ final class SecretsFrontendCommissioning
     }
     public static function requirements(): array
     {
-        $extensions = []; foreach (['sodium', 'openssl', 'curl', 'pdo_sqlite'] as $name) $extensions[$name] = extension_loaded($name);
-        $sqlite = null;
-        if ($extensions['pdo_sqlite']) { try { $db = new PDO('sqlite::memory:'); $sqlite = (string)$db->query('SELECT sqlite_version()')->fetchColumn(); } catch (Throwable $ignored) {} }
-        return ['php' => PHP_VERSION, 'phpSupported' => version_compare(PHP_VERSION, '8.2.0', '>='), 'extensions' => $extensions, 'sqlite' => $sqlite,
-            'legacyWalSupported' => $sqlite !== null && version_compare($sqlite, '3.51.3', '>='), 'quorumConnected' => false];
+        // This assistant saves settings only. Legacy SQLite/anchor diagnostics
+        // do not describe the planned Symcon-native backend or its prerequisites.
+        return ['php' => PHP_VERSION, 'phpSupported' => version_compare(PHP_VERSION, '8.2.0', '>='),
+            'scope' => 'settings-only', 'runtime' => 'symcon-native', 'nativeBackendImplemented' => false,
+            'capabilities' => [
+                'JSON' => function_exists('json_encode') && function_exists('json_decode'),
+                'SHA-256' => function_exists('hash') && function_exists('hash_equals') && function_exists('hash_algos') && in_array('sha256', hash_algos(), true),
+                'Secure randomness' => function_exists('random_bytes'),
+                'Symcon instance API' => function_exists('IPS_GetInstance') && function_exists('IPS_GetProperty') && function_exists('IPS_SetProperty') && function_exists('IPS_ApplyChanges'),
+                'Symcon semaphores' => function_exists('IPS_SemaphoreEnter') && function_exists('IPS_SemaphoreLeave')]];
     }
     public static function choice(array $data): array
     {

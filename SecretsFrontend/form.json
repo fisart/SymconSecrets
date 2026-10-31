@@ -77,7 +77,7 @@
   "actions": [
     {
       "type": "Label",
-      "caption": "Start here: 1. Enter your Symcon HTTPS address. 2. Generate a one-use setup code. 3. Open the wizard and paste the code. The V2 quorum runtime is not connected yet; no vault is activated."
+      "caption": "Start here: 1. Enter your Symcon HTTPS address. 2. Generate a one-use setup code. 3. Open the wizard and paste the code. This assistant saves settings only. The Symcon-native backend is not implemented yet; no vault is activated."
     },
     {
       "type": "ValidationTextBox",

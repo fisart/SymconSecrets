@@ -37,6 +37,9 @@ secExpect($invoke('guidedDiscover',['code'=>$code],'https://evil.test')['status'
 secExpect($invoke('guidedDiscover',['code'=>'wrong'])['status']===403,'Missing console authority accepted.');
 $found = $invoke('guidedDiscover',['code'=>$code]);secExpect($found['status']===200,'Discovery failed.');$discovery=json_decode($found['body'],true);
 secExpect(array_column($discovery['backends'],'id')===[789,790],'Sealed/existing backend included or candidates lost.');
+secExpect($discovery['requirements']['scope'] === 'settings-only' && $discovery['requirements']['runtime'] === 'symcon-native' && $discovery['requirements']['nativeBackendImplemented'] === false, 'Discovery overstated native backend availability.');
+secExpect(array_intersect(['extensions', 'sqlite', 'legacyWalSupported'], array_keys($discovery['requirements'])) === [] && !str_contains(json_encode($discovery['requirements']), 'pdo'), 'Discovery retained legacy database prerequisites.');
+secExpect(!in_array(false, $discovery['requirements']['capabilities'], true), 'Available setup functions were reported missing.');
 $choice=['backend'=>789,'portal'=>800,'documentation'=>0,'theme'=>'dark','vaultDirectory'=>$directory.'/new-data','keyDirectory'=>$directory.'/new-keys','proxyIPs'=>[],'addPortalLink'=>true,'debugEnabled'=>false];
 $bad=$choice;$bad['backend']=456;secExpect($invoke('guidedPreview',['code'=>$code,'configuration'=>$bad])['status']===403,'Existing vault selected.');
 $bad=$choice;$bad['backend']=901;secExpect($invoke('guidedPreview',['code'=>$code,'configuration'=>$bad])['status']===403,'Existing SecretsManager accepted as a new backend.');

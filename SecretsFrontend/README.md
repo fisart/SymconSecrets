@@ -15,8 +15,9 @@ regressions and remaining TLS/native implementation gates.
 The HTML setup assistant provides discovery, defaults, exact review, settings
 application and a saved peer-deployment draft. The interface now uses a
 responsive card layout, clear progress, light/dark appearance and collapsed
-advanced settings. On the Storage step, expand **Peer services & recovery** to
-prepare three authority locations, two Symcon peers and two recovery locations.
+advanced settings. The Storage step retains an explicitly labelled **earlier quorum deployment
+draft** for compatibility with saved prototype plans. Those external-service
+fields are not requirements for the planned standalone/optional-peer native system.
 The current installation's HTTPS origin is prefilled. Unknown addresses and
 trust remain unconfigured. You can download the reviewed draft separately.
 Native exports with a draft use `SECF.Config.v2`; older v1 exports remain
@@ -60,7 +61,7 @@ The initial console step remains because a publicly reachable setup page cannot 
 
 Both forms retain their previous controls in collapsed advanced sections for independent development/recovery. The earlier V1 commissioning guide below applies only to that separate development path; it does not create a V2 quorum system.
 
-The PHP modules require PHP 8.2+, sodium, OpenSSL, curl and PDO SQLite. The earlier PHP WAL vault additionally requires SQLite 3.51.3+ and refuses older versions. The new wizard reports runtime requirements without creating or activating that old vault.
+The settings assistant requires PHP 8.2+ and checks its actual JSON, SHA-256, secure-randomness and Symcon instance/semaphore functions. It does not probe PDO/SQLite, create an in-memory database or request added extensions or services. These setup checks do not qualify an implemented native vault: that backend is still unfinished. The earlier V1 prototype separately requires sodium, OpenSSL, curl and PDO SQLite (SQLite 3.51.3+ for WAL); those historical dependencies do not apply to the native settings assistant.
 
 ## Wizard: vault and key storage
 
