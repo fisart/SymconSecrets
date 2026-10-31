@@ -13,19 +13,23 @@ Development implementation 0.1.0. These are **two new modules in SymconSecrets**
 
 Read [the audit remediation and evidence](AUDIT_REMEDIATION.md) and [the release status](RELEASE_STATUS.md) before testing. A working development flow is not evidence that the complete v1.3 suite has passed.
 
-## Install on the separate test system
+## Start with the HTML setup assistant
 
-1. In Module Control, select the `feature/secrets-frontend` branch of the existing `https://github.com/fisart/SymconSecrets.git` library. The shared library version remains unchanged to avoid modifying existing library files. Reload the library, then create a new **SecretsBackend** instance and a new **SecretsFrontend** instance. Do not replace or reconfigure your old SecretsManager.
-2. Set each new module's reference to the other. Configure the same exact HTTPS administrator origin in both, for example `https://secrets.example.com`. This is a separate administrator login, not a reuse of Portal privileges.
-3. In SecretsBackend, choose two separate, non-nested, absolute paths for new/empty private directories. Example: `/var/lib/symcon-secrets-development/vault` and `/var/lib/symcon-secrets-development-keys`. Do not use any old SecretsManager directory. The Symcon account must be allowed to create/write these locations. An OS administrator may need to prepare the empty directories first.
-4. Configure the frontend's trusted reverse-proxy IPs if that proxy terminates HTTPS. Only exact listed proxy addresses may supply forwarded host/protocol information. Enable the frontend and apply settings. Keep the backend disabled until the anchor is provisioned.
-5. Open the frontend URL shown below its instance. Run the **Setup wizard** described below.
-6. Provision the independent anchor, install its client TLS certificate/key and CA file, and configure its URL, signature key ID and pinned public key in SecretsBackend. See [anchor operation](../SecretsBackend/anchor/README.md).
-7. Enable the new backend and run **Recover / check independent anchor**. Normal restart recovery runs automatically; failed recovery retries with a bounded 1–30 second backoff without ignoring a mismatch.
-8. In the backend console, review the **initial security configuration digest** and explicitly **Seal this initial provisioning**. This pins storage, frontend/proxy binding, TLS files and the anchor trust separately and anchors the active profile. It is available only before administrator enrollment. Then issue a temporary administrator-enrollment credential. Use it in the frontend wizard to enroll a new passkey, then sign in. Old Portal/admin-password sessions cannot grant rights in this backend.
-9. Select the Portal instance in the frontend, apply settings and click **Add to Portal → Administration**. The link is a registered local hook; if the Portal has a different hostname, the frontend GET redirects only to its fixed configured HTTPS origin. POST requests are never redirected with credentials.
+1. Update the installed `feature/secrets-frontend` branch in Module Control. Keep your existing SecretsManager unchanged.
+2. Open **SecretsFrontend**. Paste the trusted HTTPS address you use for Symcon. A saved origin is prefilled; paths/query are discarded. If TLS terminates at a reverse proxy, specify only its exact trusted IPs. Neither browser Host headers nor forwarded headers establish trust automatically.
+3. Click **Start HTML setup**. Open the displayed wizard URL and copy its ten-minute setup code into the page. The code authorizes initial settings for new, empty backend instances only; it is not an administrator credential.
+4. The HTML wizard discovers eligible backends, Portal and Dokumentation. Existing valid selections are reused; a unique candidate is auto-selected. Ambiguous backends require a choice. Review suggested vault/key folders, appearance, proxy list and Debug. **Restore suggested defaults** restores recommendations for the selected backend.
+5. Review the exact summary and save. The wizard applies reciprocal instance references and origin, storage path settings and preferences, optionally registers the Portal link through its existing extension, and offers a settings-only download. It does not create folders, keys, a vault, administrators or connection trust.
 
-The module needs PHP 8.2+, sodium, OpenSSL, curl and PDO SQLite. This implementation requires **SQLite 3.51.3 or later for WAL** and refuses to initialize a WAL vault on an older version. There is no runtime switch to ignore that check. Unit tests explicitly use a separate DELETE-journal harness on older developer runtimes; that is not a production WAL test or a supported bypass.
+**The V2 quorum runtime is still unconnected.** Initial configuration ends at **Settings saved · connection pending**. The backend stays disabled. The new guided mode explicitly blocks the earlier V1 anchor routes; it never silently activates that architecture. Storage creation, runtime connection and administrator enrollment will continue in this assistant when their V2 integration is available. A partial apply consumes its code and requires inspection/fresh authorization rather than automatic replay.
+
+Every wizard entry has a declared default: existing value first, unique detected instance next, otherwise a safe explicit choice. New backends receive private per-instance folder suggestions. Appearance follows the device; Debug defaults off; proxy list defaults empty; optional integrations default to none when not found. Connection credentials, authority pins and hardware trust default to **not configured**. No authority or hardware root is trusted by default. Suggested parent folders may need OS administrator permissions; no root/SSH password is collected.
+
+The initial console step remains because a publicly reachable setup page cannot issue its own configuration authority. The temporary code is stored only as a hash in a transient buffer, scoped to the origin/frontend/backend roster and exact reviewed plan, bounded by expiry/failed attempts, consumed before mutation and invalidated on reload. Browser inputs and in-memory copies clear on cancellation, navigation, expiry and page hiding. Explicit cancellation also revokes the server grant when reachable. No code is put into URLs, properties, exports, Debug or browser persistent storage.
+
+Both forms retain their previous controls in collapsed advanced sections for independent development/recovery. The earlier V1 commissioning guide below applies only to that separate development path; it does not create a V2 quorum system.
+
+The PHP modules require PHP 8.2+, sodium, OpenSSL, curl and PDO SQLite. The earlier PHP WAL vault additionally requires SQLite 3.51.3+ and refuses older versions. The new wizard reports runtime requirements without creating or activating that old vault.
 
 ## Wizard: vault and key storage
 

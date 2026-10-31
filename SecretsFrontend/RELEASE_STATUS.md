@@ -71,3 +71,18 @@ the real WebAuthn/hardware/diff producer, original-user wire binding, PHP packer
 key envelopes, authenticated dispatch and full runtime remain gates. Frozen
 v1.2 wire bytes and the existing password module remain unchanged. All Q01-Q48
 remain NOT_RUN end to end; no production or migration approval is implied.
+
+## HTML initial configuration assistant
+
+Routine initial settings now run through one HTML wizard: console authorization,
+instance discovery and defaults, storage recommendations, runtime checks, exact
+review, reciprocal pairing/preferences, optional Portal registration and a settings
+export. All entries have explicit defaults and recommendations can be restored.
+The bootstrap grant is settings-only, initial-only, expiring, failed-attempt-
+bounded, plan-bound, consumed before mutation and invalidated on reload.
+
+The fresh guided mode is V2-only and blocks V1 fallback. It ends at connection
+pending, creates no vault/keys/administrators and keeps the backend disabled.
+Actual V2 activation and the remaining full-system acceptance remain pending.
+This new commissioning flow needs review separately from the previous core
+lifecycle checkpoint. Existing password-module code remains unchanged.

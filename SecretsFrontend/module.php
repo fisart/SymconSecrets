@@ -1,10 +1,12 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/Http.php';
+require_once __DIR__ . '/GuidedSetup.php';
 require_once __DIR__ . '/../libs/SystemPortalNavigation.php';
 
 class SecretsFrontend extends IPSModule
 {
+    use SecretsFrontendGuidedSetup;
     private const BACKEND = '{52165EDD-B2C0-40EC-8A59-42A97319B6E2}';
     private const PORTAL = '{922E5A10-A048-463D-A973-97B4BBD9096B}';
     private const DOCS = '{FBEB2EF6-8D23-49D7-A256-6D0C8D973B24}';
@@ -12,6 +14,7 @@ class SecretsFrontend extends IPSModule
     public function Create(): void
     {
         parent::Create();
+        $this->RegisterAttributeBoolean('GuidedV2Only', false);
         foreach (SecretsFrontendConfiguration::DEFAULTS as $key => $default) {
             if (is_bool($default)) $this->RegisterPropertyBoolean($key, $default);
             elseif (is_int($default)) $this->RegisterPropertyInteger($key, $default);
@@ -27,6 +30,7 @@ class SecretsFrontend extends IPSModule
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
+        $this->SetBuffer('GuidedSetup', '');
         $this->SetValue('DebugEnabled', $this->ReadPropertyBoolean('DebugEnabled'));
         $this->SetTimerInterval('Setup', IPS_GetKernelRunlevel() === 10103 ? 100 : 0);
         if (!$this->ReadPropertyBoolean('Enabled')) $this->SetStatus(104);
@@ -58,10 +62,10 @@ class SecretsFrontend extends IPSModule
         try {
             $settings = $this->settings();
             if ($settings['Enabled'] && $settings['AdminOrigin'] === '') throw new RuntimeException('Configure an exact administrator HTTPS origin.');
-            if ($settings['Enabled']) $this->backend();
+            if ($settings['Enabled'] && !$this->guidedActive() && !$this->ReadAttributeBoolean('GuidedV2Only')) $this->backend();
             $this->syncHook($settings['Enabled']);
             $this->SetValue('FrontendURL', $settings['AdminOrigin'] . $this->path());
-            $this->SetValue('Status', $settings['Enabled'] ? 'Development frontend available. Backend authorizes every administrative operation.' : 'Disabled.');
+            $this->SetValue('Status', !$settings['Enabled'] ? 'Disabled.' : ($this->ReadAttributeBoolean('GuidedV2Only') ? 'HTML setup available. Quorum connection pending; vault operations disabled.' : 'Development frontend available. Backend authorizes every administrative operation.'));
             $this->SetValue('IntegrationStatus', 'Portal: use Add to Portal below. Documentation: bundled manual and catalog entry. Central backup: registration review required; exports contain configuration only.');
             $this->SetStatus($settings['Enabled'] ? 102 : 104); $this->debug('configuration-checked'); return true;
         } catch (Throwable $exception) {
@@ -128,9 +132,8 @@ class SecretsFrontend extends IPSModule
             }
             $portal = AFSystemPortalNavigationV1::path(0, $settings['PortalInstanceID']);
             $reply = SecretsFrontendHttp::response($settings, $this->InstanceID, $_SERVER, $this->path(), $portal, $this->documentationPath(), $input, function (array $request): array {
-                if (!function_exists('SECB_HandleFrontendRequest')) throw new RuntimeException('The separate backend API is not installed.');
-                return json_decode(SECB_HandleFrontendRequest($this->backend(), $this->InstanceID, SecretsFrontendConfiguration::encode($request)), true, 32, JSON_THROW_ON_ERROR);
-            });
+                return $this->gateway($request);
+            }, ['guidedV2Only' => $this->ReadAttributeBoolean('GuidedV2Only')]);
             http_response_code($reply['status']); foreach ($reply['headers'] as $name => $value) header($name . ': ' . $value); echo $reply['body'];
         } catch (Throwable $exception) { http_response_code(503); header('Cache-Control: no-store'); echo 'Frontend configuration is unavailable.'; $this->debug('request-refused'); }
     }
@@ -162,7 +165,12 @@ class SecretsFrontend extends IPSModule
         $form = json_decode((string)file_get_contents(__DIR__ . '/form.json'), true, 32, JSON_THROW_ON_ERROR);
         try { $origin = SecretsFrontendConfiguration::origin($this->ReadPropertyString('AdminOrigin')); }
         catch (Throwable $exception) { $origin = ''; }
-        foreach ($form['elements'] as &$element) if (($element['name'] ?? '') === 'FrontendURL') $element['value'] = $origin . $this->path();
+        $fill = function (array &$items) use (&$fill, $origin): void { foreach ($items as &$element) {
+            if (in_array($element['name'] ?? '', ['FrontendURL', 'WizardURL'], true)) $element['value'] = $origin . $this->path();
+            if (($element['name'] ?? '') === 'SetupAddress') $element['value'] = $origin;
+            if (($element['name'] ?? '') === 'SetupProxyIPs') { try { $element['value'] = implode(', ', $this->settings()['TrustedHTTPSProxyIPs']); } catch (Throwable $ignored) {} }
+            if (isset($element['items'])) $fill($element['items']);
+        } }; $fill($form['elements']);
         return SecretsFrontendConfiguration::encode($form);
     }
 }

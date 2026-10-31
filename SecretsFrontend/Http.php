@@ -5,7 +5,7 @@ require_once __DIR__ . '/Configuration.php';
 /** Static commissioning UI. No authentication proxy and no legacy secret API calls. */
 final class SecretsFrontendHttp
 {
-    public static function response(array $settings, int $instance, array $server, string $path, string $portal, string $documentation, string $input = '', ?callable $gateway = null): array
+    public static function response(array $settings, int $instance, array $server, string $path, string $portal, string $documentation, string $input = '', ?callable $gateway = null, array $ui = []): array
     {
         $nonce = base64_encode(random_bytes(24));
         $headers = [
@@ -43,7 +43,7 @@ final class SecretsFrontendHttp
                 || !in_array($server['HTTP_SEC_FETCH_SITE'] ?? 'same-origin', ['same-origin', 'none'], true)) return $reply(403, 'Same-origin JSON requests are required.');
             try {
                 $body = SecretsFrontendConfiguration::decode($input);
-                $allowed = ['status', 'setupPreview', 'setupCreate', 'authOptions', 'authVerify', 'enrollmentOptions', 'enrollmentVerify', 'session', 'list', 'configurationPreview', 'prepare', 'approve', 'logout'];
+                $allowed = ['guidedDiscover', 'guidedPreview', 'guidedApply', 'guidedCancel', 'status', 'setupPreview', 'setupCreate', 'authOptions', 'authVerify', 'enrollmentOptions', 'enrollmentVerify', 'session', 'list', 'configurationPreview', 'prepare', 'approve', 'logout'];
                 if (count($body) !== 2 || !is_string($body['action'] ?? null) || !in_array($body['action'], $allowed, true) || !is_array($body['data'] ?? null) || $gateway === null) return $reply(400, 'Unsupported API request.');
                 $result = $gateway(['action' => $body['action'], 'data' => $body['data'], 'origin' => $origin,
                     'remote' => (string)($server['REMOTE_ADDR'] ?? ''), 'cookie' => (string)($server['HTTP_COOKIE'] ?? ''), 'csrf' => (string)($server['HTTP_X_CSRF_TOKEN'] ?? '')]);
@@ -57,7 +57,7 @@ final class SecretsFrontendHttp
             } catch (Throwable $exception) { return $reply(503, 'Backend request could not be completed. Check the backend status.'); }
         }
         if ($method === 'HEAD') return ['status' => 200, 'headers' => $headers, 'body' => ''];
-        $boot = json_encode(['path' => $path, 'theme' => $settings['Theme']], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_THROW_ON_ERROR);
+        $boot = json_encode(['path' => $path, 'theme' => $settings['Theme'], 'guidedV2Only' => ($ui['guidedV2Only'] ?? false) === true], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_THROW_ON_ERROR);
         $escape = static fn(string $text): string => htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $links = '';
         foreach (['Portal' => $portal, 'Dokumentation' => $documentation] as $label => $target) {

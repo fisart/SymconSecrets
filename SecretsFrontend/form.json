@@ -2,76 +2,128 @@
   "elements": [
     {
       "type": "Label",
-      "caption": "Secrets Frontend \u2014 separate development system; existing SecretsManager is unchanged."
-    },
-    {
-      "type": "CheckBox",
-      "name": "Enabled",
-      "caption": "Enable frontend"
-    },
-    {
-      "type": "SelectInstance",
-      "name": "BackendInstanceID",
-      "caption": "Separate SecretsBackend instance",
-      "validModules": [
-        "{52165EDD-B2C0-40EC-8A59-42A97319B6E2}"
-      ]
+      "caption": "Start here: the HTML wizard discovers the instances, suggests private folders and applies the reviewed settings. The V2 quorum runtime is not connected yet; no vault is activated."
     },
     {
       "type": "ValidationTextBox",
-      "name": "AdminOrigin",
-      "caption": "Exact administrator HTTPS origin, e.g. https://secrets.example.com"
+      "name": "SetupAddress",
+      "caption": "HTTPS address you use for Symcon (paste the browser address)"
     },
     {
-      "type": "ValidationTextBox",
-      "name": "TrustedHTTPSProxyIPs",
-      "caption": "Trusted TLS proxy IPs as JSON array; otherwise []"
-    },
-    {
-      "type": "SelectInstance",
-      "name": "PortalInstanceID",
-      "caption": "Portal instance",
-      "validModules": [
-        "{922E5A10-A048-463D-A973-97B4BBD9096B}"
-      ]
-    },
-    {
-      "type": "SelectInstance",
-      "name": "DocumentationInstanceID",
-      "caption": "Dokumentation instance",
-      "validModules": [
-        "{FBEB2EF6-8D23-49D7-A256-6D0C8D973B24}"
-      ]
-    },
-    {
-      "type": "Select",
-      "name": "Theme",
-      "caption": "Appearance",
-      "options": [
+      "type": "ExpansionPanel",
+      "caption": "Advanced connection · trusted TLS proxy, if needed",
+      "items": [
         {
-          "caption": "System",
-          "value": "system"
-        },
-        {
-          "caption": "Light",
-          "value": "light"
-        },
-        {
-          "caption": "Dark",
-          "value": "dark"
+          "type": "ValidationTextBox",
+          "name": "SetupProxyIPs",
+          "caption": "Only if TLS ends at a reverse proxy: trusted proxy IPs, comma separated"
         }
       ]
     },
     {
-      "type": "CheckBox",
-      "name": "DebugEnabled",
-      "caption": "Sanitized Debug variable below the instance"
+      "type": "Button",
+      "caption": "Start HTML setup · authorize for 10 minutes",
+      "onClick": "SECF_BeginGuidedSetup($id, $SetupAddress, $SetupProxyIPs);"
     },
     {
       "type": "ValidationTextBox",
-      "name": "FrontendURL",
-      "caption": "Open this URL in your browser",
+      "name": "WizardURL",
+      "caption": "Open the wizard at this address",
       "enabled": false
+    },
+    {
+      "type": "ValidationTextBox",
+      "name": "SetupAccessCode",
+      "caption": "Copy this one-use setup code into the HTML page",
+      "enabled": false
+    },
+    {
+      "type": "Button",
+      "caption": "Cancel setup authorization",
+      "onClick": "SECF_CancelGuidedSetup($id);"
+    },
+    {
+      "type": "Label",
+      "caption": "One console authorization protects a new empty installation. Origin and proxy trust are never guessed from browser headers. The remaining settings are in the HTML wizard."
+    },
+    {
+      "type": "ExpansionPanel",
+      "caption": "Advanced settings / existing development installation",
+      "items": [
+        {
+          "type": "Label",
+          "caption": "Secrets Frontend — separate development system; existing SecretsManager is unchanged."
+        },
+        {
+          "type": "CheckBox",
+          "name": "Enabled",
+          "caption": "Enable frontend"
+        },
+        {
+          "type": "SelectInstance",
+          "name": "BackendInstanceID",
+          "caption": "Separate SecretsBackend instance",
+          "validModules": [
+            "{52165EDD-B2C0-40EC-8A59-42A97319B6E2}"
+          ]
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "AdminOrigin",
+          "caption": "Exact administrator HTTPS origin, e.g. https://secrets.example.com"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "TrustedHTTPSProxyIPs",
+          "caption": "Trusted TLS proxy IPs as JSON array; otherwise []"
+        },
+        {
+          "type": "SelectInstance",
+          "name": "PortalInstanceID",
+          "caption": "Portal instance",
+          "validModules": [
+            "{922E5A10-A048-463D-A973-97B4BBD9096B}"
+          ]
+        },
+        {
+          "type": "SelectInstance",
+          "name": "DocumentationInstanceID",
+          "caption": "Dokumentation instance",
+          "validModules": [
+            "{FBEB2EF6-8D23-49D7-A256-6D0C8D973B24}"
+          ]
+        },
+        {
+          "type": "Select",
+          "name": "Theme",
+          "caption": "Appearance",
+          "options": [
+            {
+              "caption": "System",
+              "value": "system"
+            },
+            {
+              "caption": "Light",
+              "value": "light"
+            },
+            {
+              "caption": "Dark",
+              "value": "dark"
+            }
+          ]
+        },
+        {
+          "type": "CheckBox",
+          "name": "DebugEnabled",
+          "caption": "Sanitized Debug variable below the instance"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "FrontendURL",
+          "caption": "Open this URL in your browser",
+          "enabled": false
+        }
+      ]
     }
   ],
   "actions": [
@@ -82,7 +134,7 @@
     },
     {
       "type": "Button",
-      "caption": "Add to Portal \u2192 Administration",
+      "caption": "Add to Portal → Administration",
       "onClick": "SECF_AddToPortal($id);"
     },
     {
@@ -112,7 +164,7 @@
         },
         {
           "type": "Button",
-          "caption": "Import configuration \u2014 leave disabled",
+          "caption": "Import configuration — leave disabled",
           "onClick": "SECF_ImportConfiguration($id, $ImportJSON);"
         }
       ]

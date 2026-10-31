@@ -12,9 +12,17 @@ class SecretsBackend extends IPSModule
         parent::Create();
         $this->RegisterAttributeString('StorageBinding', '');
         $this->RegisterAttributeBoolean('ProvisioningSealed', false);
+        $this->RegisterAttributeBoolean('GuidedV2Only', false);
         $this->RegisterPropertyBoolean('Enabled', false); $this->RegisterPropertyBoolean('DebugEnabled', false);
         $this->RegisterPropertyInteger('FrontendInstanceID', 0);
-        foreach (self::STRINGS as $name) $this->RegisterPropertyString($name, $name === 'HardwareAAGUIDs' ? '[]' : ($name === 'HardwareTrustVersion' ? 'none' : ''));
+        foreach (self::STRINGS as $name) {
+            $default = match ($name) {
+                'DataDirectory' => '/var/lib/symcon-secrets-development/' . $this->InstanceID . '/vault',
+                'KeyDirectory' => '/var/lib/symcon-secrets-development-keys/' . $this->InstanceID,
+                'HardwareAAGUIDs' => '[]', 'HardwareTrustVersion' => 'none', default => '',
+            };
+            $this->RegisterPropertyString($name, $default);
+        }
         $this->RegisterVariableBoolean('DebugEnabled', 'Debug logging', '~Switch', 0); $this->EnableAction('DebugEnabled');
         $this->RegisterVariableString('Status', 'Backend status', '', 10);
         $this->RegisterVariableString('StorageStatus', 'Vault / key storage', '', 20);
@@ -173,8 +181,50 @@ class SecretsBackend extends IPSModule
         $delay = max(1000, min(30000, (int)$this->GetBuffer('RecoveryDelay')));
         $this->SetTimerInterval('Recovery', $delay); $this->SetBuffer('RecoveryDelay', (string)min(30000, $delay * 2));
     }
+    private function initialSettingsSnapshot(): array
+    {
+        $settings = ['Enabled' => $this->ReadPropertyBoolean('Enabled'), 'DebugEnabled' => $this->ReadPropertyBoolean('DebugEnabled'), 'FrontendInstanceID' => $this->ReadPropertyInteger('FrontendInstanceID')];
+        foreach (self::STRINGS as $key) $settings[$key] = $this->ReadPropertyString($key);
+        return $settings;
+    }
+    /** Privileged local settings helper; never dispatched by HandleFrontendRequest. */
+    public function GetInitialSetupInfo(): string
+    {
+        $empty = true;
+        foreach (['DataDirectory', 'KeyDirectory'] as $field) { $path = $this->ReadPropertyString($field); if ($path !== '' && (is_link($path) || (is_dir($path) && count(scandir($path) ?: []) > 2) || (file_exists($path) && !is_dir($path)))) $empty = false; }
+        return SecretsFrontendConfiguration::encode(['backend' => $this->InstanceID, 'canConfigure' => !$this->ReadAttributeBoolean('ProvisioningSealed') && $this->ReadAttributeString('StorageBinding') === '' && $empty && !IPS_HasChanges($this->InstanceID),
+            'frontend' => $this->ReadPropertyInteger('FrontendInstanceID'), 'origin' => $this->ReadPropertyString('AdminOrigin'), 'vaultDirectory' => $this->ReadPropertyString('DataDirectory'), 'keyDirectory' => $this->ReadPropertyString('KeyDirectory'),
+            'digest' => hash('sha256', SecretsFrontendConfiguration::encode($this->initialSettingsSnapshot())), 'quorumConnected' => false]);
+    }
+    /** Initial settings only. No files/credentials, no enable, no trust pin or rights changes. */
+    public function ConfigureInitialSetup(int $FrontendInstanceID, string $ExpectedDigest, string $SettingsJSON): bool
+    {
+        $lock = 'SECB.Runtime.' . $this->InstanceID;
+        if (!IPS_SemaphoreEnter($lock, 500)) throw new RuntimeException('Backend setup is busy.');
+        $setupLock = 'SECB.Setup.' . $this->InstanceID;
+        if (!IPS_SemaphoreEnter($setupLock, 500)) { IPS_SemaphoreLeave($lock); throw new RuntimeException('An existing storage operation is busy.'); }
+        try {
+            $info = json_decode($this->GetInitialSetupInfo(), true, 16, JSON_THROW_ON_ERROR);
+            if (!$info['canConfigure'] || !hash_equals($info['digest'], $ExpectedDigest) || !in_array($info['frontend'], [0, $FrontendInstanceID], true)) throw new RuntimeException('Backend changed or is already commissioned. Repeat discovery.');
+            if (!IPS_InstanceExists($FrontendInstanceID) || strtoupper(IPS_GetInstance($FrontendInstanceID)['ModuleInfo']['ModuleID'] ?? '') !== self::FRONTEND || IPS_HasChanges($FrontendInstanceID)) throw new RuntimeException('Use the dedicated frontend with applied settings.');
+            $data = SecretsFrontendConfiguration::decode($SettingsJSON);
+            if (count($data) !== 4 || array_diff(array_keys($data), ['origin', 'vaultDirectory', 'keyDirectory', 'debugEnabled']) || !is_bool($data['debugEnabled'] ?? null) || !is_string($data['origin'] ?? null) || !is_string($data['vaultDirectory'] ?? null) || !is_string($data['keyDirectory'] ?? null)) throw new RuntimeException('Invalid initial settings.');
+            require_once __DIR__ . '/../SecretsFrontend/Commissioning.php';
+            $paths = SecretsFrontendCommissioning::paths($data['vaultDirectory'], $data['keyDirectory'], IPS_GetKernelDir());
+            $origin = SecretsFrontendConfiguration::origin($data['origin']);
+            if ($origin === '' || $origin !== SecretsFrontendConfiguration::origin(IPS_GetProperty($FrontendInstanceID, 'AdminOrigin'))) throw new RuntimeException('Pinned frontend origin changed.');
+            // Consume the initial mode before configuration changes. A partial apply remains disabled.
+            $this->WriteAttributeBoolean('GuidedV2Only', true);
+            $this->SetBuffer('Setup', ''); $this->UpdateFormField('SetupCredential', 'value', '');
+            foreach (['Enabled' => false, 'DebugEnabled' => $data['debugEnabled'], 'FrontendInstanceID' => $FrontendInstanceID, 'AdminOrigin' => $origin, 'DataDirectory' => $paths['vaultDirectory'], 'KeyDirectory' => $paths['keyDirectory']] as $key => $value) IPS_SetProperty($this->InstanceID, $key, $value);
+        } finally { IPS_SemaphoreLeave($setupLock); IPS_SemaphoreLeave($lock); }
+        IPS_ApplyChanges($this->InstanceID);
+        $this->SetValue('StorageStatus', 'Settings prepared by HTML wizard. V2 quorum connection pending; no vault created.');
+        return true;
+    }
     public function BeginStorageSetup(): string
     {
+        if ($this->ReadAttributeBoolean('GuidedV2Only')) throw new RuntimeException('Quorum runtime connection pending. The guided setup does not initialize a V1 anchor vault.');
         if ($this->ReadAttributeString('StorageBinding') !== '') throw new RuntimeException('This instance is already bound to storage; initial setup cannot replace an existing deployment.');
         $settings = $this->configuration(); $paths = $this->paths();
         if ($settings['FrontendInstanceID'] <= 0 || $settings['AdminOrigin'] === '' || $paths['vault'] === '' || $paths['keys'] === '') throw new RuntimeException('Select the new frontend, exact HTTPS origin and two separate absolute directory paths first.');
@@ -277,7 +327,11 @@ class SecretsBackend extends IPSModule
                 || !is_string($request['origin'] ?? null) || !is_string($request['cookie'] ?? null) || !is_string($request['csrf'] ?? null) || !is_string($request['remote'] ?? null)
                 || $request['origin'] !== $this->configuration()['AdminOrigin']) throw new RuntimeException('Invalid frontend envelope.');
             $action = $request['action'];
-            if (in_array($action, ['setupPreview', 'setupCreate'], true)) $result = $this->setup($action, $request['data']);
+            if ($this->ReadAttributeBoolean('GuidedV2Only')) {
+                if ($action !== 'status' || $request['data'] !== []) throw new RuntimeException('Quorum runtime connection pending.');
+                $result = ['data' => ['ready' => false, 'guidedV2Only' => true, 'message' => 'Quorum runtime connection pending; no vault activated.']];
+            }
+            elseif (in_array($action, ['setupPreview', 'setupCreate'], true)) $result = $this->setup($action, $request['data']);
             elseif ($action === 'status' && (!is_file($this->paths()['vault'] . '/vault.sqlite') || !$this->ReadPropertyBoolean('Enabled') || $this->GetBuffer('Runtime') === '')) {
                 $result = ['data' => ['ready' => false, 'storageCreated' => is_file($this->paths()['vault'] . '/vault.sqlite'), 'message' => 'Complete storage setup and independent anchor recovery in the backend console.']];
             } else $result = $this->application()->handle($action, $request['data'], $request);
@@ -327,9 +381,16 @@ class SecretsBackend extends IPSModule
     public function GetConfigurationForm(): string
     {
         $form = json_decode((string)file_get_contents(__DIR__ . '/form.json'), true, 32, JSON_THROW_ON_ERROR);
-        if ($this->bootstrap() !== null) foreach ($form['elements'] as &$element) {
-            if (in_array($element['name'] ?? '', SecretsBackendSecurityConfiguration::FOUNDATION, true)) $element['enabled'] = false;
-        }
+        $sealed = $this->ReadAttributeBoolean('ProvisioningSealed');
+        try { $sealed = $sealed || $this->bootstrap() !== null; } catch (Throwable $ignored) { $sealed = true; }
+        $fill = function (array &$items) use (&$fill, $sealed): void { foreach ($items as &$element) {
+            if ($sealed && in_array($element['name'] ?? '', SecretsBackendSecurityConfiguration::FOUNDATION, true)) $element['enabled'] = false;
+            if (($element['name'] ?? '') === 'BackendWizardURL') {
+                $id = $this->ReadPropertyInteger('FrontendInstanceID');
+                if ($id > 0 && IPS_InstanceExists($id) && strtoupper(IPS_GetInstance($id)['ModuleInfo']['ModuleID'] ?? '') === self::FRONTEND) { try { $element['value'] = SecretsFrontendConfiguration::origin(IPS_GetProperty($id, 'AdminOrigin')) . '/hook/secrets_frontend_' . $id; } catch (Throwable $ignored) {} }
+            }
+            if (isset($element['items'])) $fill($element['items']);
+        } }; $fill($form['elements']); $fill($form['actions']);
         return SecretsBackendCodec::json($form);
     }
 }

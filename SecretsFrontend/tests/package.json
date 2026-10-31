@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "scripts": {
     "test": "node ui.cjs",
-    "test:security": "node ui-races.cjs"
+    "test:security": "node ui-races.cjs",
+    "test:guided": "node ui-guided.cjs"
   },
   "devDependencies": {
     "jsdom": "26.1.0"
