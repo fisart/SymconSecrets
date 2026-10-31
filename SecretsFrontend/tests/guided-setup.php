@@ -36,6 +36,7 @@ secExpect(!$target->properties['Enabled']&&!file_exists($choice['vaultDirectory'
 secExpect(count(json_decode($portal->properties['AdditionalPages'],true))===$before+1,'Portal link not registered preserving earlier rows.');
 secExpect(!str_contains($applied['body'],$code)&&!str_contains(json_encode($result['configurationExport']),$code),'Code leaked to result/export.');
 secExpect($invoke('guidedApply',['code'=>$code,'planId'=>$preview['planId']])['status']===403,'Consumed authorization replayed.');
+secExpect(json_decode($invoke('status',[])['body'],true)['configured']===true,'Saved configuration progress was lost.');
 secExpect($invoke('authOptions',[])['status']===503,'Guided V2 mode fell back to the old anchor application.');
 secRejectReason(static fn()=>$target->BeginStorageSetup(),'Quorum runtime connection pending');
 $code=$guided->BeginGuidedSetup('https://wizard.example.test','');

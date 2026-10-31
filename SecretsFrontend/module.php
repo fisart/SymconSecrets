@@ -15,6 +15,7 @@ class SecretsFrontend extends IPSModule
     {
         parent::Create();
         $this->RegisterAttributeBoolean('GuidedV2Only', false);
+        $this->RegisterAttributeBoolean('GuidedConfigured', false);
         foreach (SecretsFrontendConfiguration::DEFAULTS as $key => $default) {
             if (is_bool($default)) $this->RegisterPropertyBoolean($key, $default);
             elseif (is_int($default)) $this->RegisterPropertyInteger($key, $default);
@@ -145,6 +146,7 @@ class SecretsFrontend extends IPSModule
     {
         if (IPS_HasChanges($this->InstanceID)) throw new RuntimeException('Apply or discard pending console edits before import.');
         $settings = SecretsFrontendConfiguration::import($JSON);
+        $this->WriteAttributeBoolean('GuidedConfigured', false);
         foreach ($settings as $key => $value) IPS_SetProperty($this->InstanceID, $key, is_array($value) ? SecretsFrontendConfiguration::encode($value) : $value);
         IPS_ApplyChanges($this->InstanceID); $this->debug('configuration-imported-disabled'); return true;
     }

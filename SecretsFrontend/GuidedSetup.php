@@ -37,6 +37,7 @@ trait SecretsFrontendGuidedSetup
         // Origin/proxy trust comes from this privileged console action, never Host/forwarded headers.
         foreach (['Enabled' => true, 'AdminOrigin' => $origin, 'TrustedHTTPSProxyIPs' => SecretsFrontendConfiguration::encode($proxies)] as $key => $value) IPS_SetProperty($this->InstanceID, $key, $value);
         $this->WriteAttributeBoolean('GuidedV2Only', true);
+        $this->WriteAttributeBoolean('GuidedConfigured', false);
         IPS_ApplyChanges($this->InstanceID);
         $code = rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
         $this->SetBuffer('GuidedSetup', SecretsFrontendConfiguration::encode(['hash' => hash('sha256', $code), 'expires' => time() + 600, 'failed' => 0,
@@ -133,6 +134,7 @@ trait SecretsFrontendGuidedSetup
                 $this->SetValue('Status', 'Setup incomplete. Inspect the applied settings and start a fresh console authorization. No vault was activated.');
                 throw new RuntimeException('Setup could not finish. Settings may be partly applied; no vault was activated. Review the instances and issue a fresh setup code.');
             }
+            $this->WriteAttributeBoolean('GuidedConfigured', true);
             return ['configured' => true, 'quorumConnected' => false, 'vaultCreated' => false, 'portalRegistered' => $plan['addPortalLink'],
                 'message' => 'Configuration saved. Quorum runtime connection is the next development step; vault operations remain disabled.',
                 'configurationExport' => ['frontend' => json_decode($this->ExportConfiguration(), true, 16, JSON_THROW_ON_ERROR), 'backend' => json_decode(SECB_ExportConfiguration($plan['backend']), true, 16, JSON_THROW_ON_ERROR)]];
@@ -145,7 +147,7 @@ trait SecretsFrontendGuidedSetup
             catch (Throwable $exception) { return ['status' => 403, 'data' => ['error' => $exception->getMessage()], 'cookie' => '']; }
         }
         if ($this->ReadAttributeBoolean('GuidedV2Only')) return ['status' => $request['action'] === 'status' ? 200 : 503,
-            'data' => $request['action'] === 'status' ? ['ready' => false, 'guidedV2Only' => true, 'setupAvailable' => $this->guidedActive(), 'message' => 'Open the setup wizard. Quorum runtime connection is pending; vault operations remain disabled.'] : ['error' => 'Quorum runtime connection is pending. This setup does not use the older anchor backend.'], 'cookie' => ''];
+            'data' => $request['action'] === 'status' ? ['ready' => false, 'configured' => $this->ReadAttributeBoolean('GuidedConfigured'), 'guidedV2Only' => true, 'setupAvailable' => $this->guidedActive(), 'message' => 'Open the setup wizard. Quorum runtime connection is pending; vault operations remain disabled.'] : ['error' => 'Quorum runtime connection is pending. This setup does not use the older anchor backend.'], 'cookie' => ''];
         if (!function_exists('SECB_HandleFrontendRequest')) throw new RuntimeException('The separate backend API is not installed.');
         return json_decode(SECB_HandleFrontendRequest($this->backend(), $this->InstanceID, SecretsFrontendConfiguration::encode($request)), true, 32, JSON_THROW_ON_ERROR);
     }
