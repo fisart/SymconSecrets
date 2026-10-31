@@ -136,6 +136,16 @@ func (c *Catalog) Boot(ctx context.Context, a consensus.Attempt, previous, next 
 	if e := c.Profile.Validate(next.Binding, "ArchiveBinding", ""); e != nil {
 		return e
 	}
+	// History resolves the exact immutable attempt; it does not reinstall a
+	// generation or bypass present serving checks on an old runtime.
+	if outcome, e := c.Store.Resolve(ctx, a); e != nil {
+		return e
+	} else if outcome != nil {
+		if outcome.Kind != "APPLIED" || string(outcome.Payload) != string(consensus.JSON(next)) {
+			return consensus.ErrIDReuse
+		}
+		return &consensus.AlreadyDecided{Outcome: *outcome}
+	}
 	id := protocol.Text(next.Binding, "archiveId")
 	v, e := c.Store.Read(ctx, archiveKey(id), "admissions/"+id, "head")
 	if e != nil {
@@ -150,6 +160,16 @@ func (c *Catalog) Boot(ctx context.Context, a consensus.Attempt, previous, next 
 	}
 	if string(v.Values[archiveKey(id)].Bytes) != string(consensus.JSON(previous)) {
 		return consensus.ErrConflict
+	}
+	var installed protocol.Object
+	if e = decode(v.Values["admissions/"+id].Bytes, &installed); e != nil {
+		return e
+	}
+	if e = c.matchesAdmissionRecord(previous, installed); e != nil {
+		return e
+	}
+	if e = runtime.Succeeds(installed); e != nil {
+		return e
 	}
 	if next.State != "VERIFYING" || previous.State == "REMOVED" || previous.State == "QUARANTINED" || next.KeyID != previous.KeyID || next.PublicKey != previous.PublicKey {
 		return errors.New("invalid archive boot transition")

@@ -488,7 +488,7 @@ func (p *Profile) ValidateResponse(wire, request Object, originals ...Object) er
 		if dec != nil {
 			return errors.New("read decision")
 		}
-	} else if dec == nil || !contains(p.ResponseDecisionContract.SuccessResults[op], Text(dec, "result")) || dec["reason"] != "NONE" {
+	} else if dec == nil || dec["result"] == "REJECTED" {
 		return errors.New("inconsistent success")
 	}
 	if op == "status" {

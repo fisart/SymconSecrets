@@ -52,7 +52,7 @@ future V2 PHP packer; it is not an import path for the V1 store.
 
 ## Explicit unfinished work and gates
 
-IR-01--IR-03 and G-01 corrections are described in
+IR-01--IR-03, G-01 and follow-up FR-01--FR-02 corrections are described in
 [`../../SecretsFrontend/IMPLEMENTATION_REVIEW_FIXES.md`](../../SecretsFrontend/IMPLEMENTATION_REVIEW_FIXES.md).
 They require independent re-review at the replacement commit. The frozen example
 with a null rejection epoch for a coordinator-bound reservation is retained as
@@ -88,7 +88,11 @@ must enforce derived two-copy health; those writers are not implemented here.
 
 Archive `Boot` now requires an opaque runtime capability created only after
 signed independent admission consumption and an explicit volume verifier. It
-atomically installs the exact admission with the new registration. `Open` binds
+verifies the installed admission under the same independently pinned guard and
+requires a strictly increasing admission counter in the same transaction that
+installs the new registration. Completed exact retries resolve as history without
+reinstalling a generation. Ordinary Boot cannot reset a counter by changing a
+guard/trust identity. `Open` binds
 that capability to one opened directory and a monotonic durable local marker;
 no service derives its local generation from the latest catalog registration.
 Re-attestation and activation compare that admitted identity before work and at

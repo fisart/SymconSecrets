@@ -137,7 +137,7 @@ final class SecretsBackendQuorumProtocol
         }
         if (!is_array($response['result'])) throw new RuntimeException('Missing quorum success result.');
         if (in_array($operation, ['readHead', 'status'], true)) { if ($decision !== null) throw new RuntimeException('Unexpected quorum read decision.'); }
-        elseif ($decision === null || !in_array($decision['result'], $this->profile['responseDecisionContract']['successResultsByOperation'][$operation], true) || $decision['reason'] !== 'NONE') throw new RuntimeException('Inconsistent quorum success.');
+        elseif ($decision === null || $decision['result'] === 'REJECTED') throw new RuntimeException('Inconsistent quorum success.');
         if ($operation === 'status') {
             $result = $response['result']; $target = $result['targetDecision'];
             if ($result['resolution'] === 'UNKNOWN') { if ($target !== null) throw new RuntimeException('UNKNOWN is not a decision.'); }
@@ -155,8 +155,25 @@ final class SecretsBackendQuorumProtocol
         $a = $request['action'];
         if ($decision['operationId'] !== $a['operationId'] || $decision['operation'] !== $a['operation'] || $decision['actionDigest'] !== $this->actionDigest($request) || $decision['incarnation'] !== $request['incarnation'] || $decision['actorDigest'] !== self::digest($request['actor']) || $decision['expectedHeadDigest'] !== self::digest($a['expectedHead'])) throw new RuntimeException('Quorum decision predecessor/action binding.');
         if ($decision['coordinatorEpoch'] !== ($a['requiredCoordinator']['epoch'] ?? null)) throw new RuntimeException('Quorum decision coordinator binding.');
-        if ($decision['result'] === 'REJECTED') { if ($decision['reason'] === 'NONE' || $decision['resultHeadDigest'] !== null) throw new RuntimeException('Quorum rejection decision semantics.'); }
-        elseif ($decision['reason'] !== 'NONE') throw new RuntimeException('Quorum successful decision has failure reason.');
+        $this->decisionSemantics($decision, $request);
+    }
+    // The original operation's lifecycle applies equally to direct, historical
+    // and nested decisions. Future original-user lifecycles require their own
+    // reviewed contract; generic COMMITTED/ABORTED exceptions are forbidden.
+    private function decisionSemantics(array $decision, array $request): void
+    {
+        $a = $request['action']; $op = $a['operation'];
+        if ($decision['result'] === 'REJECTED') {
+            if ($decision['reason'] === 'NONE' || $decision['resultHeadDigest'] !== null) throw new RuntimeException('Quorum rejection decision semantics.');
+            return;
+        }
+        if (!in_array($decision['result'], $this->profile['responseDecisionContract']['successResultsByOperation'][$op], true) || $decision['reason'] !== 'NONE') throw new RuntimeException('Quorum operation decision outcome/reason.');
+        $head = $decision['resultHeadDigest'];
+        if ($op === 'commitCandidate') {
+            if ($head === null || $head === self::digest($a['expectedHead'])) throw new RuntimeException('Quorum committed decision requires a new head.');
+        } elseif ($op === 'abortCandidate') {
+            if ($head !== null) throw new RuntimeException('Quorum aborted decision cannot publish a head.');
+        } elseif ($head !== null && $head !== self::digest($a['expectedHead'])) throw new RuntimeException('Quorum non-commit decision result head.');
     }
     private function requestRole(array $request): void
     {
@@ -196,7 +213,6 @@ final class SecretsBackendQuorumProtocol
     private function resultBinding(array $response, array $request, ?array $original): void
     {
         $a = $request['action']; $body = $a['body']; $result = $response['result']; $op = $a['operation']; $decision = $response['decision'];
-        if ($op !== 'commitCandidate' && $decision !== null && $decision['resultHeadDigest'] !== null && $decision['resultHeadDigest'] !== self::digest($a['expectedHead'])) throw new RuntimeException('Non-commit quorum result head binding.');
         switch ($op) {
             case 'readHead': if (!SecretsBackendCodec::same($response['currentHead'], $result['head'])) throw new RuntimeException('Quorum read head binding.'); break;
             case 'registerBoot':
@@ -227,7 +243,20 @@ final class SecretsBackendQuorumProtocol
                     }
                 }
                 break;
-            case 'status': if ($result['targetDecision'] !== null) $this->originalBinding($result['targetDecision'], $original, $request); break;
+            case 'status':
+                $target = $result['targetDecision'];
+                if ($target !== null) {
+                    $this->originalBinding($target, $original, $request);
+                    if ($target['result'] !== 'REJECTED') {
+                        $expected = $original['action']['expectedHead']; $current = $response['currentHead'];
+                        if ($expected !== null) $this->headAtLeast($current, $expected);
+                        if ($target['result'] === 'COMMITTED') {
+                            $compare = self::compare($current['index'], SecretsBackendCodec::increment($expected['index']));
+                            if ($compare < 0 || ($compare === 0 && $target['resultHeadDigest'] !== self::digest($current))) throw new RuntimeException('Quorum historical committed head contradicts current head.');
+                        }
+                    }
+                }
+                break;
             case 'pinBundleBegin': self::sameFields($result['pin'], $body, ['purpose','ownerRef','bundle','leaseId']); break;
             case 'pinBundleRelease': if ($result['pin']['id'] !== $body['pinRef']['id'] || $result['pin']['state'] !== 'RELEASED') throw new RuntimeException('Quorum pin release binding.'); break;
             case 'repairOpen': self::sameFields($result['repairTicket'], $body, ['bundleRef','source','target']); if (!SecretsBackendCodec::same($result['repairTicket']['requiredHead'], $a['expectedHead'])) throw new RuntimeException('Quorum repair head.'); break;

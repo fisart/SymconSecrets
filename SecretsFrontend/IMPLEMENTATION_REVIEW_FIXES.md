@@ -17,6 +17,39 @@ The committed regressions instead require rejection or locked recovery.
 | IR-03 | Both languages bind decisions to the canonical requested predecessor and required-coordinator epoch/null, validate derivable result-head/reference relationships and use the retained original request for historical status. A history query's own null predecessor is not substituted for its target context. | Both languages consume the same 37 validly signed positive/negative vectors, including the auditor's contradictions, rejected actions, coordinator-bound results, election, references and historical context. Missing historical context fails closed. |
 | G-01 | Archive construction requires an opaque independently admitted runtime capability. It binds signed boot/generation/volume/target identity to a specific opened directory, with a durable monotonic local marker. Catalog boot installs admission and registration together. Before-work and final-CAS checks compare the same admitted context. | A pre-validation stale service cannot adopt or activate a replacement, transfer its capability to an empty new directory, or restore an old local marker. The during-validation race remains covered. Restart and worker fixtures construct genuinely admitted runtimes. Real host-guard issuance/fencing infrastructure remains unfinished. |
 
+## Follow-up FR-01 and FR-02
+
+Follow-up review baseline: `165b99b5515cd2b13834c9a5f1df5fdf08e951a6`.
+[Full independent follow-up and original reproducers](https://chatgpt.com/library?file_id=libfile_de1472e1d0e08191a90963046e922f87&account_id=personal).
+The original PHP/Go historical-outcome and real-etcd delayed-admission reproducers
+were run before these corrections and reproduced both findings. IR-01 and IR-02
+are independently closed for their reviewed component paths; physical power loss
+and full-system integration remain outside that closure.
+
+| Finding | Targeted correction | Rejection regression |
+| --- | --- | --- |
+| FR-01 | Boot validates the installed admission against the current registration, verifies its signature using the capability's independently pinned guard key, and requires a strictly larger admission counter under the same guard/component/target/trust lineage. That exact admission remains in the final atomic CAS read set. A higher registration version cannot substitute for a higher admission counter. | `archive/fr_admission_test.go`: consume counter 2 without Boot, install counter 3 on B, submit counter 2 against the current predecessor; reject, keep B current, deny A receipts/activation. Same-counter different admission, different guard and changed key under the same key ID are refused. |
+| FR-01 retry | Exact completed Boot ID/digest/payload resolves as `AlreadyDecided` history, including after supersession; it does not install a generation. ID/digest or payload changes fail. | Lost acknowledgement and superseded-history regressions assert no catalog revision change and that the newer Service remains current. Existing directory marker and during-validation CAS tests remain. |
+| FR-02 | One operation-aware semantic validator is used by direct, historical and nested decisions in PHP/Go. Outcomes, reason and head/null rules follow the retained original operation: metadata authorization cannot become COMMITTED, ABORTED or APPLIED; commitment requires a new head and abort publishes none. Historical committed heads must be consistent with the current head. | Shared signed vectors retain all 37 earlier cases and add 34 cases, including the three audit reproductions, valid historical AUTHORIZED/REJECTED, commit/abort terminal outcomes, invalid reasons/heads and nested metadata-as-core outcomes. Both language suites verify the signatures before checking accept/reject. |
+
+Ordinary Boot and local marker advancement intentionally reject guard-key or
+trust-lineage changes, even with a higher counter. An approved guard rotation or
+counter-reset/recovery transition needs its separate implementation and acceptance;
+there is no new-key reset fallback. The stored guard public key is privately copied
+into the immutable admitted capability. This is a catalog high-water check against
+installed admissions, not evidence that external issuance/revocation infrastructure
+has been deployed or qualified.
+
+The semantic validator does not invent a new core-user operation or reinterpret an
+authorize/reserve control decision as a terminal browser mutation. The frozen
+operation-specific decision contract is enforced on retained request contexts.
+Commit/abort fixtures are synthetic codec contexts, not an executed core lifecycle.
+The distinct original browser-user lifecycle, its serialization and complete core
+integration remain unfinished and must receive an explicit compatible contract
+before that path is exposed; missing/unsupported context fails closed. Historical
+status still returns no reusable grant or plaintext, and missing original context
+continues to fail closed.
+
 ## Frozen profile and corrected examples
 
 `DC01_Audit_Profile_v1.2.json` remains byte-for-byte unchanged, SHA-256

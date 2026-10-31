@@ -20,6 +20,9 @@ func (c *Catalog) matchesAdmission(reg Registration, runtime *trust.AdmittedRunt
 		return ErrRuntimeFenced
 	}
 	r := runtime.Record()
+	return c.matchesAdmissionRecord(reg, r)
+}
+func (c *Catalog) matchesAdmissionRecord(reg Registration, r protocol.Object) error {
 	if r["nativeClusterId"] != c.Store.NativeID() {
 		return ErrRuntimeFenced
 	}

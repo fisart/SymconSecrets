@@ -51,12 +51,36 @@ func (p *Profile) decisionBinding(d, request Object) error {
 	if !Equal(d["coordinatorEpoch"], epoch) {
 		return errors.New("decision coordinator binding")
 	}
+	return p.decisionSemantics(d, request)
+}
+
+// Apply the same operation lifecycle to immediate, historical and nested
+// decisions. No generic enum value is authority to reinterpret an operation as
+// a different user lifecycle. Any future original-user operation needs an
+// explicit reviewed contract, not a blanket COMMITTED/ABORTED exception.
+func (p *Profile) decisionSemantics(d, request Object) error {
+	action := Obj(request, "action")
+	op := Text(action, "operation")
 	if d["result"] == "REJECTED" {
 		if d["reason"] == "NONE" || d["resultHeadDigest"] != nil {
 			return errors.New("rejection decision semantics")
 		}
-	} else if d["reason"] != "NONE" {
-		return errors.New("successful decision has failure reason")
+		return nil
+	}
+	if !contains(p.ResponseDecisionContract.SuccessResults[op], Text(d, "result")) || d["reason"] != "NONE" {
+		return errors.New("operation decision outcome/reason")
+	}
+	head := d["resultHeadDigest"]
+	if op == "commitCandidate" {
+		if head == nil || Equal(head, headDigest(action["expectedHead"])) {
+			return errors.New("committed decision requires a new head")
+		}
+	} else if op == "abortCandidate" {
+		if head != nil {
+			return errors.New("aborted decision cannot publish a head")
+		}
+	} else if head != nil && !Equal(head, headDigest(action["expectedHead"])) {
+		return errors.New("non-commit decision result head")
 	}
 	return nil
 }
@@ -142,9 +166,6 @@ func (p *Profile) resultBinding(r, request Object, originals []Object) error {
 	op := Text(a, "operation")
 	d := Obj(r, "decision")
 	expected := Obj(a, "expectedHead")
-	if op != "commitCandidate" && d != nil && d["resultHeadDigest"] != nil && !Equal(d["resultHeadDigest"], headDigest(a["expectedHead"])) {
-		return errors.New("non-commit result head binding")
-	}
 	switch op {
 	case "readHead":
 		if !Equal(r["currentHead"], result["head"]) {
@@ -223,7 +244,28 @@ func (p *Profile) resultBinding(r, request Object, originals []Object) error {
 			if len(originals) != 1 {
 				return errors.New("historical original request context required")
 			}
-			return p.validateOriginal(target, originals[0], request)
+			if e := p.validateOriginal(target, originals[0], request); e != nil {
+				return e
+			}
+			if target["result"] != "REJECTED" {
+				expected := Obj(Obj(originals[0], "action"), "expectedHead")
+				current := Obj(r, "currentHead")
+				if expected != nil {
+					if e := headAtLeast(current, expected); e != nil {
+						return e
+					}
+				}
+				if target["result"] == "COMMITTED" {
+					next, e := nextCounter(Text(expected, "index"))
+					if e != nil {
+						return e
+					}
+					cmp := counterCompare(Text(current, "index"), next)
+					if cmp < 0 || (cmp == 0 && target["resultHeadDigest"] != MustDigest(current)) {
+						return errors.New("historical committed head contradicts current head")
+					}
+				}
+			}
 		}
 	case "pinBundleBegin":
 		return sameFields(Obj(result, "pin"), body, "purpose", "ownerRef", "bundle", "leaseId")

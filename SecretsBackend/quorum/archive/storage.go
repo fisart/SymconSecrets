@@ -189,6 +189,11 @@ func Open(path, id string, key ed25519.PrivateKey, catalog *Catalog, runtime *tr
 			if prior == next && !protocol.Equal(previous, record) {
 				return ErrRuntimeFenced
 			}
+			if !protocol.Equal(previous, record) {
+				if e = runtime.Succeeds(previous); e != nil {
+					return e
+				}
+			}
 			if protocol.Equal(previous, record) {
 				return nil
 			}
