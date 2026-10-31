@@ -12,7 +12,7 @@ The first implementation audit found A01–A07 defects on commit `c0e995d8f355a3
 - New administrator registration/login, fresh bound changes and selected-record reveal; no old Portal/password session reuse.
 - One-use volatile-credential storage wizard, two-path review, fixed frontend/backend binding and disabled-on-import settings.
 - Exact-head final grant claims; isolated configured-root hardware verification; staged/anchored security configuration; structured encrypted audit context; UI generation cancellation; reload transition locks and request-time recovery scheduling.
-- Debug child variables, Portal additional-page registration and fail-closed HTTPS/origin checks.
+- Debug child variables, Portal additional-page registration, a pinned HTTPS browser origin and server-side host/Origin checks. Native/NAT/relay compatibility follows the existing working modules; TLS terminates at the configured public listener. Browser secure-context checks and an exact HTTPS CSP connection target gate credential/API use; PHP transport flags and native WebServer caller metadata are not required. This deployment boundary needs real endpoint verification.
 
 Local tests cover interrupted prepare/publish, lost acquire acknowledgements, stale backups, superseded workers, altered signatures/nonces, real cryptographic WebAuthn assertions, masked listings, selected-record disclosure and replay refusal. PHP/Python tests use the actual message signatures across languages. DOM tests cover credential clearing and wizard requests. These are narrower implementation tests, not a substitute for the full acceptance suite.
 

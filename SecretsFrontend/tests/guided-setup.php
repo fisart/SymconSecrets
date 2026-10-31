@@ -1,6 +1,13 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/modules.php';
+// The earlier password vault is never a commissioning target or writable dependency.
+$GLOBALS['moduleIDs'][901] = '{7C5A3841-3F7B-4D2A-9E1C-5B6D8F9A0E12}';
+$existingManager = new IPSModule(901);
+$existingManager->properties = ['PortalEnabled' => true, 'PortalOrigin' => 'https://existing.example.test', 'KeyFolderPath' => '/existing/keys'];
+$existingManager->values = ['Vault' => 'existing-encrypted-vault-sentinel'];
+$existingManager->attributes = ['ExistingState' => 'preserve'];
+$existingManagerBefore = [$existingManager->properties, $existingManager->values, $existingManager->attributes];
 function SECB_GetInitialSetupInfo(int $id): string { return $GLOBALS['instances'][$id]->GetInitialSetupInfo(); }
 function SECB_ConfigureInitialSetup(int $id, int $frontend, string $digest, string $settings): bool { return $GLOBALS['instances'][$id]->ConfigureInitialSetup($frontend, $digest, $settings); }
 function SECB_ExportConfiguration(int $id): string { return $GLOBALS['instances'][$id]->ExportConfiguration(); }
@@ -22,6 +29,7 @@ $found = $invoke('guidedDiscover',['code'=>$code]);secExpect($found['status']===
 secExpect(array_column($discovery['backends'],'id')===[789,790],'Sealed/existing backend included or candidates lost.');
 $choice=['backend'=>789,'portal'=>800,'documentation'=>0,'theme'=>'dark','vaultDirectory'=>$directory.'/new-data','keyDirectory'=>$directory.'/new-keys','proxyIPs'=>[],'addPortalLink'=>true,'debugEnabled'=>false];
 $bad=$choice;$bad['backend']=456;secExpect($invoke('guidedPreview',['code'=>$code,'configuration'=>$bad])['status']===403,'Existing vault selected.');
+$bad=$choice;$bad['backend']=901;secExpect($invoke('guidedPreview',['code'=>$code,'configuration'=>$bad])['status']===403,'Existing SecretsManager accepted as a new backend.');
 $bad=$choice;$bad['keyDirectory']=$choice['vaultDirectory'].'/nested';secExpect($invoke('guidedPreview',['code'=>$code,'configuration'=>$bad])['status']===403,'Nested directories accepted.');
 $preview=json_decode($invoke('guidedPreview',['code'=>$code,'configuration'=>$choice])['body'],true);secExpect(isset($preview['planId']),'Review failed.');
 $target=$GLOBALS['instances'][789];$target->properties['DebugEnabled']=true;
@@ -98,4 +106,6 @@ secExpect(!$restoredDraft->properties['Enabled']&&$restoredDraft->attributes['Gu
 secExpect(json_decode($restoredDraft->attributes['DeploymentDraft'],true)===$draftChoice['deployment'],'Draft choices did not survive import.');
 $decoded['deploymentDraft']['activationAllowed']=true;secReject(static fn()=>$restoredDraft->ImportConfiguration(json_encode($decoded)),'Draft import accepted activation authority.');
 echo "PASS deployment plan exact review, native v2 export/import, preserved placement, disabled V2-only restore and no authority creation\n";
+secExpect([$existingManager->properties, $existingManager->values, $existingManager->attributes] === $existingManagerBefore, 'Commissioning altered the existing SecretsManager portal, vault or settings.');
+echo "PASS existing SecretsManager cannot be selected as a new backend; portal enablement, encrypted vault and settings are preserved throughout commissioning\n";
 

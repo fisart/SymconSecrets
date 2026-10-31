@@ -4,10 +4,10 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {JSDOM,VirtualConsole}=require('jsdom');
 const original=fs.readFileSync(path.join(__dirname,'../page.html'),'utf8');
-const html=original.replaceAll('%%NONCE%%','test-nonce').replace('%%BOOT%%',JSON.stringify({path:'/hook/secrets_frontend_123',theme:'system'})).replace('%%NAVIGATION%%','');
+const html=original.replaceAll('%%NONCE%%','test-nonce').replace('%%BOOT%%',JSON.stringify({origin:'https://secrets.example.test',path:'/hook/secrets_frontend_123',theme:'system'})).replace('%%NAVIGATION%%','');
 const calls=[];let failPreview=false;let createWasVolatile=false;
 const errors=[];const console=new VirtualConsole();console.on('jsdomError',error=>errors.push(error));
-const dom=new JSDOM(html,{url:'https://secrets.example.test/hook/secrets_frontend_123',runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:console,beforeParse(window){
+const dom=new JSDOM(html,{url:'https://secrets.example.test/hook/secrets_frontend_123',runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:console,beforeParse(window){Object.defineProperty(window,'isSecureContext',{value:true,configurable:true});
  window.fetch=async(url,options)=>{
   const data=JSON.parse(options.body);calls.push({url,options,request:data});
   let result={};let ok=true;

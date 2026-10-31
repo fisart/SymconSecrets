@@ -2,13 +2,13 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
-const source=fs.readFileSync(__dirname+'/../page.html','utf8').replaceAll('%%NONCE%%','test').replace('%%BOOT%%',JSON.stringify({path:'/hook/secrets_frontend_123',theme:'system'})).replace('%%NAVIGATION%%','');
+const source=fs.readFileSync(__dirname+'/../page.html','utf8').replaceAll('%%NONCE%%','test').replace('%%BOOT%%',JSON.stringify({origin:'https://secrets.example.test',path:'/hook/secrets_frontend_123',theme:'system'})).replace('%%NAVIGATION%%','');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r});return{promise,resolve};};
 const credential=()=>({type:'public-key',rawId:new Uint8Array([1]).buffer,response:{clientDataJSON:new Uint8Array([1]).buffer,authenticatorData:new Uint8Array([1]).buffer,signature:new Uint8Array([1]).buffer,userHandle:null}});
 async function fixture(mode='approve'){
  const pending=deferred(),calls=[],timers=[];
- const dom=new JSDOM(source,{url:'https://secrets.example.test/hook/secrets_frontend_123',runScripts:'dangerously',pretendToBeVisual:true,beforeParse(w){
+ const dom=new JSDOM(source,{url:'https://secrets.example.test/hook/secrets_frontend_123',runScripts:'dangerously',pretendToBeVisual:true,beforeParse(w){Object.defineProperty(w,'isSecureContext',{value:true,configurable:true});
   const timeout=w.setTimeout.bind(w);w.setTimeout=(fn,ms,...args)=>{if(ms===600000)timers.push(fn);return timeout(fn,ms,...args)};
   w.HTMLDialogElement.prototype.showModal=function(){this.open=true};w.HTMLDialogElement.prototype.close=function(){this.open=false};
   Object.defineProperty(w.navigator,'credentials',{value:{get:async()=>mode==='credential'?pending.promise:credential(),create:async()=>mode==='enrollment'?pending.promise:credential()}});

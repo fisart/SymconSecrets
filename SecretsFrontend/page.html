@@ -200,7 +200,16 @@ body.dark .brandmark {background:#426b43}
 <dialog id="review"><h2>Confirm this operation</h2><p id="reviewText" class="reviewText"></p><p>Use the eligible passkey requested by the browser. This approval covers only this exact operation.</p><div class="row"><button id="approve" class="primary">Confirm with passkey</button><button id="cancelReview">Cancel</button></div></dialog>
 <script nonce="%%NONCE%%">
 'use strict';
+(()=>{
 const boot=%%BOOT%%;
+const secureOrigin=()=>location.protocol==='https:'&&location.origin===boot.origin&&window.isSecureContext===true;
+if(!secureOrigin()){
+ const notice=document.createElement('p');notice.setAttribute('role','alert');notice.textContent='Open the configured HTTPS wizard address in a secure browser context. No credentials or requests have been sent.';
+ const link=document.createElement('a');link.id='secureWizardLink';link.href=boot.origin+boot.path;link.textContent=boot.origin+boot.path;
+ document.body.replaceChildren(notice,link);
+ if(location.protocol!=='https:'||location.origin!==boot.origin)location.replace(link.href);
+ return;
+}
 document.body.classList.add(boot.theme);
 const $=id=>document.getElementById(id);
 let csrf='', revision='', selected=null, snapshot=null, approval=null, clearTimer=null, setupCredential='', planId='', provisioning=null;
@@ -219,6 +228,7 @@ function tab(name){if(!$(name)||!$(name).classList.contains('panel'))return;inva
 for(const button of document.querySelectorAll('[data-tab]'))button.addEventListener('click',()=>tab(button.dataset.tab));
 for(const button of document.querySelectorAll('[data-open]'))button.addEventListener('click',()=>tab(button.dataset.open));
 async function api(action,data={},ticket=generation){
+ if(!secureOrigin())throw Error('Open the configured HTTPS wizard address in a secure browser context.');
  ensure(ticket);const controller=new AbortController();controllers.add(controller);
  try{const response=await fetch(boot.path,{method:'POST',credentials:'same-origin',cache:'no-store',redirect:'error',signal:controller.signal,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({action,data})});
  let result;try{result=await response.json();}catch{ensure(ticket);throw Error('Request could not be completed. Check backend status.');}
@@ -282,4 +292,5 @@ window.addEventListener('pagehide',()=>{pageActive=false;invalidate();csrf='';sn
 window.addEventListener('pageshow',()=>{pageActive=true;});
 document.addEventListener('visibilitychange',()=>{if(document.hidden)invalidate();});
 (async()=>{try{const status=await api('status');$('readiness').textContent=status.ready?'Backend is ready. Sign in or enroll a new administrator.':(status.message||'Complete the setup wizard.');if(status.guidedV2Only){$('legacySetup').hidden=true;$('signin').disabled=true;tab('setup');if(status.configured&&!status.setupAvailable){$('guidedResult').textContent='Your instance settings were saved. Quorum runtime connection is pending; no vault is active.';$('guidedExport').hidden=true;$('deploymentExport').hidden=true;guidedStep(5);}}if(status.ready){try{await load();}catch{}}}catch(error){$('readiness').textContent='Backend unavailable. Check the paired instances, HTTPS origin and backend status.';}})();
+})();
 </script></body></html>

@@ -25,11 +25,12 @@ final class SecretsFrontendHttp
         $origin = SecretsFrontendConfiguration::origin($settings['AdminOrigin']);
         if ($origin === '') return $reply(503, 'Configure the administrator HTTPS origin in the instance.');
         $proxy = in_array($server['REMOTE_ADDR'] ?? '', $settings['TrustedHTTPSProxyIPs'], true);
-        $directTLS = in_array(strtolower((string)($server['HTTPS'] ?? '')), ['on', '1'], true);
-        // Only the module supplies this flag, using the engine's calling WebServer.
-        $nativeTLS = ($ui['nativeTLS'] ?? false) === true;
-        $forwardedTLS = $proxy && strtolower((string)($server['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https';
-        if (!$directTLS && !$nativeTLS && !$forwardedTLS) return $reply(403, 'HTTPS is required. Use an active SSL-enabled Symcon WebServer. If a reverse proxy terminates TLS, configure its exact IP in the frontend trusted HTTPS proxy settings.');
+        // Match the existing Symcon modules: TLS terminates at the configured HTTPS
+        // endpoint, which may be a native listener, NAT or relay. PHP transport flags
+        // and a core WebServer caller are not guaranteed. Never infer TLS from headers.
+        // The browser checks the pinned HTTPS origin before any credential/API use;
+        // the server independently checks host, Origin, JSON and backend authorization.
+        $headers['Content-Security-Policy'] = str_replace("connect-src 'self'", 'connect-src ' . $origin, $headers['Content-Security-Policy']);
         $host = $proxy && isset($server['HTTP_X_FORWARDED_HOST']) ? $server['HTTP_X_FORWARDED_HOST'] : ($server['HTTP_HOST'] ?? '');
         try { $requestOrigin = SecretsFrontendConfiguration::origin('https://' . $host); }
         catch (Throwable $exception) { return $reply(403, 'Invalid request host.'); }
@@ -41,7 +42,14 @@ final class SecretsFrontendHttp
         }
         $headers['Strict-Transport-Security'] = 'max-age=31536000';
         if ($method === 'POST') {
-            if (($server['HTTP_ORIGIN'] ?? '') !== $origin || strtolower(explode(';', (string)($server['CONTENT_TYPE'] ?? ''))[0]) !== 'application/json'
+            // WebHook Control can expose Content-Type under either PHP key. Reject
+            // conflicting mirrored headers rather than choosing one interpretation.
+            $types = [];
+            foreach (['CONTENT_TYPE', 'HTTP_CONTENT_TYPE'] as $field) {
+                $type = trim((string)($server[$field] ?? ''));
+                if ($type !== '') $types[strtolower(trim(explode(';', $type, 2)[0]))] = true;
+            }
+            if (($server['HTTP_ORIGIN'] ?? '') !== $origin || count($types) !== 1 || !isset($types['application/json'])
                 || !in_array($server['HTTP_SEC_FETCH_SITE'] ?? 'same-origin', ['same-origin', 'none'], true)) return $reply(403, 'Same-origin JSON requests are required.');
             try {
                 $body = SecretsFrontendConfiguration::decode($input);
@@ -59,7 +67,7 @@ final class SecretsFrontendHttp
             } catch (Throwable $exception) { return $reply(503, 'Backend request could not be completed. Check the backend status.'); }
         }
         if ($method === 'HEAD') return ['status' => 200, 'headers' => $headers, 'body' => ''];
-        $boot = json_encode(['path' => $path, 'theme' => $settings['Theme'], 'guidedV2Only' => ($ui['guidedV2Only'] ?? false) === true], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_THROW_ON_ERROR);
+        $boot = json_encode(['origin' => $origin, 'path' => $path, 'theme' => $settings['Theme'], 'guidedV2Only' => ($ui['guidedV2Only'] ?? false) === true], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_THROW_ON_ERROR);
         $escape = static fn(string $text): string => htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $links = '';
         foreach (['Portal' => $portal, 'Dokumentation' => $documentation] as $label => $target) {

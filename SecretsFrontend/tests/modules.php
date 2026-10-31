@@ -118,7 +118,7 @@ $server['HTTP_ORIGIN'] = 'https://secrets.example.test'; $server['HTTP_HOST'] = 
 $result = SecretsFrontendHttp::response($settings, 123, $server, '/hook/secrets_frontend_123', '', '', '{}'); secExpect($result['status'] === 403, 'POST redirected with credentials.');
 $server['REQUEST_METHOD'] = 'GET'; $result = SecretsFrontendHttp::response($settings, 123, $server, '/hook/secrets_frontend_123', '', ''); secExpect($result['status'] === 303 && $result['headers']['Location'] === 'https://secrets.example.test/hook/secrets_frontend_123', 'Portal link did not redirect to the fixed admin origin.');
 $server['HTTP_HOST'] = 'secrets.example.test'; $result = SecretsFrontendHttp::response($settings, 123, $server, '/hook/secrets_frontend_123', '', '');
-secExpect($result['status'] === 200 && !str_contains($result['body'], '%%') && str_contains($result['headers']['Content-Security-Policy'], "connect-src 'self'"), 'HTML/CSP rendering failed.');
+secExpect($result['status'] === 200 && !str_contains($result['body'], '%%') && str_contains($result['headers']['Content-Security-Policy'], 'connect-src https://secrets.example.test'), 'HTML/CSP rendering failed.');
 $hookInstance = new HookInstance(43210); $hookInstance->Create();
 $hookInstance->properties['AdminOrigin'] = 'https://test.hermitage.ap-fischer.de:46910';
 $expectedWizard = 'https://test.hermitage.ap-fischer.de:46910/hook/secrets_frontend_43210';
@@ -152,68 +152,7 @@ foreach (['', 'http://test.hermitage.ap-fischer.de:46910', 'https://user:passwor
     $unconfigured->PreviewWizardURL($invalidAddress);
     secExpect($unconfigured->form['WizardURL']['value'] === '' && !$unconfigured->form['OpenWizard']['enabled'] && !$unconfigured->form['CopyWizardURL']['enabled'], 'Invalid or cleared address retained a stale form URL.');
 }
-// Match Symcon's documented native WebHook context with no standard PHP HTTPS flag.
-$webServer = new IPSModule(65000); $webServer->status = 102;
-$GLOBALS['moduleIDs'][65000] = '{D83E9CCF-9869-420F-8306-2B043E9BA180}';
-$webServer->properties = ['Active' => true, 'EnableSSL' => true];
-$nativeContext = ['SENDER' => 'WebHook', 'INSTANCE' => 65000];
-secExpect(SecretsFrontendTransport::nativeTLS($nativeContext, []), 'Calling native SSL WebServer was not recognized.');
-foreach ([[], ['SENDER' => 'Execute', 'INSTANCE' => 65000], ['SENDER' => 'WebHook', 'INSTANCE' => '65000'], ['SENDER' => 'WebHook', 'INSTANCE' => 99999], ['SENDER' => 'WebHook', 'INSTANCE' => 50365]] as $badContext) {
-    secExpect(!SecretsFrontendTransport::nativeTLS($badContext, []), 'Missing, foreign or non-WebHook native context established TLS.');
-}
-foreach ([['Active', false], ['EnableSSL', false], ['EnableSSL', 'true']] as [$property, $value]) {
-    $before = $webServer->properties; $webServer->properties[$property] = $value;
-    secExpect(!SecretsFrontendTransport::nativeTLS($nativeContext, []), 'Inactive, plain HTTP or invalid WebServer settings established TLS.');
-    $webServer->properties = $before;
-}
-$GLOBALS['changed'][65000] = true;
-secExpect(!SecretsFrontendTransport::nativeTLS($nativeContext, []), 'Unapplied WebServer settings established TLS.');
-$GLOBALS['changed'][65000] = false; $webServer->status = 104;
-secExpect(!SecretsFrontendTransport::nativeTLS($nativeContext, []), 'Inactive WebServer status established TLS.');
-$webServer->status = 102; $GLOBALS['moduleIDs'][65000] = $GLOBALS['moduleIDs'][700];
-secExpect(!SecretsFrontendTransport::nativeTLS($nativeContext, []), 'A foreign module established TLS.');
-$GLOBALS['moduleIDs'][65000] = '{D83E9CCF-9869-420F-8306-2B043E9BA180}';
-secExpect(!SecretsFrontendTransport::nativeTLS($nativeContext, ['HTTPS' => 'off']), 'Explicit plain HTTP transport was ignored.');
-
-$nativeFrontend = new HookInstance(50365); $nativeFrontend->Create();
-$nativeFrontend->properties['Enabled'] = true;
-$nativeFrontend->properties['AdminOrigin'] = 'https://test.hermitage.ap-fischer.de:46910';
-$nativeServer = ['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/hook/secrets_frontend_50365', 'HTTP_HOST' => 'test.hermitage.ap-fischer.de:46910', 'REMOTE_ADDR' => '198.51.100.24'];
-$savedServer = $_SERVER; $savedContext = $GLOBALS['_IPS'] ?? null;
-$_SERVER = $nativeServer; $GLOBALS['_IPS'] = $nativeContext;
-ob_start(); $nativeFrontend->ProcessHookData(); $nativeBody = ob_get_clean();
-secExpect(http_response_code() === 200 && str_contains(strtolower($nativeBody), '<!doctype html>') && str_contains($nativeBody, json_encode('/hook/secrets_frontend_50365')), 'Real generated hook did not serve the HTML wizard on the custom native SSL port.');
-unset($GLOBALS['_IPS']);
-$_SERVER += ['HTTP_X_FORWARDED_PROTO' => 'https', 'HTTP_NATIVE_TLS' => 'true', 'HTTP_INSTANCE' => '65000', 'HTTP_HOOK' => 'https://test.hermitage.ap-fischer.de:46910/hook/secrets_frontend_50365', 'SERVER_PORT' => '46910'];
-ob_start(); $nativeFrontend->ProcessHookData(); $plainBody = ob_get_clean();
-secExpect(http_response_code() === 403 && str_starts_with($plainBody, 'HTTPS is required.'), 'Browser headers, custom port or unrelated SSL server bypassed transport checks.');
-$_SERVER = $savedServer;
-if ($savedContext === null) unset($GLOBALS['_IPS']); else $GLOBALS['_IPS'] = $savedContext;
-$nativeSettings = SecretsFrontendConfiguration::validate(array_replace(SecretsFrontendConfiguration::DEFAULTS, ['Enabled' => true, 'AdminOrigin' => 'https://test.hermitage.ap-fischer.de:46910']));
-$proxySettings = array_replace($nativeSettings, ['TrustedHTTPSProxyIPs' => ['198.51.100.24']]);
-$nativeServer['HTTP_X_FORWARDED_PROTO'] = 'https';
-$reply = SecretsFrontendHttp::response($proxySettings, 50365, $nativeServer, '/hook/secrets_frontend_50365', '', '');
-secExpect($reply['status'] === 200, 'Explicitly trusted HTTPS proxy no longer works.');
-$nativeServer['REMOTE_ADDR'] = '198.51.100.25';
-$reply = SecretsFrontendHttp::response($proxySettings, 50365, $nativeServer, '/hook/secrets_frontend_50365', '', '');
-secExpect($reply['status'] === 403, 'Untrusted proxy established TLS.');
-$nativeUI = ['nativeTLS' => true];
-$reply = SecretsFrontendHttp::response($nativeSettings, 50365, $nativeServer, '/hook/secrets_frontend_50365', '', '', '', null, $nativeUI);
-secExpect($reply['status'] === 200 && isset($reply['headers']['Strict-Transport-Security']), 'Native SSL did not retain secure response headers.');
-$nativeServer['REQUEST_METHOD'] = 'HEAD';
-$reply = SecretsFrontendHttp::response($nativeSettings, 50365, $nativeServer, '/hook/secrets_frontend_50365', '', '', '', null, $nativeUI);
-secExpect($reply['status'] === 200 && $reply['body'] === '', 'Native SSL HEAD did not preserve its empty body.');
-$nativeServer['REQUEST_METHOD'] = 'POST'; $nativeServer['CONTENT_TYPE'] = 'application/json'; $nativeServer['HTTP_ORIGIN'] = $nativeSettings['AdminOrigin'];
-$apiCalled = false;
-$reply = SecretsFrontendHttp::response($nativeSettings, 50365, $nativeServer, '/hook/secrets_frontend_50365', '', '', '{"action":"status","data":{}}', static function () use (&$apiCalled): array { $apiCalled = true; return ['status' => 200, 'data' => ['ok' => true]]; }, $nativeUI);
-secExpect($reply['status'] === 200 && $apiCalled && json_decode($reply['body'], true)['ok'] === true, 'Native SSL did not preserve same-origin API dispatch.');
-$nativeServer['REQUEST_METHOD'] = 'POST'; $nativeServer['CONTENT_TYPE'] = 'application/json'; $nativeServer['HTTP_ORIGIN'] = 'https://evil.example.test';
-$reply = SecretsFrontendHttp::response($nativeSettings, 50365, $nativeServer, '/hook/secrets_frontend_50365', '', '', '{"action":"status","data":{}}', null, $nativeUI);
-secExpect($reply['status'] === 403, 'Native SSL bypassed the same-origin API restriction.');
-$nativeServer['HTTP_ORIGIN'] = $nativeSettings['AdminOrigin']; $nativeServer['HTTP_HOST'] = 'evil.example.test';
-$reply = SecretsFrontendHttp::response($nativeSettings, 50365, $nativeServer, '/hook/secrets_frontend_50365', '', '', '{}', null, $nativeUI);
-secExpect($reply['status'] === 403, 'Native SSL bypassed pinned administrator host.');
-echo "PASS native Symcon SSL without HTTPS flag, exact custom-port hook dispatch, proxy trust and spoofed/plain HTTP rejection\n";
+require __DIR__ . '/http-symcon.php';
 echo "PASS address-field change automatically generates the complete wizard URL without setup, stored changes, manual instance IDs or scripts\n";
 echo "PASS Symcon-generated webhook subclass, supported open-link button, copyable nonpersistent URL/code fields and custom HTTPS port\n";
 echo "PASS module lifecycle, Debug, import/export, Portal registration, one-use volatile setup wizard, binding, HTTPS/origin and CSP checks\n";
