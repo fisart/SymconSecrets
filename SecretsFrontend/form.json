@@ -77,7 +77,7 @@
   "actions": [
     {
       "type": "Label",
-      "caption": "Start here: the HTML wizard discovers the instances, suggests private folders and applies the reviewed settings. The V2 quorum runtime is not connected yet; no vault is activated."
+      "caption": "Start here: 1. Enter your Symcon HTTPS address. 2. Generate a one-use setup code. 3. Open the wizard and paste the code. The V2 quorum runtime is not connected yet; no vault is activated."
     },
     {
       "type": "ValidationTextBox",
@@ -99,8 +99,23 @@
     },
     {
       "type": "Button",
-      "caption": "Start HTML setup · authorize for 10 minutes",
-      "onClick": "SECF_BeginGuidedSetup($id, $SetupAddress, $SetupProxyIPs);"
+      "name": "GenerateSetupCode",
+      "caption": "Generate one-use setup code · valid for 10 minutes",
+      "link": false,
+      "onClick": "echo SECF_BeginGuidedSetup($id, $SetupAddress, $SetupProxyIPs);",
+      "width": "100%"
+    },
+    {
+      "type": "ValidationTextBox",
+      "name": "SetupAccessCode",
+      "caption": "One-use setup code — select and copy into the HTML wizard",
+      "value": "",
+      "enabled": true,
+      "width": "100%"
+    },
+    {
+      "type": "Label",
+      "caption": "The generated code appears in a dialog and in the field above. Copy it now; generating another code replaces the previous one. After reopening the form, generate a fresh code if you no longer have it."
     },
     {
       "type": "Label",
@@ -127,13 +142,6 @@
       "type": "ValidationTextBox",
       "name": "WizardURL",
       "caption": "Automatically generated HTML wizard URL — select and copy",
-      "enabled": true,
-      "width": "100%"
-    },
-    {
-      "type": "ValidationTextBox",
-      "name": "SetupAccessCode",
-      "caption": "Copy this one-use setup code into the HTML page",
       "enabled": true,
       "width": "100%"
     },

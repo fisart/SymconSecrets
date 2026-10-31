@@ -11,6 +11,7 @@ $existingManagerBefore = [$existingManager->properties, $existingManager->values
 function SECB_GetInitialSetupInfo(int $id): string { return $GLOBALS['instances'][$id]->GetInitialSetupInfo(); }
 function SECB_ConfigureInitialSetup(int $id, int $frontend, string $digest, string $settings): bool { return $GLOBALS['instances'][$id]->ConfigureInitialSetup($frontend, $digest, $settings); }
 function SECB_ExportConfiguration(int $id): string { return $GLOBALS['instances'][$id]->ExportConfiguration(); }
+function SECF_BeginGuidedSetup(int $id, string $address, string $proxies): string { return $GLOBALS['instances'][$id]->BeginGuidedSetup($address, $proxies); }
 $GLOBALS['moduleIDs'][124] = '{8D6AE8F7-EA3A-4513-AA14-C3F9613B0E83}';
 $guided = new SecretsFrontend(124); $guided->Create();
 foreach ([789,790] as $id) { $GLOBALS['moduleIDs'][$id] = '{52165EDD-B2C0-40EC-8A59-42A97319B6E2}'; $new = new SecretsBackendTestModule($id); $new->Create(); }
@@ -21,6 +22,15 @@ $invoke = static function (string $action, array $data, ?string $origin = null) 
     return SecretsFrontendHttp::response($settings,124,$server,'/hook/secrets_frontend_124','','',json_encode(['action'=>$action,'data'=>$data]),static fn($r)=>$apiMethod->invoke($guided,$r));
 };
 $code = $guided->BeginGuidedSetup('https://wizard.example.test/console/?view=123', '');
+secExpect($guided->form['SetupAccessCode']['value'] === $code, 'Setup code was not put into the selectable console field.');
+$codeForm = json_decode($guided->GetConfigurationForm(), true, 32, JSON_THROW_ON_ERROR);
+$generate = array_values(array_filter($codeForm['actions'], static fn($item) => ($item['name'] ?? '') === 'GenerateSetupCode'))[0];
+$id = 124; $SetupAddress = 'https://wizard.example.test'; $SetupProxyIPs = '';
+ob_start(); eval($generate['onClick']); $dialogCode = ob_get_clean();
+secExpect(preg_match('/^[A-Za-z0-9_-]{43}$/D', $dialogCode) === 1 && $guided->form['SetupAccessCode']['value'] === $dialogCode, 'Actual form button did not return the same one-use code to the dialog and field.');
+secExpect($invoke('guidedDiscover', ['code' => $code])['status'] === 403, 'Generating a fresh code did not invalidate the previous authorization.');
+$code = $dialogCode;
+secExpect(!str_contains($guided->GetConfigurationForm(), $code), 'Reopening the form serialized a one-time setup code.');
 secExpect($guided->values['FrontendURL'] === 'https://wizard.example.test/hook/secrets_frontend_124', 'Wizard URL not registered.');
 secExpect(!str_contains(json_encode($guided->properties),$code) && !str_contains(json_encode($guided->buffers),$code) && !str_contains($guided->ExportConfiguration(),$code),'Bootstrap credential persisted.');
 secExpect($invoke('guidedDiscover',['code'=>$code],'https://evil.test')['status']===403,'Foreign origin reached commissioning.');
@@ -49,12 +59,14 @@ secExpect($invoke('authOptions',[])['status']===503,'Guided V2 mode fell back to
 secRejectReason(static fn()=>$target->BeginStorageSetup(),'Quorum runtime connection pending');
 $code=$guided->BeginGuidedSetup('https://wizard.example.test','');
 secExpect($invoke('guidedCancel',['code'=>$code])['status']===200&&$invoke('guidedDiscover',['code'=>$code])['status']===403,'Server cancellation failed.');
+secExpect($guided->form['SetupAccessCode']['value'] === '', 'Cancelled code remained displayed in the form.');
 $code=$guided->BeginGuidedSetup('https://wizard.example.test','');for($i=0;$i<5;$i++)$invoke('guidedDiscover',['code'=>'invalid']);secExpect($invoke('guidedDiscover',['code'=>$code])['status']===403,'Failed-attempt limit ignored.');
 $code=$guided->BeginGuidedSetup('https://wizard.example.test','');$grant=json_decode($guided->buffers['GuidedSetup'],true);$grant['expires']=time()-1;$guided->buffers['GuidedSetup']=json_encode($grant);secExpect($invoke('guidedDiscover',['code'=>$code])['status']===403,'Expired authority accepted.');
 secExpect(SecretsFrontendCommissioning::address('https://Example.Test:443/path?q=1')==='https://example.test','Address normalization failed.');
 secRejectReason(static fn()=>SecretsFrontendCommissioning::address('http://example.test'),'trusted HTTPS');
 secRejectReason(static fn()=>SecretsFrontendCommissioning::paths('/var/lib/symcon/modules/data','/tmp/keys','/var/lib/symcon/'),'outside the Symcon');
 $code=$guided->BeginGuidedSetup('https://wizard.example.test','');$guided->ApplyChanges();secExpect($invoke('guidedDiscover',['code'=>$code])['status']===403,'Reload retained setup authority.');
+secExpect($guided->form['SetupAccessCode']['value'] === '', 'Applying settings left an invalidated code displayed in the form.');
 echo "PASS HTML commissioning discovery, console-only authority, binding, exact review, expiry/replay/cancel/reload, Portal preservation, configuration-only apply and V2 fallback refusal\n";
 
 // A failed multi-instance apply is never replayed or reported as fully configured.

@@ -32,7 +32,7 @@ class SecretsFrontend extends IPSModule
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
-        $this->SetBuffer('GuidedSetup', '');
+        $this->forgetGuidedSetup();
         $this->SetValue('DebugEnabled', $this->ReadPropertyBoolean('DebugEnabled'));
         $this->SetTimerInterval('Setup', IPS_GetKernelRunlevel() === 10103 ? 100 : 0);
         if (!$this->ReadPropertyBoolean('Enabled')) $this->SetStatus(104);
