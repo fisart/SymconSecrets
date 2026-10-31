@@ -8,7 +8,7 @@
       "repository": "fisart/SymconSecrets",
       "path": "SecretsFrontend/module.php",
       "prefix": "SECF",
-      "schema": "SECF.Config.v1",
+      "schema": "SECF.Config.v2",
       "exportFunction": "SECF_ExportConfiguration",
       "importFunction": "SECF_ImportConfiguration",
       "configuration": {
@@ -22,7 +22,12 @@
         "Theme": "system"
       },
       "attributes": [],
-      "state": "configuration-only; native central support is not active"
+      "state": "configuration-only; native central support is not active",
+      "acceptedSchemas": [
+        "SECF.Config.v1",
+        "SECF.Config.v2"
+      ],
+      "deploymentDraft": "Optional non-authoritative placement draft in native SECF.Config.v2 exports; restore through the importer only, disabled and V2-only."
     },
     {
       "id": "{52165EDD-B2C0-40EC-8A59-42A97319B6E2}",

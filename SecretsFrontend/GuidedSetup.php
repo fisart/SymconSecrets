@@ -54,6 +54,14 @@ trait SecretsFrontendGuidedSetup
         if (!IPS_SemaphoreEnter($lock, 500)) throw new RuntimeException('Setup is busy; cancellation has not completed.');
         try { $this->forgetGuidedSetup(); } finally { IPS_SemaphoreLeave($lock); }
     }
+    private function deploymentDefaults(string $origin): array
+    {
+        try {
+            $saved = json_decode($this->ReadAttributeString('DeploymentDraft'), true, 12, JSON_THROW_ON_ERROR);
+            if (is_array($saved)) return SecretsFrontendDeployment::validate($saved, $origin);
+        } catch (Throwable $ignored) { }
+        return SecretsFrontendDeployment::defaults($origin);
+    }
     private function discovered(string $module, string $fallback): array
     {
         $out = [];
@@ -71,6 +79,7 @@ trait SecretsFrontendGuidedSetup
     private function guidedSelection(array $grant, array $data): array
     {
         $choice = SecretsFrontendCommissioning::choice($data);
+        $choice['deployment'] = SecretsFrontendDeployment::validate($choice['deployment'] ?? SecretsFrontendDeployment::defaults($grant['origin']), $grant['origin']);
         $id = $choice['backend'];
         if (!array_key_exists((string)$id, $grant['backends'])) throw new RuntimeException('Backend was not authorized by the console. Repeat discovery.');
         $info = $this->initialBackend($id);
@@ -106,7 +115,7 @@ trait SecretsFrontendGuidedSetup
                     'defaults' => ['backend' => $pick($backends, $this->ReadPropertyInteger('BackendInstanceID')), 'portal' => $portal,
                         'documentation' => $pick($documentation, $this->ReadPropertyInteger('DocumentationInstanceID')), 'theme' => $this->settings()['Theme'],
                         'proxyIPs' => $this->settings()['TrustedHTTPSProxyIPs'], 'debugEnabled' => $this->ReadPropertyBoolean('DebugEnabled'), 'addPortalLink' => $portal > 0,
-                        'backendEnabled' => false, 'connectionTrust' => 'not-configured', 'hardwareTrust' => 'not-configured'],
+                        'deployment' => $this->deploymentDefaults($grant['origin']), 'backendEnabled' => false, 'connectionTrust' => 'not-configured', 'hardwareTrust' => 'not-configured'],
                     'requirements' => SecretsFrontendCommissioning::requirements(), 'expires' => $grant['expires']];
             }
             if ($action === 'guidedPreview') {
@@ -115,11 +124,11 @@ trait SecretsFrontendGuidedSetup
                 $planId = rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
                 $grant['plan'] = ['id' => $planId, 'configuration' => $plan]; $this->SetBuffer('GuidedSetup', SecretsFrontendConfiguration::encode($grant));
                 return ['planId' => $planId, 'configuration' => $plan, 'writable' => ['vault' => SecretsFrontendCommissioning::writable($plan['vaultDirectory']), 'keys' => SecretsFrontendCommissioning::writable($plan['keyDirectory'])],
-                    'quorumConnected' => false, 'message' => 'Only instance settings will be saved. No folders, vault, keys, administrator or connection trust will be created.'];
+                    'deploymentPlan' => SecretsFrontendDeployment::describe($plan['deployment'], $grant['origin']), 'quorumConnected' => false, 'message' => 'Only instance settings will be saved. No folders, vault, keys, administrator or connection trust will be created.'];
             }
             if ($action !== 'guidedApply' || count($data) !== 2 || !is_string($data['planId'] ?? null) || !is_array($grant['plan']) || !hash_equals($grant['plan']['id'], $data['planId'])) throw new RuntimeException('Review the exact setup plan first.');
             $plan = $grant['plan']['configuration'];
-            $choice = array_intersect_key($plan, array_flip(['backend', 'portal', 'documentation', 'theme', 'vaultDirectory', 'keyDirectory', 'proxyIPs', 'addPortalLink', 'debugEnabled']));
+            $choice = array_intersect_key($plan, array_flip(['backend', 'portal', 'documentation', 'theme', 'vaultDirectory', 'keyDirectory', 'proxyIPs', 'addPortalLink', 'debugEnabled', 'deployment']));
             $this->guidedSelection($grant, $choice); // Recheck every fixed identity/digest immediately before consumption.
             $this->forgetGuidedSetup(); // Consume before any configuration or integration side effect.
             try {
@@ -134,10 +143,11 @@ trait SecretsFrontendGuidedSetup
                 $this->SetValue('Status', 'Setup incomplete. Inspect the applied settings and start a fresh console authorization. No vault was activated.');
                 throw new RuntimeException('Setup could not finish. Settings may be partly applied; no vault was activated. Review the instances and issue a fresh setup code.');
             }
+            $this->WriteAttributeString('DeploymentDraft', SecretsFrontendConfiguration::encode($plan['deployment']));
             $this->WriteAttributeBoolean('GuidedConfigured', true);
             return ['configured' => true, 'quorumConnected' => false, 'vaultCreated' => false, 'portalRegistered' => $plan['addPortalLink'],
                 'message' => 'Configuration saved. Quorum runtime connection is the next development step; vault operations remain disabled.',
-                'configurationExport' => ['frontend' => json_decode($this->ExportConfiguration(), true, 16, JSON_THROW_ON_ERROR), 'backend' => json_decode(SECB_ExportConfiguration($plan['backend']), true, 16, JSON_THROW_ON_ERROR)]];
+                'configurationExport' => ['deployment' => SecretsFrontendDeployment::describe($plan['deployment'], $grant['origin']), 'frontend' => json_decode($this->ExportConfiguration(), true, 16, JSON_THROW_ON_ERROR), 'backend' => json_decode(SECB_ExportConfiguration($plan['backend']), true, 16, JSON_THROW_ON_ERROR)]];
         } finally { IPS_SemaphoreLeave($lock); }
     }
     private function gateway(array $request): array

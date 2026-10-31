@@ -86,3 +86,18 @@ pending, creates no vault/keys/administrators and keeps the backend disabled.
 Actual V2 activation and the remaining full-system acceptance remain pending.
 This new commissioning flow needs review separately from the previous core
 lifecycle checkpoint. Existing password-module code remains unchanged.
+
+## Current HTML and V2 integration checkpoint
+
+The HTML interface is restyled with responsive navigation/cards, clearer wizard
+progress, mobile controls and collapsible advanced settings. The wizard now
+validates and saves a non-authoritative peer deployment draft with explicit
+defaults and missing-placement checks. Native SECF.Config.v2 exports preserve
+the draft; imports remain disabled and V2-only. Existing v1 settings still load.
+PHP V2 object/bundle/key-envelope and original-intent components are added with
+shared PHP/Go fixtures and rejection tests. See V2_INTEGRATION_CHECKPOINT.md.
+
+The complete outstanding-feature request is not finished. No V2 runtime,
+administrator enrollment, service installation, synchronization, backup/migration
+or production activation follows from these new components. The configuration
+wizard still ends at connection pending. All Q01-Q48 remain NOT_RUN end to end.

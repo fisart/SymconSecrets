@@ -16,6 +16,7 @@ class SecretsFrontend extends IPSModule
         parent::Create();
         $this->RegisterAttributeBoolean('GuidedV2Only', false);
         $this->RegisterAttributeBoolean('GuidedConfigured', false);
+        $this->RegisterAttributeString('DeploymentDraft', '');
         foreach (SecretsFrontendConfiguration::DEFAULTS as $key => $default) {
             if (is_bool($default)) $this->RegisterPropertyBoolean($key, $default);
             elseif (is_int($default)) $this->RegisterPropertyInteger($key, $default);
@@ -140,13 +141,19 @@ class SecretsFrontend extends IPSModule
     }
     public function ExportConfiguration(): string
     {
-        $json = SecretsFrontendConfiguration::export($this->settings()); $this->UpdateFormField('ExportJSON', 'value', $json); return $json;
+        $raw = $this->ReadAttributeString('DeploymentDraft');
+        $draft = $raw === '' ? null : json_decode($raw, true, 12, JSON_THROW_ON_ERROR);
+        if ($draft !== null && !is_array($draft)) throw new RuntimeException('Invalid deployment draft.');
+        $json = SecretsFrontendConfiguration::export($this->settings(), $draft); $this->UpdateFormField('ExportJSON', 'value', $json); return $json;
     }
     public function ImportConfiguration(string $JSON): bool
     {
         if (IPS_HasChanges($this->InstanceID)) throw new RuntimeException('Apply or discard pending console edits before import.');
         $settings = SecretsFrontendConfiguration::import($JSON);
         $this->WriteAttributeBoolean('GuidedConfigured', false);
+        $data = SecretsFrontendConfiguration::decode($JSON);
+        if (($data['schema'] ?? '') === 'SECF.Config.v2') $this->WriteAttributeBoolean('GuidedV2Only', true);
+        $this->WriteAttributeString('DeploymentDraft', ($data['schema'] ?? '') === 'SECF.Config.v2' ? SecretsFrontendConfiguration::encode(SecretsFrontendDeployment::validate($data['deploymentDraft'], $settings['AdminOrigin'])) : '');
         foreach ($settings as $key => $value) IPS_SetProperty($this->InstanceID, $key, is_array($value) ? SecretsFrontendConfiguration::encode($value) : $value);
         IPS_ApplyChanges($this->InstanceID); $this->debug('configuration-imported-disabled'); return true;
     }

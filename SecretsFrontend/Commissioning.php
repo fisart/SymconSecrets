@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/Configuration.php';
+require_once __DIR__ . '/Deployment.php';
 
 /** Settings-only initial commissioning. No vault, trust enrollment or runtime activation. */
 final class SecretsFrontendCommissioning
@@ -50,7 +51,7 @@ final class SecretsFrontendCommissioning
     public static function choice(array $data): array
     {
         $fields = ['backend', 'portal', 'documentation', 'theme', 'vaultDirectory', 'keyDirectory', 'proxyIPs', 'addPortalLink', 'debugEnabled'];
-        if (array_diff(array_keys($data), $fields) || array_diff($fields, array_keys($data))) throw new InvalidArgumentException('Unexpected setup fields.');
+        if (array_diff(array_keys($data), array_merge($fields, ['deployment'])) || array_diff($fields, array_keys($data))) throw new InvalidArgumentException('Unexpected setup fields.');
         foreach (['backend', 'portal', 'documentation'] as $key) if (!is_int($data[$key]) || $data[$key] < 0) throw new InvalidArgumentException('Choose an available instance.');
         foreach (['theme', 'vaultDirectory', 'keyDirectory'] as $key) if (!is_string($data[$key])) throw new InvalidArgumentException('Invalid setup text.');
         if (!is_bool($data['debugEnabled'])) throw new InvalidArgumentException('Choose a Boolean Debug setting.');

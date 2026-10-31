@@ -77,3 +77,24 @@ secRejectReason(static fn()=>$lockedBackend->ConfigureInitialSetup(124,$lockedIn
 secExpect(!$lockedBackend->attributes['GuidedV2Only']&&$lockedBackend->properties['FrontendInstanceID']===0,'Busy legacy creation was reconfigured.');
 unset($GLOBALS['locks']['SECB.Setup.792']);
 echo "PASS commissioning serialization against issuance/cancellation and in-flight legacy storage creation\n";
+
+// Placement decisions survive a native export/import. They never become a
+// service admission, trust pack, V1 fallback or activated backend.
+$GLOBALS['moduleIDs'][128]='{8D6AE8F7-EA3A-4513-AA14-C3F9613B0E83}';$planner=new SecretsFrontend(128);$planner->Create();
+$GLOBALS['moduleIDs'][793]='{52165EDD-B2C0-40EC-8A59-42A97319B6E2}';$draftBackend=new SecretsBackendTestModule(793);$draftBackend->Create();
+$draftCode=$planner->BeginGuidedSetup('https://wizard.example.test','');
+$callDraft=static fn($action,$data)=>$apiMethod->invoke($planner,['action'=>$action,'data'=>$data,'origin'=>'https://wizard.example.test','remote'=>'test','cookie'=>'','csrf'=>'']);
+$draftChoice=$choice;$draftChoice['backend']=793;$draftChoice['addPortalLink']=false;$draftChoice['vaultDirectory']=$directory.'/draft-vault';$draftChoice['keyDirectory']=$directory.'/draft-keys';
+$draftChoice['deployment']=SecretsFrontendDeployment::defaults('https://wizard.example.test');$draftChoice['deployment']['authorities'][0]['endpoint']='https://authority-one.example.test';$draftChoice['deployment']['authorities'][0]['failureDomain']='Independent location A';
+$badDraft=$draftChoice;$badDraft['deployment']['authorities'][0]['trusted']=true;
+secExpect($callDraft('guidedPreview',['code'=>$draftCode,'configuration'=>$badDraft])['status']===403,'Draft smuggled trust into initial settings.');
+$draftPreview=$callDraft('guidedPreview',['code'=>$draftCode,'configuration'=>$draftChoice]);
+secExpect($draftPreview['status']===200&&!$draftPreview['data']['deploymentPlan']['activationAllowed'],'Draft preview activated services.');
+$draftApplied=$callDraft('guidedApply',['code'=>$draftCode,'planId'=>$draftPreview['data']['planId']]);secExpect($draftApplied['status']===200,'Draft could not be saved.');
+$draftExport=$planner->ExportConfiguration();$decoded=json_decode($draftExport,true);secExpect($decoded['schema']==='SECF.Config.v2'&&$decoded['deploymentDraft']===$draftChoice['deployment'],'Placement decisions were omitted from native export.');
+secExpect(!str_contains($draftExport,$draftCode)&&!$draftBackend->properties['Enabled'],'Draft exported a code or enabled backend.');
+$GLOBALS['moduleIDs'][129]='{8D6AE8F7-EA3A-4513-AA14-C3F9613B0E83}';$restoredDraft=new SecretsFrontend(129);$restoredDraft->Create();$restoredDraft->ImportConfiguration($draftExport);
+secExpect(!$restoredDraft->properties['Enabled']&&$restoredDraft->attributes['GuidedV2Only']&&!$restoredDraft->attributes['GuidedConfigured'],'Draft import activated a runtime or allowed V1.');
+secExpect(json_decode($restoredDraft->attributes['DeploymentDraft'],true)===$draftChoice['deployment'],'Draft choices did not survive import.');
+$decoded['deploymentDraft']['activationAllowed']=true;secReject(static fn()=>$restoredDraft->ImportConfiguration(json_encode($decoded)),'Draft import accepted activation authority.');
+echo "PASS deployment plan exact review, native v2 export/import, preserved placement, disabled V2-only restore and no authority creation\n";

@@ -102,16 +102,27 @@ final class SecretsFrontendConfiguration
         return $settings;
     }
 
-    public static function export(array $settings): string
+    public static function export(array $settings, ?array $deploymentDraft = null): string
     {
-        return self::encode(['schema' => self::SCHEMA, 'configuration' => self::validate($settings)]);
+        $settings = self::validate($settings);
+        if ($deploymentDraft === null) return self::encode(['schema' => self::SCHEMA, 'configuration' => $settings]);
+        require_once __DIR__ . '/Deployment.php';
+        return self::encode(['schema' => 'SECF.Config.v2', 'configuration' => $settings,
+            'deploymentDraft' => SecretsFrontendDeployment::validate($deploymentDraft, $settings['AdminOrigin'])]);
     }
 
     public static function import(string $json): array
     {
         $data = self::decode($json);
-        if (count($data) !== 2 || ($data['schema'] ?? '') !== self::SCHEMA || !is_array($data['configuration'] ?? null)) throw new InvalidArgumentException('Expected SECF.Config.v1.');
+        $v2 = ($data['schema'] ?? '') === 'SECF.Config.v2';
+        $fields = $v2 ? ['schema', 'configuration', 'deploymentDraft'] : ['schema', 'configuration'];
+        if (array_diff(array_keys($data), $fields) || array_diff($fields, array_keys($data)) || (!$v2 && ($data['schema'] ?? '') !== self::SCHEMA) || !is_array($data['configuration'] ?? null)) throw new InvalidArgumentException('Expected SECF.Config.v1 or SECF.Config.v2.');
         $settings = self::validate($data['configuration']);
+        if ($v2) {
+            require_once __DIR__ . '/Deployment.php';
+            if (!is_array($data['deploymentDraft'])) throw new InvalidArgumentException('Expected a deployment draft.');
+            SecretsFrontendDeployment::validate($data['deploymentDraft'], $settings['AdminOrigin']);
+        }
         $settings['Enabled'] = false; // Imported settings never publish a web endpoint automatically.
         return $settings;
     }

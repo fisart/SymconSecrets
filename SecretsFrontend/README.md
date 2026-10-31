@@ -2,7 +2,28 @@
 
 Development implementation 0.1.0. These are **two new modules in SymconSecrets**, not an update or replacement of the existing `SecretsManager` module. Existing module source, storage, passkeys and configuration remain unchanged. Do not migrate production data yet.
 
-## What is implemented
+## Current V2 availability
+
+The HTML setup assistant provides discovery, defaults, exact review, settings
+application and a saved peer-deployment draft. The interface now uses a
+responsive card layout, clear progress, light/dark appearance and collapsed
+advanced settings. On the Storage step, expand **Peer services & recovery** to
+prepare three authority locations, two Symcon peers and two recovery locations.
+The current installation's HTTPS origin is prefilled. Unknown addresses and
+trust remain unconfigured. You can download the reviewed draft separately.
+Native exports with a draft use `SECF.Config.v2`; older v1 exports remain
+accepted. Imports stay disabled and a v2 draft never enables V1 fallback.
+
+New PHP V2 bundle/key-envelope and original-intent components pass component
+interop tests, but are not connected to a management route. The wizard still
+ends at **connection pending**. It cannot yet initialize a working V2 vault.
+See [the current checkpoint and remaining implementation](V2_INTEGRATION_CHECKPOINT.md).
+
+## Earlier V1 development components
+
+The following features describe the separate earlier single-anchor development
+path. Fresh guided V2 setup blocks that path; these are not usable V2 functions.
+
 
 - `SecretsFrontend` (`SECF`): responsive HTML interface with overview, typed secret hierarchy, selected-record reveal, reviewed create/replace/delete, administrator credentials, hardware policy, storage commissioning wizard and guide.
 - `SecretsBackend` (`SECB`): separate encrypted SQLite vault, separate key directory, administrator-only WebAuthn API, one-use approvals, protected core manifests and external-anchor Prepare/advance/Publish recovery.
