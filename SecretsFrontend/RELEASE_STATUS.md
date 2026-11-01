@@ -105,3 +105,10 @@ loopback services and the Connect service; it does not identify the sending
 process cryptographically. Untrusted local proxies must not expose that hop. Actual Connect transport, physical-key behavior and primary-
 certificate outage remain unqualified. Independent review of the exact completed
 implementation is outstanding; the design audit is not production acceptance.
+
+The backup enrollment popup now waits for signed, candidate-bound activation
+status before enabling Continue to sign in. Passkey creation/testing alone is
+not activation. Continue switches to the normal sign-in screen without reloading
+the still-pending enrollment page. The status endpoint discloses only activation
+state and creates no general session; expiry, cancellation and origin-generation
+changes reject the status proof.

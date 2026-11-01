@@ -205,7 +205,7 @@ final class SecretsBackendApplication
         if (isset($this->settings['managementProfile']) && SecretsBackendSecurityConfiguration::digest($this->settings['managementProfile']) !== SecretsBackendSecurityConfiguration::digest($current['state']['policy']['management'])) throw new RuntimeException('Security profile changed; repeat complete validation.');
         if ($current['state']['policy']['origin'] !== $this->primaryOrigin() || $current['state']['policy']['frontend'] !== (string)$this->settings['frontend']) throw new RuntimeException('Protected origin or frontend binding differs; use independent recovery.');
         $this->checkRoute($current['state'], $action);
-        if (in_array($action, ['connectOptions','connectSubmit','connectProof'], true)) return ['data'=>$this->connectEnrollment($action, $data, $current)];
+        if (in_array($action, ['connectOptions','connectSubmit','connectProof','connectStatus'], true)) return ['data'=>$this->connectEnrollment($action, $data, $current)];
         if ($action === 'status') { self::exact($data, []); return ['data' => ['ready' => true, 'enrollmentNeeded' => count($current['state']['identity']['credentials']) === 0]]; }
         if ($this->store instanceof SecretsBackendNativeStore && in_array($action,['enrollmentOptions','enrollmentVerify'],true)) throw new RuntimeException('Code-based enrollment is closed.');
         if ($action === 'enrollmentOptions') return ['data' => $this->enrollmentOptions($data)];

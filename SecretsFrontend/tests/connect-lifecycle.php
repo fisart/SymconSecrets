@@ -37,6 +37,11 @@ try{
  $assertion=secAssertion($backupKey,$test['options']['challenge'],1,$origin);
  $bytes=implode("\n",['SECF.CONNECT.TEST.1',$origin,$generation,$test['test'],$kd,SecretsBootstrapVerifier::digest($assertion)])."\n";
  $candidate=$invoke('connectProof',['test'=>$test['test'],'credential'=>$assertion,'signature'=>secRawSign($browser,$bytes)])['data'];
+ $statusBytes=implode("\n",['SECF.CONNECT.STATUS.1',$origin,$generation,$candidate['candidate'],$candidate['digest']])."\n";
+ $statusRequest=['candidate'=>$candidate['candidate'],'digest'=>$candidate['digest'],'signature'=>secRawSign($browser,$statusBytes)];
+ secExpect($invoke('connectStatus',$statusRequest)['data']['state']==='waiting','Passkey possession was treated as activation.');
+ secReject(static fn()=>$invoke('connectStatus',array_replace($statusRequest,['signature'=>secRawSign(secKey(),$statusBytes)])),'Unsigned or wrong-browser status was admitted.');
+
  secReject(static fn()=>$invoke('session'),'Possession-tested candidate obtained general access.');
  secReject(static fn()=>$invoke('connectProof',['test'=>$test['test'],'credential'=>$assertion,'signature'=>secRawSign($browser,$bytes)]),'Possession proof was replayed.');
  $request=$primary;$review=$invoke('connectCandidateReview',['candidate'=>$candidate['candidate']])['data'];secExpect($review['digest']===$candidate['digest'],'Candidate digest differed across origins.');
@@ -45,6 +50,7 @@ try{
  $primarySession=$invoke('session')['data'];secExpect($primarySession['native']['backupOrigin']['status']==='active','Backup not activated.');
  secReject(static fn()=>$approved(['kind'=>'revoke','credentialId'=>$key['id']]),'Backup credential was counted as the last primary route.');
  $request=['origin'=>$origin,'cookie'=>'','csrf'=>'','remote'=>'connect-test'];
+ secExpect($invoke('connectStatus',$statusRequest)['data']['state']==='active','Exact candidate activation was not reported.');secReject(static fn()=>$invoke('session'),'Activation status granted a general session.');
  $options=$invoke('authOptions')['data'];$ids=array_column($options['options']['allowCredentials'],'id');secExpect($ids===[$backupKey['id']],'Backup login offered primary credentials.');
  secReject(static fn()=>$invoke('authVerify',['challengeId'=>$options['challengeId'],'credential'=>secAssertion($key,$options['options']['challenge'],10,$origin)]),'Primary credential logged in at backup.');
  $options=$invoke('authOptions')['data'];$logged=$invoke('authVerify',['challengeId'=>$options['challengeId'],'credential'=>secAssertion($backupKey,$options['options']['challenge'],2,$origin)]);

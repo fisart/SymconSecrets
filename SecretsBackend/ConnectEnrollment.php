@@ -11,7 +11,7 @@ trait SecretsBackendConnectEnrollment
     {
         if($this->settings['origin']===$this->primaryOrigin())return;
         $p=$state['policy']['backupOrigin']??null;
-        $restricted=in_array($action,['status','connectOptions','connectSubmit','connectProof'],true);
+        $restricted=in_array($action,['status','connectOptions','connectSubmit','connectProof','connectStatus'],true);
         SecretsBackendBackupOriginPolicy::requireRoute($state,$this->settings['origin'],$p['generation']??'',$restricted?'register-options':'authenticate');
     }
     private function eligibleOrigin(array $state,array $credential): bool
@@ -32,6 +32,21 @@ trait SecretsBackendConnectEnrollment
     {
         if(!($this->store instanceof SecretsBackendNativeStore)||$this->settings['origin']===$this->primaryOrigin())throw new RuntimeException('Open the approved Connect address to register its separate passkey.');
         $p=$current['state']['policy']['backupOrigin'];
+        // Repeatable browser-key proof for read-only activation state. This
+        // endpoint never grants a session or authorizes another operation.
+        if($action==='connectStatus'){
+            self::exact($data,['candidate','digest','signature']);$c=$this->store->get($data['candidate'],'connect-candidate');
+            if($c['origin']!==$this->settings['origin']||$c['generation']!==$p['generation']||$c['expires']<time()||!isset($c['key'])||!hash_equals(SecretsBootstrapVerifier::digest($c),$data['digest']))throw new RuntimeException('Backup setup expired or changed. Repeat Step 3 from the primary window.');
+            $bytes=implode("\n",['SECF.CONNECT.STATUS.1',$c['origin'],$c['generation'],$data['candidate'],$data['digest']])."\n";
+            SecretsBootstrapVerifier::verifySignature($bytes,$data['signature'],$c['key']);
+            $entry=$current['state']['identity']['credentials'][$c['entry']['id']]??null;
+            if($p['status']==='active'){
+                if(!is_array($entry)||!$this->eligibleOrigin($current['state'],$entry)||$entry['publicKey']!==$c['entry']['publicKey']||$entry['administrator']!==$c['entry']['administrator']||$entry['userHandle']!==$c['entry']['userHandle'])return ['state'=>'not-approved'];
+                return ['state'=>'active'];
+            }
+            if(!SecretsBackendCodec::same($c['head'],$current['head']))throw new RuntimeException('Backup setup changed. Repeat Step 3 from the primary window.');
+            return ['state'=>'waiting'];
+        }
         if($p['status']!=='pending')throw new RuntimeException('No backup enrollment is pending.');
         $hardware=in_array(true,$current['state']['policy']['hardware'],true);
         if($action==='connectOptions'){
@@ -62,7 +77,7 @@ trait SecretsBackendConnectEnrollment
         $bytes=implode("\n",['SECF.CONNECT.TEST.1',$p['origin'],$p['generation'],$data['test'],$r['keyDigest'],SecretsBootstrapVerifier::digest($data['credential'])])."\n";
         SecretsBootstrapVerifier::verifySignature($bytes,$data['signature'],$r['key']);
         $entry=$r['entry'];$entry['counter']=SecretsBootstrapVerifier::assertion($entry,$data['credential'],$r['challenge'],$p['origin']);$entry['tested']=true;$entry['origin']=$p['origin'];$entry['originGeneration']=$p['generation'];
-        $id=SecretsBackendCodec::b64(random_bytes(32));$candidate=['entry'=>$entry,'origin'=>$p['origin'],'generation'=>$p['generation'],'head'=>$current['head'],'keyDigest'=>$r['keyDigest'],'rights'=>['read','write','export'],'expires'=>time()+300];
+        $id=SecretsBackendCodec::b64(random_bytes(32));$candidate=['entry'=>$entry,'origin'=>$p['origin'],'generation'=>$p['generation'],'head'=>$current['head'],'keyDigest'=>$r['keyDigest'],'key'=>$r['key'],'rights'=>['read','write','export'],'expires'=>time()+300];
         $this->store->put($id,'connect-candidate',$candidate,$candidate['expires']);
         return ['candidate'=>$id,'digest'=>SecretsBootstrapVerifier::digest($candidate),'fingerprint'=>hash('sha256',$entry['publicKey'])];
     }

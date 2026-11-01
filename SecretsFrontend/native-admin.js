@@ -57,7 +57,7 @@ $('nativeMachineScope').addEventListener('change',()=>{const scope=$('nativeMach
 
 run($('nativeRecoveryEnrollment'),()=>{tab('setup');message('In the trusted Symcon console, open Recover administrator access. Then prepare and compare your replacement passkey here. Hardware policies remain enforced.');});
 
-let connectPopup=null,connectCandidate=null,connectPendingMessage=null;
+let connectPopup=null,connectCandidate=null,connectPendingMessage=null,connectEnrollmentStatus=null,connectStatusTimer=null;
 function renderConnect(){
  const p=snapshot?.native?.backupOrigin,primary=boot.origin===(snapshot?.native?.primaryOrigin||boot.origin);
  $('connectWizard').hidden=!primary;
@@ -87,6 +87,7 @@ window.addEventListener('focus',connectReviewIncoming);document.addEventListener
 run($('connectApprove'),ticket=>{if(!connectCandidate)throw Error('Complete Step 3 first.');return review({kind:'nativeConnectActivate',candidate:connectCandidate.candidate,digest:connectCandidate.digest},'Compare this exact credential fingerprint with the backup window: '+connectCandidate.fingerprint+'. Grant the displayed administrator access at '+connectCandidate.origin+'.',ticket);});
 run($('connectRevoke'),ticket=>{const p=snapshot.native.backupOrigin;connectCandidate=null;return review({kind:'nativeConnectRevoke',origin:p.origin,generation:p.generation},'Remove this backup route and invalidate all its sessions, challenges and pending setup. Your primary address remains available.',ticket);});
 run($('connectCreate'),async ticket=>{
+ clearTimeout(connectStatusTimer);connectEnrollmentStatus=null;$('connectEnrollmentStep').textContent='Backup access · Step 3 of 4';$('connectFinish').hidden=true;$('connectFinish').disabled=true;$('connectReturnPrimary').hidden=true;
  const ctx=await bootstrapKey(),p=await api('connectOptions',{key:ctx.key},ticket);
  const cred=await ceremony('create',options(p.options,true),ticket);
  const credential={type:cred.type,rawId:encoded(cred.rawId),response:{clientDataJSON:encoded(cred.response.clientDataJSON),attestationObject:encoded(cred.response.attestationObject)}};
@@ -99,6 +100,27 @@ run($('connectCreate'),async ticket=>{
  const result=await api('connectProof',{test:test.test,credential:proof,signature:await bootstrapSign(ctx,proofBytes)},ticket);
  $('connectEnrollmentResult').textContent='Passkey tested. Compare fingerprint '+result.fingerprint+' in the primary window and approve Step 4 there.';
  if(window.opener)window.opener.postMessage({type:'SECF.ConnectCandidate.1',candidate:result.candidate,digest:result.digest},boot.primaryOrigin);
- $('connectFinish').hidden=false;
+ const statusBytes=['SECF.CONNECT.STATUS.1',boot.origin,boot.originGeneration,result.candidate,result.digest].join('\n')+'\n';
+ connectEnrollmentStatus={candidate:result.candidate,digest:result.digest,signature:await bootstrapSign(ctx,statusBytes)};
+ $('connectCreate').hidden=true;$('connectEnrollmentStep').textContent='Backup access · Step 4 of 4';$('connectReturnPrimary').hidden=false;$('connectFinish').hidden=false;$('connectFinish').disabled=true;
+ connectScheduleStatus();
 });
-run($('connectFinish'),()=>{location.reload();});
+function connectScheduleStatus(){clearTimeout(connectStatusTimer);if(connectEnrollmentStatus&&!document.hidden&&pageActive)connectStatusTimer=setTimeout(()=>connectCheckStatus(),2000);}
+async function connectCheckStatus(ticket=generation){
+ if(!connectEnrollmentStatus||document.hidden||!pageActive)return false;
+ const context=connectEnrollmentStatus;
+ try{
+  const result=await api('connectStatus',context,ticket);if(context!==connectEnrollmentStatus)return false;
+  if(result.state==='active'){$('connectFinish').disabled=false;$('connectReturnPrimary').hidden=true;$('connectEnrollmentResult').textContent='Backup approved. Select Continue to sign in.';clearTimeout(connectStatusTimer);return true;}
+  if(result.state!=='waiting')throw Error('This passkey was not approved. Return to the primary window and repeat Step 3.');
+  $('connectFinish').disabled=true;connectScheduleStatus();return false;
+ }catch(error){if(ticket===generation&&error.name!=='AbortError'){$('connectFinish').disabled=true;$('connectEnrollmentResult').textContent=error.message;connectEnrollmentStatus=null;$('connectCreate').hidden=false;}return false;}
+}
+run($('connectReturnPrimary'),()=>{if(window.opener&&!window.opener.closed)window.opener.focus();else message('Return to your usual Secrets address and approve Step 4. Keep this backup window open.');});
+$('connectFinish').addEventListener('click',async()=>{
+ $('connectFinish').disabled=true;const ticket=generation;if(!await connectCheckStatus(ticket))return;
+ clearTimeout(connectStatusTimer);connectEnrollmentStatus=null;boot.backupEnrollment=false;document.body.classList.remove('connectPending');tab('overview');
+ $('login').hidden=false;$('signin').disabled=false;$('readiness').textContent='Backup access is approved. Sign in with your backup passkey.';
+});
+window.addEventListener('pagehide',()=>{clearTimeout(connectStatusTimer);connectEnrollmentStatus=null;});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(connectStatusTimer);else connectScheduleStatus();});
