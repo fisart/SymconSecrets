@@ -136,6 +136,39 @@
       "type": "Button",
       "caption": "Add to Portal → Administration",
       "onClick": "SECF_AddToPortal($id);"
+    },
+    {
+      "type": "ExpansionPanel",
+      "caption": "Configuration export / import (no vault, keys or sessions)",
+      "items": [
+        {
+          "type": "Button",
+          "caption": "Export configuration",
+          "onClick": "SECF_ExportConfiguration($id);"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "ExportJSON",
+          "caption": "Configuration export",
+          "multiline": true
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "ImportJSON",
+          "caption": "Configuration to import",
+          "multiline": true
+        },
+        {
+          "type": "Button",
+          "caption": "Import configuration — leave disabled",
+          "onClick": "SECF_ImportConfiguration($id, $ImportJSON);"
+        }
+      ]
+    },
+    {
+      "type": "Button",
+      "caption": "Clear Debug",
+      "onClick": "SECF_ClearDebug($id);"
     }
   ],
   "status": [
