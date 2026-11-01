@@ -29,6 +29,18 @@ try {
     secExpect(str_contains(json_encode($reveal),'NATIVE-SECRET-CANARY'),'Native selected-record reveal failed.');
     // Session-only reads remain scoped, CSRF protected, revision checked and subject to hardware policy.
     $sessionRead=['kind'=>'reveal','scope'=>'global','path'=>['ASK'],'revision'=>'1'];
+    // Exercise the same HTTP allowlist, envelope and JSON response used by the real browser.
+    $httpSettings=array_replace(SecretsFrontendConfiguration::DEFAULTS,['Enabled'=>true,'AdminOrigin'=>$request['origin']]);
+    $httpPath='/hook/secrets_frontend_'.$front->InstanceID;
+    $httpServer=['REQUEST_METHOD'=>'POST','REQUEST_URI'=>$httpPath,'HTTP_HOST'=>'secrets.example.test','HTTP_ORIGIN'=>$request['origin'],'CONTENT_TYPE'=>'application/json','HTTP_COOKIE'=>$request['cookie'],'HTTP_X_CSRF_TOKEN'=>$request['csrf'],'REMOTE_ADDR'=>'test'];
+    $httpGateway=static fn(array $r):array=>(new ReflectionMethod(SecretsFrontend::class,'gateway'))->invoke($front,$r);
+    $callHTTP=static fn(string $action,array $data,array $server):array=>SecretsFrontendHttp::response($httpSettings,$front->InstanceID,$server,$httpPath,'','',json_encode(['action'=>$action,'data'=>$data],JSON_THROW_ON_ERROR),$httpGateway);
+    $httpReveal=$callHTTP('sessionReveal',['operation'=>$sessionRead],$httpServer);
+    secExpect($httpReveal['status']===200&&str_starts_with($httpReveal['headers']['Content-Type'],'application/json')&&str_contains($httpReveal['body'],'NATIVE-SECRET-CANARY'),'HTTP session reveal failed before reaching the backend.');
+    $httpTimeout=$callHTTP('sessionTimeout',['seconds'=>300],$httpServer);
+    secExpect($httpTimeout['status']===200&&json_decode($httpTimeout['body'],true)['idleLimit']===300,'HTTP session timeout failed before reaching the backend.');
+    $badServer=$httpServer;$badServer['HTTP_X_CSRF_TOKEN']='wrong';$denied=$callHTTP('sessionReveal',['operation'=>$sessionRead],$badServer);
+    secExpect($denied['status']!==200&&!str_contains($denied['body'],'NATIVE-SECRET-CANARY'),'HTTP session reveal leaked a value with invalid CSRF.');
     secExpect($invoke('sessionTimeout',['seconds'=>60])['data']['idleLimit']===60,'One-minute timeout was not applied.');
     secReject(static fn()=>$invoke('sessionTimeout',['seconds'=>1800]),'Session timeout exceeded the original maximum.');
     $sessionStore=(new ReflectionMethod(SecretsBackend::class,'nativeStore'))->invoke($back);$cookieValue=explode('=',explode(';',$request['cookie'])[0],2)[1];$sessionId=hash('sha256',$cookieValue);$savedSession=$sessionStore->get($sessionId,'session');$expired=$savedSession;$expired['last']=time()-61;$sessionStore->replace($sessionId,'session',$expired,$expired['created']+3600);
