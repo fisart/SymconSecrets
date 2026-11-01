@@ -39,7 +39,7 @@ final class SecretsFrontendCommissioning
         // Core setup and optional native capabilities are reported separately.
         // Old prototype dependencies never become native prerequisites.
         return ['php' => PHP_VERSION, 'phpSupported' => version_compare(PHP_VERSION, '8.2.0', '>='),
-            'scope' => 'settings-only', 'runtime' => 'symcon-native', 'nativeBackendImplemented' => true, 'native' => SecretsBackendNativePlatform::capabilities(),
+            'scope' => 'native-vault', 'runtime' => 'symcon-native', 'nativeBackendImplemented' => true, 'native' => SecretsBackendNativePlatform::capabilities(),
             'capabilities' => [
                 'JSON' => function_exists('json_encode') && function_exists('json_decode'),
                 'SHA-256' => function_exists('hash') && function_exists('hash_equals') && function_exists('hash_algos') && in_array('sha256', hash_algos(), true),

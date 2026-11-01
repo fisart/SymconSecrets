@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/NativeStore.php';
 require_once __DIR__ . '/NativeOperations.php';
+require_once __DIR__ . '/BootstrapJournal.php';
 
 /** Symcon lifecycle adapter for native vaults; V1 is never its fallback. */
 trait SecretsBackendNativeBackend
@@ -56,6 +57,7 @@ trait SecretsBackendNativeBackend
             if ($this->GetBuffer('Runtime') === '') $this->SetBuffer('Runtime', SecretsBackendCodec::b64(random_bytes(32)));
             $this->syncNativePeerHook(true);
             $store = $this->nativeStore(); $store->recover(function(array $state):void{
+                if(($state['native']['genesisFormat']??'')!=='SECF.Genesis.1'||!$state['identity']['credentials'])throw new RuntimeException('Legacy or incomplete native genesis requires explicit recovery.');
                 $profile=$state['policy']['management'];SecretsBackendSecurityConfiguration::verify($profile,$this->frontendSecurity());
                 if(!SecretsBackendSecurityConfiguration::sameFoundation($profile['settings'],$this->configuration()))throw new RuntimeException('Pinned native foundation changed.');
             });
@@ -77,36 +79,97 @@ trait SecretsBackendNativeBackend
         }
         return SecretsBackendCodec::json($result);
     }
-    /** Privileged local initialization, invoked only after the frontend consumes its reviewed console grant. */
+    /** The former empty-vault initializer is closed, including cached local callers. */
     public function InitializeNativeStorage(int $FrontendInstanceID, string $ExpectedDigest, bool $PrivateACLConfirmed, bool $PersistenceConfirmed, string $AdministratorLabel): string
     {
-        $lock = 'SECB.Runtime.' . $this->InstanceID;
-        if (!IPS_SemaphoreEnter($lock, 500)) throw new RuntimeException('Native initialization is busy.');
-        try {
-            if (!$this->ReadAttributeBoolean('GuidedV2Only') || $this->ReadPropertyInteger('FrontendInstanceID') !== $FrontendInstanceID
-                || !hash_equals(hash('sha256', SecretsFrontendConfiguration::encode($this->initialSettingsSnapshot())), $ExpectedDigest)) throw new RuntimeException('Native initialization settings changed after review.');
-            $this->frontendSecurity();
-            $paths = SecretsBackendNativePlatform::paths($this->ReadPropertyString('DataDirectory'), $this->ReadPropertyString('KeyDirectory'), IPS_GetKernelDir());
-            $persistence = SecretsBackendNativePlatform::persistence($paths['vaultDirectory'], $paths['keyDirectory'], IPS_GetKernelDir());
-            if (!$PersistenceConfirmed && ($persistence['vault']['confirmationRequired'] || $persistence['keys']['confirmationRequired'])) throw new RuntimeException('Confirm that these Docker folders persist across container replacement, or choose persistent folders.');
-            $plan = ['paths' => $paths, 'origin' => $this->ReadPropertyString('AdminOrigin'), 'frontend' => $FrontendInstanceID, 'backend' => $this->InstanceID, 'privateACLConfirmed' => $PrivateACLConfirmed];
-            $digest = hash('sha256', SecretsBackendNativeStore::canonical($plan)); $saved = $this->ReadAttributeString('NativeInitPlan');
-            if ($this->nativeInitialized()) throw new RuntimeException('Native storage already exists; initialization never replaces it.');
-            if ($saved !== '' && !hash_equals($saved, $digest)) throw new RuntimeException('An interrupted native initialization has different bindings; inspect recovery first.');
-            $resume = $saved !== ''; $uuid = $this->ReadAttributeString('NativeInitUUID');
-            if ($uuid === '') { $uuid = SecretsBackendCodec::uuid(); $this->WriteAttributeString('NativeInitUUID', $uuid); }
-            $this->WriteAttributeString('NativeInitPlan', $digest);
-            $profile = $this->nativeProfile();
-            $id = SecretsBackendNativeStore::initialize($paths['vaultDirectory'], $paths['keyDirectory'],
-                ['origin' => $plan['origin'], 'frontend' => $FrontendInstanceID, 'backend' => $this->InstanceID, 'privateACLConfirmed' => $PrivateACLConfirmed], $profile, $uuid, $resume);
-            $this->WriteAttributeString('StorageBinding', SecretsBackendCodec::json(['kind' => 'native', 'backend' => $this->InstanceID, 'uuid' => $uuid, 'paths' => ['vault' => $paths['vaultDirectory'], 'keys' => $paths['keyDirectory']]]));
-            $this->WriteAttributeString('NativeVaultUUID', $id['deploymentId']);
-            IPS_SetProperty($this->InstanceID, 'Enabled', true);
-        } finally { IPS_SemaphoreLeave($lock); }
-        IPS_ApplyChanges($this->InstanceID);
-        if (!$this->Recover()) throw new RuntimeException('Native storage was created but recovery needs inspection. No initialization is replayed.');
-        $code = $this->nativeApplication()->beginEnrollment($AdministratorLabel, false);
-        return SecretsBackendCodec::json(['initialized' => true, 'ready' => true, 'vaultId' => $id['deploymentId'], 'enrollmentCode' => $code,
-            'message' => 'Native encrypted vault created. Register the first administrator passkey now.']);
+        throw new RuntimeException('Manual-code initialization has been removed. Open the console-approved passkey setup.');
+    }
+    /** Read the durable authorization ourselves; never trust a browser admission object. */
+    public function CompleteBootstrap(int $FrontendInstanceID,string $Intent,string $Runtime,string $Worker): bool
+    {
+        $journal=SecretsBootstrapJournal::forKernel(IPS_GetKernelDir());
+        return $journal->locked(function()use($journal,$FrontendInstanceID,$Intent,$Runtime,$Worker):bool{
+            $d=$journal->read('decision-'.hash('sha256',$Intent));
+            if(!$d||$d['status']!=='ACCEPTED'||$d['frontend']!==$FrontendInstanceID)throw new RuntimeException('No accepted bootstrap operation.');
+            $plan=$d['plan'];$created=$journal->read('created-'.$d['operation']);$target=$plan['backend']?:($created['backend']??0);
+            if($target!==$this->InstanceID||$plan['frontendInstance']!==$FrontendInstanceID||SecretsBootstrapVerifier::digest($plan)!==$d['planDigest'])throw new RuntimeException('Accepted backend/plan binding failed.');
+            $check=function()use($journal,$d,$Runtime,$Worker,$FrontendInstanceID):void{
+                $journal->checkFence($d['operation'],$Runtime,$Worker);
+                if(!function_exists('SECF_BootstrapRuntime')||SECF_BootstrapRuntime($FrontendInstanceID)!==$Runtime)throw new RuntimeException('The setup worker runtime changed.');
+            };$check();
+            if(!$this->nativeInitialized()){
+                $info=json_decode($this->GetInitialSetupInfo(),true);
+                $expected=['origin'=>$plan['origin'],'vaultDirectory'=>$plan['vaultDirectory'],'keyDirectory'=>$plan['keyDirectory'],'debugEnabled'=>$plan['debugEnabled']];
+                if($this->ReadAttributeString('NativeInitPlan')===''){
+                    if($plan['backend']>0&&$info['digest']!==$plan['backendDigest'])throw new RuntimeException('Accepted backend configuration changed.');
+                    $this->ConfigureInitialSetup($FrontendInstanceID,$info['digest'],SecretsBackendCodec::json($expected));
+                }
+                if($this->ReadPropertyInteger('FrontendInstanceID')!==$FrontendInstanceID||$this->ReadPropertyString('AdminOrigin')!==$plan['origin']||$this->ReadPropertyString('DataDirectory')!==$plan['vaultDirectory']||$this->ReadPropertyString('KeyDirectory')!==$plan['keyDirectory'])throw new RuntimeException('Accepted native settings changed.');
+                $lock='SECB.Runtime.'.$this->InstanceID;if(!IPS_SemaphoreEnter($lock,1000))throw new RuntimeException('Native initialization is busy.');
+                try{
+                    $check();$binding=['origin'=>$plan['origin'],'frontend'=>$FrontendInstanceID,'backend'=>$this->InstanceID,'privateACLConfirmed'=>$plan['privateACLConfirmed']];
+                    $admission=['format'=>'SECF.Genesis.1','operation'=>$d['operation'],'vault'=>$plan['vault'],'candidateDigest'=>$d['candidateDigest'],'planDigest'=>$d['planDigest'],'binding'=>$binding,
+                        'registration'=>$d['registration'],'registrationContext'=>$d['registrationContext'],'assertion'=>$d['assertion'],'challenge'=>$d['challenge']];
+                    $resume=$this->ReadAttributeString('NativeInitPlan')!=='';
+                    if($resume&&$this->ReadAttributeString('NativeInitPlan')!==SecretsBootstrapVerifier::digest($admission))throw new RuntimeException('Interrupted initialization has a different admission.');
+                    $profile=$this->nativeProfile();$savedProfile=$journal->read('profile-'.$d['operation']);
+                    if($savedProfile!==null&&SecretsBootstrapVerifier::digest($savedProfile)!==SecretsBootstrapVerifier::digest($profile))throw new RuntimeException('Accepted native security foundation changed during recovery.');
+                    $journal->write('profile-'.$d['operation'],$profile);
+                    $this->WriteAttributeString('NativeInitPlan',SecretsBootstrapVerifier::digest($admission));$this->WriteAttributeString('NativeInitUUID',$plan['vault']);
+                    $paths=SecretsBackendNativePlatform::paths($plan['vaultDirectory'],$plan['keyDirectory'],IPS_GetKernelDir());
+                    $check();$id=SecretsBackendNativeStore::initialize($paths['vaultDirectory'],$paths['keyDirectory'],$binding,$profile,$plan['vault'],$admission,$resume,static function(string $point)use($check):void{if($point==='before_marker')$check();});
+                    $check();$this->WriteAttributeString('StorageBinding',SecretsBackendCodec::json(['kind'=>'native','backend'=>$this->InstanceID,'uuid'=>$plan['vault'],'paths'=>['vault'=>$paths['vaultDirectory'],'keys'=>$paths['keyDirectory']]]));
+                    $this->WriteAttributeString('NativeVaultUUID',$id['deploymentId']);IPS_SetProperty($this->InstanceID,'Enabled',true);
+                }finally{IPS_SemaphoreLeave($lock);}
+                IPS_ApplyChanges($this->InstanceID);
+            }
+            $check();try{$this->nativeApplication();}catch(Throwable $e){if(!$this->Recover())throw new RuntimeException('The accepted native vault needs recovery.');}
+            $state=$this->nativeStore()->read()['state'];
+            if(($state['native']['initializationOperation']??'')!==$d['operation']||($state['native']['candidateDigest']??'')!==$d['candidateDigest']||($state['native']['vaultId']??'')!==$plan['vault'])throw new RuntimeException('Committed genesis differs from the accepted operation.');
+            return true;
+        });
+    }
+    /** Privileged console snapshot; a policy change invalidates recovery at identity commit. */
+    public function GetBootstrapRecoveryInfo(int $FrontendInstanceID): string
+    {
+        if($FrontendInstanceID!==$this->ReadPropertyInteger('FrontendInstanceID'))throw new RuntimeException('Wrong recovery frontend.');
+        $store=$this->nativeStore();$current=$store->read();
+        if(in_array(true,$current['state']['policy']['hardware'],true))throw new RuntimeException('Hardware policy is enforced. Independent hardware recovery must be separately qualified; ordinary passkey recovery is blocked.');
+        return SecretsBackendCodec::json(['backend'=>$this->InstanceID,'vault'=>$store->identity()['deploymentId'],'owner'=>$current['state']['identity']['ownerId'],'head'=>$current['head'],
+            'policyDigest'=>SecretsBootstrapVerifier::digest($current['state']['policy']),'vaultDirectory'=>$this->ReadPropertyString('DataDirectory'),'keyDirectory'=>$this->ReadPropertyString('KeyDirectory'),'digest'=>SecretsBootstrapVerifier::digest($current['state']['policy'])]);
+    }
+    public function CompleteBootstrapRecovery(int $FrontendInstanceID,string $AdmissionJSON): string
+    {
+        if($FrontendInstanceID!==$this->ReadPropertyInteger('FrontendInstanceID'))throw new RuntimeException('Wrong recovery frontend.');
+        $a=SecretsFrontendConfiguration::decodeBounded($AdmissionJSON,65536,32);
+        SecretsBootstrapVerifier::exact($a,['intent','operation','candidateDigest','planDigest','registration','registrationContext','assertion','challenge','recovery','runtime']);
+        $j=SecretsBootstrapJournal::forKernel(IPS_GetKernelDir());
+        return $j->locked(function()use($a,$j,$FrontendInstanceID):string{
+            if($j->read('decision-'.hash('sha256',$a['intent']))!==null||SECF_BootstrapRuntime($FrontendInstanceID)!==$a['runtime'])throw new RuntimeException('Recovery was cancelled, decided or restarted.');
+            $currentInfo=json_decode($this->GetBootstrapRecoveryInfo($FrontendInstanceID),true);
+            if(SecretsBootstrapVerifier::digest($currentInfo)!==SecretsBootstrapVerifier::digest($a['recovery']))throw new RuntimeException('Recovery snapshot or policy changed.');
+            if($a['registrationContext']['owner']!==$currentInfo['owner']||$a['registrationContext']['origin']!==$this->ReadPropertyString('AdminOrigin'))throw new RuntimeException('Recovery identity binding failed.');
+            $entry=SecretsBootstrapVerifier::registration($a['registration'],$a['registrationContext']);$entry['counter']=SecretsBootstrapVerifier::assertion($entry,$a['assertion'],$a['challenge'],$this->ReadPropertyString('AdminOrigin'));$entry['tested']=true;
+            $store=$this->nativeStore();$store->change($currentInfo['head'],$a['operation'],SecretsBootstrapVerifier::digest($a),static function(array $state)use($entry,$currentInfo):array{
+                if(in_array(true,$state['policy']['hardware'],true)||SecretsBootstrapVerifier::digest($state['policy'])!==$currentInfo['policyDigest']||isset($state['identity']['credentials'][$entry['id']]))throw new RuntimeException('Recovery rights or policy changed.');
+                $state['identity']['credentials'][$entry['id']]=$entry;$state['identity']['revocation']=SecretsBackendCodec::increment($state['identity']['revocation']);return $state;
+            },['action'=>'console-recovery','actor'=>'independent-console','target'=>$entry['id'],'frontend'=>$FrontendInstanceID,'backend'=>$this->InstanceID]);
+            $j->write('decision-'.hash('sha256',$a['intent']),['status'=>'RECOVERED','intent'=>$a['intent'],'frontend'=>$FrontendInstanceID,'operation'=>$a['operation']]);
+            return SecretsBackendCodec::json(['committed'=>true]);
+        });
+    }
+    public function BootstrapLogin(int $FrontendInstanceID,string $Intent,string $Runtime): string
+    {
+        $journal=SecretsBootstrapJournal::forKernel(IPS_GetKernelDir());
+        return $journal->locked(function()use($journal,$FrontendInstanceID,$Intent,$Runtime):string{
+            $d=$journal->read('decision-'.hash('sha256',$Intent));
+            if(!$d||$d['status']!=='ACCEPTED'||$d['frontend']!==$FrontendInstanceID||SECF_BootstrapRuntime($FrontendInstanceID)!==$Runtime||!$journal->read('result-'.$d['operation']))throw new RuntimeException('Bootstrap login context unavailable. Use normal passkey login.');
+            if($journal->read('login-'.$d['operation'])!==null)throw new RuntimeException('Login response is never replayed. Use normal passkey login.');
+            $journal->write('login-'.$d['operation'],['operation'=>$d['operation'],'runtime'=>$Runtime]);
+            $state=$this->nativeStore()->read()['state'];
+            $id=$d['registration']['rawId'];
+            if(($state['native']['initializationOperation']??'')!==$d['operation'])throw new RuntimeException('Wrong initialization operation.');
+            return SecretsBackendCodec::json($this->nativeApplication()->bootstrapSession($id));
+        });
     }
 }

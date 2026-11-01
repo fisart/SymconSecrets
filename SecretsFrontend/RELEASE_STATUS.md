@@ -11,8 +11,11 @@ No production/migration acceptance is implied. Existing SecretsManager and all
 
 ## Implemented
 
-- Automatic instance/capability/path/capacity discovery; reviewed HTML setup with
-  defaults, selected native initialization and first passkey registration.
+- Code-free console/browser candidate approval, strict browser PoP and nonce
+  recovery, immutable encrypted initial decisions, exact restart completion and
+  mandatory first-administrator genesis. Optional backend creation handles UNKNOWN
+  object results without repeating creation. See BOOTSTRAP_IMPLEMENTATION.md.
+- Automatic instance/capability/path/capacity discovery and reviewed HTML defaults.
 - Complete encrypted snapshot journal and separate keys; immutable authenticated
   publication marker; injected interruption recovery; runtime/session fencing;
   exact operation outcomes and protected disclosure.
@@ -39,7 +42,8 @@ assertions (not physical keys). Native test groups cover:
 
 | Group | Evidence |
 | --- | --- |
-| native-store.php | 40 persistence/fencing/idempotence/corruption/path checks |
+| bootstrap-security.php | 77 console/candidate/PoP/resume/cancel/restart/reuse/recovery/object/I/O checks |
+| native-store.php | 52 persistence/fencing/idempotence/corruption/path checks |
 | native-lifecycle.php | Wizard, first/extra WebAuthn credentials, scoped machines, key rotation, backup authentication/compaction/value recovery, stale admission and restart fencing |
 | native-peers.php | 84 checks over 1/2/3/5 vaults, bilateral approval, lost replies, transfer, replay/forgery/revocation and aggregate trees larger than 64 KiB |
 | native-effects.php | 22 exact-intent/capture/unknown/retry/restart/revocation checks |
@@ -79,3 +83,9 @@ The CI test-cluster helper reserves all six member ports until startup, avoiding
 duplicate voter addresses observed in a historical component test. Native OAuth
 intents additionally bind client-secret bytes and the writable global lineage;
 active unresolved global effects block ordinary owner transfer.
+
+The code-free v1.2 setup change replaces manual first-admin and recovery codes.
+Its real WebCrypto signatures interoperate with PHP/OpenSSL in the DOM tests.
+The actual Symcon console and physical authenticators remain unqualified; local
+check counts do not represent completion of every T01–T64 design test. Independent
+review of this new journal/initializer/request verifier remains required.

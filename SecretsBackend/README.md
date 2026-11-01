@@ -36,9 +36,9 @@ redirects, bounded responses and short timeouts. Missing supplied transport is
 reported; no package installation is requested.
 
 `NativeOperations.php` connects management to the existing fresh exact WebAuthn
-approval. Enrollment issued by an administrator is bound to the authorizing head
-and credential; changes/revocation invalidate it. Privileged console recovery
-codes are explicitly a different authority. Ordinary credentials cannot bypass
+approval. Additional-key candidates are bound to the authorizing head, credential and
+browser-key digest; changes/revocation invalidate them. Independent console
+recovery uses an explicitly approved replacement passkey candidate. Ordinary credentials cannot bypass
 an enforced hardware policy to add a new approver.
 
 `NativeBackup.php` exports complete authenticated state/key material inside a

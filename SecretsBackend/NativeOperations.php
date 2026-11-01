@@ -55,8 +55,10 @@ final class SecretsBackendNativeOperations
                 if(in_array(true,$state['policy']['hardware'],true)&&!$op['allowReenrollmentLock'])throw new RuntimeException('Confirm the hardware re-enrollment requirement before changing an enforced trust profile.');
                 $profile=SecretsBackendNativeHardware::normalize($op['roots'],$op['aaguids']);$op['certificates']=$profile['roots'];$op['hashes']=$profile['hashes'];$op['aaguids']=$profile['aaguids'];$op['version']=$profile['version'];unset($op['roots']);break;
             case 'nativeEnrollment':
-                SecretsBackendNativePeer::exact($op,['kind','label','hardware','probe']);SecretsBackendNativePeer::name($op['label']);if(!is_bool($op['hardware'])||!is_bool($op['probe'])||($op['hardware']&&$op['probe']))throw new RuntimeException('Choose ordinary, verified hardware or untrusted attestation inspection.');
-                if($op['hardware']&&empty($state['policy']['management']['files']['HardwareRoots']))throw new RuntimeException('Install and approve the hardware trust profile first.');break;
+                SecretsBackendNativePeer::exact($op,['kind','candidate','digest']);
+                $candidate=$this->store->get($op['candidate'],'key-candidate');
+                if($candidate['session']!==$this->session||!hash_equals(SecretsBootstrapVerifier::digest($candidate),$op['digest'])||!SecretsBackendCodec::same($candidate['head'],$this->store->head()))throw new RuntimeException('The exact key candidate changed or expired.');
+                $op['entry']=$candidate['entry'];$op['expires']=time()+90;break;
             case 'nativeProvider':$op=SecretsBackendNativeEffects::configure($op,$state);break;
             case 'nativeProviderDisable':SecretsBackendNativePeer::exact($op,['kind','id']);if(!isset($state['native']['providers'][$op['id']]))throw new RuntimeException('Unknown provider.');break;
             case 'nativeRefresh':SecretsBackendNativePeer::exact($op,['kind','id']);$op['effect']=(new SecretsBackendNativeEffects($this->store))->prepare($state,$op['id']);break;
@@ -81,7 +83,11 @@ final class SecretsBackendNativeOperations
     public function apply(array $op,array $s): array
     {
         $kind=$op['kind'];
-        if($kind==='nativeInvite'){
+        if($kind==='nativeEnrollment'){
+            $candidate=$this->store->get($op['candidate'],'key-candidate');
+            if($op['expires']<time()||$candidate['session']!==$this->session||!hash_equals(SecretsBootstrapVerifier::digest($candidate),$op['digest'])||isset($s['identity']['credentials'][$op['entry']['id']]))throw new RuntimeException('The reviewed key candidate expired, changed or already exists.');
+            $s['identity']['credentials'][$op['entry']['id']]=$op['entry'];$s['identity']['revocation']=SecretsBackendCodec::increment($s['identity']['revocation']);
+        }elseif($kind==='nativeInvite'){
             foreach($s['native']['invites']as$id=>$i)if((int)$i['expires']<time())unset($s['native']['invites'][$id]);
             if(count($s['native']['invites'])>=16)throw new RuntimeException('Too many pending invitations.');
             $i=$op['invitation'];if((int)$i['expires']<time())throw new RuntimeException('Invitation expired during approval.');$s['native']['invites'][$i['id']]=$i+['usedBy'=>null];

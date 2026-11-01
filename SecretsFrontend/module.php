@@ -14,7 +14,9 @@ class SecretsFrontend extends IPSModule
     public function Create(): void
     {
         parent::Create();
-        $this->RegisterAttributeBoolean('GuidedV2Only', false);
+        $this->RegisterAttributeBoolean('GuidedV2Only', true);
+        $this->RegisterAttributeString('BootstrapIdentity', SecretsBackendCodec::uuid());
+        $this->RegisterAttributeBoolean('BootstrapJournalConfirmed', false);
         $this->RegisterAttributeBoolean('GuidedConfigured', false);
         $this->RegisterAttributeString('DeploymentDraft', '');
         foreach (SecretsFrontendConfiguration::DEFAULTS as $key => $default) {
@@ -27,19 +29,21 @@ class SecretsFrontend extends IPSModule
         $this->RegisterVariableString('Status', 'Frontend status', '', 20);
         $this->RegisterVariableString('IntegrationStatus', 'Portal / documentation / backup', '~TextBox', 30);
         $this->RegisterVariableString('Debug', 'Debug', '~TextBox', 50);
+        $this->RegisterTimer('BootstrapRecovery', 0, 'SECF_RecoverBootstrap($_IPS[\'TARGET\']);');
         $this->RegisterTimer('Setup', 0, 'SECF_Refresh($_IPS[\'TARGET\']);'); $this->RegisterMessage(0, 10103);
     }
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
         $this->forgetGuidedSetup();
+        $this->SetTimerInterval('BootstrapRecovery', 1000);
         $this->SetValue('DebugEnabled', $this->ReadPropertyBoolean('DebugEnabled'));
         $this->SetTimerInterval('Setup', IPS_GetKernelRunlevel() === 10103 ? 100 : 0);
         if (!$this->ReadPropertyBoolean('Enabled')) $this->SetStatus(104);
     }
     public function MessageSink($TimeStamp, $SenderID, $Message, $Data): void
     {
-        if ((int)$SenderID === 0 && (int)$Message === 10103) $this->SetTimerInterval('Setup', 100);
+        if ((int)$SenderID === 0 && (int)$Message === 10103) { $this->forgetGuidedSetup(); $this->SetTimerInterval('Setup', 100); $this->SetTimerInterval('BootstrapRecovery', 1000); }
     }
     private function settings(): array
     {
@@ -68,16 +72,13 @@ class SecretsFrontend extends IPSModule
         try { $url = $this->GetSetupWizardURL($Address); }
         catch (InvalidArgumentException $exception) { $url = ''; }
         $this->UpdateFormField('WizardURL', 'value', $url);
-        $this->UpdateFormField('OpenWizard', 'caption', $url !== '' ? $url : 'Open HTML wizard');
-        foreach (['OpenWizard', 'CopyWizardURL'] as $field) $this->UpdateFormField($field, 'enabled', $url !== '');
+
     }
     private function updateWizardLinks(): void
     {
         $url = $this->GetWizardURL();
         $this->SetValue('FrontendURL', $url);
-        $this->UpdateFormField('OpenWizard', 'caption', $url);
-        foreach (['WizardURL', 'FrontendURL'] as $field) $this->UpdateFormField($field, 'value', $url);
-        foreach (['OpenWizard', 'CopyWizardURL'] as $field) $this->UpdateFormField($field, 'enabled', true);
+        $this->UpdateFormField('WizardURL', 'value', $url);
     }
     private function backend(): int
     {
@@ -198,20 +199,32 @@ class SecretsFrontend extends IPSModule
         $lines = array_filter(explode("\n", (string)$this->GetValue('Debug'))); $lines[] = gmdate('Y-m-d H:i:s') . ' UTC | ' . $code;
         $this->SetValue('Debug', implode("\n", array_slice($lines, -50)));
     }
+    public function RefreshBootstrapForm(): void { $this->ReloadForm(); }
     public function GetConfigurationForm(): string
     {
-        $form = json_decode((string)file_get_contents(__DIR__ . '/form.json'), true, 32, JSON_THROW_ON_ERROR);
-        try { $origin = SecretsFrontendConfiguration::origin($this->ReadPropertyString('AdminOrigin')); }
-        catch (Throwable $exception) { $origin = ''; }
-        $fill = function (array &$items) use (&$fill, $origin): void { foreach ($items as &$element) {
-            if (in_array($element['name'] ?? '', ['FrontendURL', 'WizardURL'], true)) $element['value'] = $origin === '' ? '' : $origin . $this->path();
-            if (in_array($element['name'] ?? '', ['OpenWizard', 'CopyWizardURL'], true)) $element['enabled'] = $origin !== '';
-            if (($element['name'] ?? '') === 'OpenWizard' && $origin !== '') $element['caption'] = $origin . $this->path();
-            if (($element['name'] ?? '') === 'SetupAddress') $element['value'] = $origin;
-            if (($element['name'] ?? '') === 'SetupProxyIPs') { try { $element['value'] = implode(', ', $this->settings()['TrustedHTTPSProxyIPs']); } catch (Throwable $ignored) {} }
-            if (isset($element['items'])) $fill($element['items']);
-        } }; $fill($form['elements']); $fill($form['actions']);
+        $form=json_decode((string)file_get_contents(__DIR__.'/form.json'),true,32,JSON_THROW_ON_ERROR);
+        $origin=$this->ReadPropertyString('AdminOrigin');$url=$origin!==''?$origin.$this->path():'';
+        $requirements=$this->bootstrapStorageRequirements();
+        foreach($form['actions']as&$element){
+            if(($element['name']??'')==='BootstrapJournalStorage'){$element['visible']=$requirements['confirmationRequired']&&!$this->ReadAttributeBoolean('BootstrapJournalConfirmed');$element['value']=$this->ReadAttributeBoolean('BootstrapJournalConfirmed');$element['caption']='I verified private access and persistence across container replacement for setup records: '.$requirements['data'].' and keys: '.$requirements['keys'];}
+            if(($element['name']??'')==='SetupAddress'){$element['value']=$origin;$element['visible']=$origin==='';}
+            if(($element['name']??'')==='WizardURL')$element['value']=$url;
+        }unset($element);
+        try{$views=json_decode($this->GetBootstrapConsoleView(),true);foreach($views as$v){
+            $literal=static fn(string $text)=>var_export($text,true);
+            $payload='SECF_ApproveBootstrapCandidate($id, '.$literal($v['candidate']).', '.$literal($v['digest']).', '.$literal($v['proof']).');';
+            $form['actions'][]=['type'=>'Button','caption'=>'Approve '.$v['comparison'],'confirm'=>'Compare all four groups with the browser: '.$v['comparison'].' · '.$v['purpose'].' · frontend '.$v['frontend'].' · '.$v['origin'].'. Approve exactly this request?','onClick'=>$payload];
+            $form['actions'][]=['type'=>'Button','caption'=>'Reject '.$v['comparison'],'onClick'=>'SECF_RejectBootstrapCandidate($id, '.$literal($v['candidate']).', '.$literal($v['digest']).');'];
+        }}catch(Throwable $ignored){}
+        try{$j=$this->bootstrapJournal();$j->locked(function()use($j,&$form):void{foreach($j->decisions()as$d){
+            if($d['status']!=='ACCEPTED'||$d['frontend']!==$this->InstanceID||$d['plan']['backend']!==0||$j->read('creating-'.$d['operation'])===null||$j->read('created-'.$d['operation'])!==null)continue;
+            $field='ResolveBackend'.str_replace('-','',$d['operation']);
+            $form['actions'][]=['type'=>'ExpansionPanel','caption'=>'Resolve uncertain backend creation','items'=>[
+                ['type'=>'Label','caption'=>'Operation '.$d['operation'].' · vault '.$d['plan']['vault'].'. Inspect the exact newly created disabled empty backend before selecting it.'],
+                ['type'=>'SelectInstance','name'=>$field,'caption'=>'Inspected new backend','validModules'=>[self::BACKEND]],
+                ['type'=>'Button','caption'=>'Bind this backend and resume the accepted setup','confirm'=>'Bind this inspected empty backend to operation '.$d['operation'].'?','onClick'=>'SECF_ResolveBootstrapBackend($id, '.var_export($d['operation'],true).', $'.$field.'); SECF_RecoverBootstrap($id);']
+            ]];
+        }});}catch(Throwable $ignored){}
         return SecretsFrontendConfiguration::encode($form);
     }
 }
-

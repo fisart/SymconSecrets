@@ -1,16 +1,6 @@
 <?php
 declare(strict_types=1);
-require_once __DIR__ . '/SymconHarness.php';
-require_once __DIR__ . '/../../SecretsBackend/tests/Fixture.php';
-require_once __DIR__ . '/../module.php';
-require_once __DIR__ . '/../../SecretsBackend/module.php';
-function SECB_GetInitialSetupInfo(int $id): string { return $GLOBALS['instances'][$id]->GetInitialSetupInfo(); }
-function SECB_ConfigureInitialSetup(int $id, int $front, string $digest, string $json): bool { return $GLOBALS['instances'][$id]->ConfigureInitialSetup($front,$digest,$json); }
-function SECB_ExportConfiguration(int $id): string { return $GLOBALS['instances'][$id]->ExportConfiguration(); }
-function SECB_InitializeNativeStorage(int $id,int $front,string $digest,bool $acl,bool $persist,string $label): string { return $GLOBALS['instances'][$id]->InitializeNativeStorage($front,$digest,$acl,$persist,$label); }
-function SECB_GetNativeInfo(int $id): string { return $GLOBALS['instances'][$id]->GetNativeInfo(); }
-function SECB_HandleFrontendRequest(int $id,int $front,string $json): string { return $GLOBALS['instances'][$id]->HandleFrontendRequest($front,$json); }
-function SECB_BeginAdminEnrollment(int $id,string $label,bool $hardware): string { return $GLOBALS['instances'][$id]->BeginAdminEnrollment($label,$hardware); }
+require_once __DIR__ . '/BootstrapFixture.php';
 $GLOBALS['moduleIDs'] = [5100 => SecretsBackend::FRONTEND, 5101 => '{52165EDD-B2C0-40EC-8A59-42A97319B6E2}', 700 => '{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}'];
 $hooks = new IPSModule(700); $hooks->properties['Hooks'] = '[]';
 $front = new SecretsFrontend(5100); $front->Create(); $back = new SecretsBackend(5101); $back->Create();
@@ -23,19 +13,11 @@ $invoke = static function (string $action,array $data=[]) use($gateway,$front,$b
     return $reply;
 };
 try {
-    $code = $front->BeginGuidedSetup('https://secrets.example.test','');
-    $found = $invoke('guidedDiscover',['code'=>$code])['data'];
-    secExpect($found['defaults']['backend']===5101 && $found['defaults']['initialize']===true,'Native discovery/default selection failed.');
-    $choice=['backend'=>5101,'portal'=>0,'documentation'=>0,'theme'=>'system','vaultDirectory'=>$root.'/data','keyDirectory'=>$root.'/keys','proxyIPs'=>[],'addPortalLink'=>false,'debugEnabled'=>false,'initialize'=>true,'privateACLConfirmed'=>true,'persistenceConfirmed'=>true,'administratorLabel'=>'Native owner'];
-    $plan=$invoke('guidedPreview',['code'=>$code,'configuration'=>$choice])['data'];
-    $done=$invoke('guidedApply',['code'=>$code,'planId'=>$plan['planId']])['data'];
-    secExpect($done['vaultCreated'] && $done['native']['ready'] && $back->status===102,'Native wizard did not create/recover the real store.');
-    secExpect(!file_exists($root.'/data/vault.sqlite') && is_file($root.'/data/native.json'),'Native setup entered SQLite.');
-    $status=$invoke('status')['data'];secExpect($status['ready']&&$status['enrollmentNeeded'],'Native gateway remained in the old pending stub.');
-    $key=secKey();$begin=$invoke('enrollmentOptions',['code'=>$done['native']['enrollmentCode']])['data'];
-    $invoke('enrollmentVerify',['challengeId'=>$begin['challengeId'],'credential'=>secRegistration($key,$begin['options']->challenge ?? $begin['options']['challenge'])]);
-    $begin=$invoke('authOptions')['data'];$args=json_decode(json_encode($begin),true);
-    $login=$invoke('authVerify',['challengeId'=>$args['challengeId'],'credential'=>secAssertion($key,$args['options']['challenge'],1)]);
+    $key=secKey();
+    $choice=['backend'=>5101,'portal'=>0,'documentation'=>0,'theme'=>'system','vaultDirectory'=>$root.'/data','keyDirectory'=>$root.'/keys','addPortalLink'=>false,'debugEnabled'=>false,'privateACLConfirmed'=>true,'persistenceConfirmed'=>true];
+    $login=secBootstrapInitialize($front,$request,$key,$choice);
+    secExpect(($login['data']['status']??'')==='COMMITTED'&&($login['data']['authenticated']??false),'Code-free native initialization failed: '.json_encode($login).' '.($front->values['Status']??''));
+    secExpect(!file_exists($root.'/data/vault.sqlite')&&is_file($root.'/data/native.json'),'Native setup entered SQLite.');
     $request['cookie']=explode(';',$login['cookie'])[0];$request['csrf']=$login['data']['csrf'];
     $listed=$invoke('session')['data'];secExpect($listed['revision']==='0','Fresh native session failed.');
     $write=['kind'=>'save','scope'=>'global','path'=>['ASK'],'revision'=>'0','mode'=>'create','json'=>'{"User":"native-user","Pass":"NATIVE-SECRET-CANARY"}'];
@@ -83,16 +65,21 @@ try {
     $listed=$invoke('session')['data'];
     secExpect($listed['revision']==='3'&&count($listed['credentials'])===1&&str_contains(json_encode($listed['local']),'Recovered-'),'Local-copy recovery failed.');
     secExpect(!str_contains(json_encode($listed),$readGrant['capabilityToken'])&&!str_contains(json_encode($listed),'NATIVE-SECRET-CANARY'),'Native metadata exposed secrets or capability tokens.');
-    $admission=$approved(['kind'=>'nativeEnrollment','label'=>'Second administrator key','hardware'=>false,'probe'=>false]);
-    $secondKey=secKey();$registration=json_decode(json_encode($invoke('enrollmentOptions',['code'=>$admission['enrollmentCode']])['data']),true);
-    $invoke('enrollmentVerify',['challengeId'=>$registration['challengeId'],'credential'=>secRegistration($secondKey,$registration['options']['challenge'])]);
-    secReject(static fn()=>$invoke('session'),'New credential registration did not invalidate old sessions.');
+    $secondKey=secKey();$browser=secKey();
+    $p=json_decode(json_encode($invoke('nativeCandidateOptions',['label'=>'Second key','hardware'=>false,'probe'=>false])['data']),true);
+    $registration=secRegistration($secondKey,$p['options']['challenge']);$jwk=secJwk($browser);$kd=SecretsBootstrapVerifier::publicKey($jwk)['digest'];
+    $bytes=implode("\n",['SECF.ADDKEY.SUBMIT.1',$request['origin'],$p['prepare'],$p['options']['challenge'],$kd,SecretsBootstrapVerifier::digest($registration)])."\n";
+    $candidate=$invoke('nativeCandidateSubmit',['prepare'=>$p['prepare'],'key'=>$jwk,'credential'=>$registration,'signature'=>secRawSign($browser,$bytes)])['data'];
+    $prepared=json_decode(json_encode($invoke('prepare',['operation'=>['kind'=>'nativeEnrollment','candidate'=>$candidate['candidate'],'digest'=>$candidate['digest']]])['data']),true);
+    secReject(static fn()=>$invoke('approve',['challengeId'=>$prepared['challengeId'],'credential'=>secAssertion($secondKey,$prepared['options']['challenge'],1)]),'Candidate approved its own admission.');
+    $prepared=json_decode(json_encode($invoke('prepare',['operation'=>['kind'=>'nativeEnrollment','candidate'=>$candidate['candidate'],'digest'=>$candidate['digest']]])['data']),true);
+    $invoke('approve',['challengeId'=>$prepared['challengeId'],'credential'=>secAssertion($key,$prepared['options']['challenge'],++$counter)]);
+    secReject(static fn()=>$invoke('session'),'New credential did not revoke existing sessions.');
     $loginOptions=json_decode(json_encode($invoke('authOptions')['data']),true);
     $login=$invoke('authVerify',['challengeId'=>$loginOptions['challengeId'],'credential'=>secAssertion($secondKey,$loginOptions['options']['challenge'],1)]);
     $request['cookie']=explode(';',$login['cookie'])[0];$request['csrf']=$login['data']['csrf'];
-    $admission=$approved(['kind'=>'nativeEnrollment','label'=>'Stale admission','hardware'=>false,'probe'=>false]);
-    $approved(['kind'=>'save','scope'=>'local','path'=>['NewerState'],'revision'=>'3','mode'=>'create','json'=>'true']);
-    secReject(static fn()=>$invoke('enrollmentOptions',['code'=>$admission['enrollmentCode']]),'Web admission survived a change to its authorizing snapshot.');
+    secExpect(count($invoke('session')['data']['credentials'])===2,'Exact candidate not installed.');
+    secReject(static fn()=>$invoke('enrollmentOptions',['code'=>'old-code']),'Legacy native enrollment remained reachable.');
     foreach(glob($root.'/data/*')?:[]as$file)if(is_file($file))secExpect(!str_contains(file_get_contents($file),'NATIVE-SECRET-CANARY'),'Native value was written in plaintext.');
     $front->properties['TrustedHTTPSProxyIPs']='["192.0.2.1"]';$back->ApplyChanges();
     secExpect(!$back->Recover(),'Changed protected frontend trust activated a native runtime.');

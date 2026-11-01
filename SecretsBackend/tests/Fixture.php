@@ -77,18 +77,33 @@ function secKey(): array
 function secAssertion(array $key, string $challenge, int $counter, string $origin = 'https://secrets.example.test', int $flags = 5): array
 {
     $client = SecretsBackendCodec::json(['type' => 'webauthn.get', 'origin' => $origin, 'challenge' => $challenge, 'crossOrigin' => false]);
-    $auth = hash('sha256', 'secrets.example.test', true) . chr($flags) . pack('N', $counter); $signature = '';
+    $auth = hash('sha256', (string)parse_url($origin,PHP_URL_HOST), true) . chr($flags) . pack('N', $counter); $signature = '';
     openssl_sign($auth . hash('sha256', $client, true), $signature, $key['private'], OPENSSL_ALGO_SHA256);
     return ['type' => 'public-key', 'rawId' => $key['id'], 'response' => ['clientDataJSON' => SecretsBackendCodec::b64($client), 'authenticatorData' => SecretsBackendCodec::b64($auth), 'signature' => SecretsBackendCodec::b64($signature), 'userHandle' => null]];
 }
-function secRegistration(array $key, string $challenge): array
+function secRegistration(array $key, string $challenge, string $origin = 'https://secrets.example.test'): array
 {
     $bytes = static fn(string $value) => chr(0x58) . chr(strlen($value)) . $value;
     $cose = "\xa5\x01\x02\x03\x26\x20\x01\x21" . $bytes($key['details']['ec']['x']) . "\x22" . $bytes($key['details']['ec']['y']);
     $id = SecretsBackendCodec::unb64($key['id']);
-    $auth = hash('sha256', 'secrets.example.test', true) . chr(0x45) . pack('N', 0) . str_repeat("\0", 16) . pack('n', strlen($id)) . $id . $cose;
+    $auth = hash('sha256', (string)parse_url($origin,PHP_URL_HOST), true) . chr(0x45) . pack('N', 0) . str_repeat("\0", 16) . pack('n', strlen($id)) . $id . $cose;
     $byteString = strlen($auth) < 256 ? chr(0x58) . chr(strlen($auth)) . $auth : chr(0x59) . pack('n', strlen($auth)) . $auth;
     $attestation = "\xa3\x63fmt\x64none\x68authData" . $byteString . "\x67attStmt\xa0";
-    $client = SecretsBackendCodec::json(['type' => 'webauthn.create', 'origin' => 'https://secrets.example.test', 'challenge' => $challenge, 'crossOrigin' => false]);
+    $client = SecretsBackendCodec::json(['type' => 'webauthn.create', 'origin' => $origin, 'challenge' => $challenge, 'crossOrigin' => false]);
     return ['type' => 'public-key', 'rawId' => $key['id'], 'response' => ['clientDataJSON' => SecretsBackendCodec::b64($client), 'attestationObject' => SecretsBackendCodec::b64($attestation)]];
 }
+
+/** Explicit cryptographically valid synthetic admission; never part of the runtime API. */
+function secGenesis(array $binding,string $vault,?array $key=null): array
+{
+    $key??=secKey();$challenge=SecretsBackendCodec::b64(random_bytes(32));$final=SecretsBackendCodec::b64(random_bytes(32));
+    return ['format'=>'SECF.Genesis.1','operation'=>SecretsBackendCodec::uuid(),'vault'=>$vault,'candidateDigest'=>hash('sha256','test-candidate'),'planDigest'=>hash('sha256','test-plan'),'binding'=>$binding,
+        'registration'=>secRegistration($key,$challenge,$binding['origin']),'registrationContext'=>['challenge'=>$challenge,'origin'=>$binding['origin'],'owner'=>SecretsBackendCodec::b64(random_bytes(32)),'userHandle'=>SecretsBackendCodec::b64(random_bytes(32))],
+        'assertion'=>secAssertion($key,$final,1,$binding['origin']),'challenge'=>$final];
+}
+function secRawSign(array $key,string $bytes): string
+{
+    openssl_sign($bytes,$der,$key['private'],OPENSSL_ALGO_SHA256);$at=2;$out='';
+    for($i=0;$i<2;$i++){$at++;$length=ord($der[$at++]);$n=substr($der,$at,$length);$at+=$length;$out.=str_pad(ltrim($n,"\0"),32,"\0",STR_PAD_LEFT);}return SecretsBackendCodec::b64($out);
+}
+function secJwk(array $key): array { return ['kty'=>'EC','crv'=>'P-256','x'=>SecretsBackendCodec::b64($key['details']['ec']['x']),'y'=>SecretsBackendCodec::b64($key['details']['ec']['y'])]; }

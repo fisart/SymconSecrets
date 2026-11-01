@@ -17,30 +17,33 @@ qualification, not production/migration approval.
 
 ## Initial setup
 
-1. Update `feature/secrets-frontend` in Module Control. Use separate new backend
-   and frontend instances. Existing instance selections and a unique eligible
-   backend are detected automatically.
-2. In SecretsFrontend, enter the trusted HTTPS address normally used for Symcon.
-   A saved address is prefilled. The form immediately generates the complete
-   clickable wizard URL, including port and its own instance ID, with a copyable
-   field. Only a deliberately trusted exact proxy IP may rewrite Host routing.
-3. Generate the ten-minute one-use setup code in that form and open the HTML
-   wizard. No script, object-ID lookup or external command is needed.
-4. Review detected instances, suggested storage locations and capabilities.
-   Defaults use separate private per-instance folders inside Symcon's data
-   directory, device appearance, Debug off and standalone operation. Keep native
-   initialization selected to create the new vault; settings-only remains an
-   explicit option. The earlier external-service draft is hidden from this flow.
-5. Review the exact plan. If the host cannot establish container persistence or
-   a private Windows ACL, confirm or correct that specific condition in the HTML
-   wizard. A mount observation does not prove the backup/power-loss properties.
-6. Apply the reviewed plan and register the first administrator passkey. The
-   initialization authorization is consumed before effects; existing storage is
-   never replaced. A lost/expired first registration code can be regenerated in
-   the frontend form's administrator enrollment/recovery section.
-7. Sign in and test with invented secrets first. Changes and selected-record
-   reveal require a fresh passkey approval. Listings stay masked. Configuration
-   downloads contain settings only, never vaults, keys or credentials.
+1. Update the development branch and use the separate SecretsFrontend. A unique
+   eligible backend is selected automatically; if none exists, setup proposes one.
+2. In the console, choose **Open setup / administration**. Enter the trusted HTTPS
+   origin only if unknown. Verify private/persistent setup storage only when the
+   supplied platform cannot establish it. The complete link is displayed without
+   any code or other authorization in its URL.
+3. In the browser choose **Prepare first passkey**. For a recent interrupted
+   preparation, **Use an already prepared passkey** proves possession again.
+4. Refresh the console request list, compare all four identifier groups against
+   the browser and approve that exact request. No candidate is selected by arrival
+   order or automatically trusted because it is the only one.
+5. Review the detected defaults. Change optional settings only when needed;
+   confirm any unresolved vault persistence/Windows ACL condition.
+6. Choose **Set up and sign in** and confirm the exact plan with your prepared
+   passkey. Its administrator entry, initial audit and operation outcome publish
+   in the first usable encrypted state, before activation and session creation.
+7. Test with invented secrets. After a lost completion reply, resolve the accepted
+   operation in the console and use normal passkey sign-in; never start a second
+   setup to replace an uncertain operation.
+
+The [code-free implementation contract](BOOTSTRAP_IMPLEMENTATION.md) documents
+nonce recovery, cancellation/restart, automatic backend creation and test limits.
+Additional keys are prepared before an existing administrator approves the exact
+credential. Independent console recovery uses a replacement candidate and preserves
+current data/policy. Ordinary-key recovery is blocked under an active hardware
+policy until a separate hardware-recovery procedure is qualified. No manual-code
+setup or administrator-enrollment fallback remains in native mode.
 
 The trusted HTTPS origin cannot safely be inferred from an unauthenticated
 request header. Available PHP/Symcon functions, storage capacity, instance IDs,

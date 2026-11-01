@@ -7,7 +7,7 @@ if (extension_loaded('pdo_sqlite') || class_exists('PDO', false)) {
     throw new RuntimeException('Run this regression with php -n and no PDO extension.');
 }
 $requirements = SecretsFrontendCommissioning::requirements();
-if ($requirements['scope'] !== 'settings-only' || $requirements['runtime'] !== 'symcon-native'
+if ($requirements['scope'] !== 'native-vault' || $requirements['runtime'] !== 'symcon-native'
     || $requirements['nativeBackendImplemented'] !== true) {
     throw new RuntimeException('Setup diagnostics must report the available native implementation separately from vault initialization.');
 }

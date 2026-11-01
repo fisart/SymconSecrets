@@ -31,10 +31,8 @@ async function fixture(url,secure){
  assert.equal(f.calls[0].options.redirect,'error');assert.equal(f.calls[0].options.credentials,'same-origin');
  // Recheck on every API operation, not just the first page load.
  Object.defineProperty(f.dom.window,'isSecureContext',{value:false,configurable:true});
- f.dom.window.document.getElementById('setupCode').value='MUST_NOT_SEND';
- f.dom.window.document.getElementById('setupForm').dispatchEvent(new f.dom.window.Event('submit',{bubbles:true,cancelable:true}));await tick();
+ f.dom.window.document.getElementById('bsPrepare').click();await tick();
  assert.equal(f.calls.length,1,'A later insecure-context request sent credentials.');
- assert.equal(f.dom.window.document.getElementById('setupCode').value,'');
  f.dom.window.close();
  process.stdout.write('PASS browser HTTPS/exact-origin/secure-context gate, fixed canonical navigation, zero unsafe requests or credential controls and per-request recheck\n');
 })().catch(error=>{process.stderr.write(error.stack+'\n');process.exitCode=1;});

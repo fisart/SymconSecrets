@@ -77,93 +77,55 @@
   "actions": [
     {
       "type": "Label",
-      "caption": "Native setup: use the HTML wizard to review settings, initialize the encrypted vault and register the first passkey. Standalone is the default; peers are optional."
-    },
-    {
-      "type": "Label",
-      "caption": "Start here: enter your Symcon HTTPS address, generate a one-use setup code and open the HTML wizard. It can create a new native encrypted vault and guide first administrator enrollment."
+      "caption": "Open setup, prepare your first passkey in the browser, then compare and approve its request here. No code is copied or entered."
     },
     {
       "type": "ValidationTextBox",
       "name": "SetupAddress",
-      "caption": "Your Symcon HTTPS address — complete wizard URL appears below",
-      "onChange": "SECF_PreviewWizardURL($id, $SetupAddress);",
-      "width": "100%"
+      "caption": "Trusted Symcon HTTPS address (including public port)",
+      "width": "100%",
+      "onChange": "SECF_PreviewWizardURL($id, $SetupAddress);"
     },
     {
-      "type": "ExpansionPanel",
-      "caption": "Advanced connection · trusted TLS proxy, if needed",
-      "items": [
-        {
-          "type": "ValidationTextBox",
-          "name": "SetupProxyIPs",
-          "caption": "Only if TLS ends at a reverse proxy: trusted proxy IPs, comma separated"
-        }
-      ]
+      "type": "CheckBox",
+      "name": "BootstrapJournalStorage",
+      "caption": "Setup records use private persistent storage",
+      "value": false
     },
     {
       "type": "Button",
-      "name": "GenerateSetupCode",
-      "caption": "Generate one-use setup code · valid for 10 minutes",
-      "link": false,
-      "onClick": "echo SECF_BeginGuidedSetup($id, $SetupAddress, $SetupProxyIPs);",
-      "width": "100%"
-    },
-    {
-      "type": "ValidationTextBox",
-      "name": "SetupAccessCode",
-      "caption": "One-use setup code — select and copy into the HTML wizard",
-      "value": "",
-      "enabled": true,
-      "width": "100%"
-    },
-    {
-      "type": "Label",
-      "caption": "The generated code appears in a dialog and in the field above. Copy it now; generating another code replaces the previous one. After reopening the form, generate a fresh code if you no longer have it."
-    },
-    {
-      "type": "Label",
-      "caption": "Click the complete generated URL to open the HTML wizard, or select and copy the URL field below."
-    },
-    {
-      "type": "Button",
-      "name": "OpenWizard",
-      "caption": "Open HTML wizard",
+      "name": "OpenBootstrap",
+      "caption": "Open setup / administration",
       "link": true,
-      "onClick": "echo SECF_GetSetupWizardURL($id, $SetupAddress);",
-      "enabled": false,
-      "width": "100%"
-    },
-    {
-      "type": "Button",
-      "caption": "Show URL to copy",
-      "link": false,
-      "onClick": "echo SECF_GetSetupWizardURL($id, $SetupAddress);",
-      "name": "CopyWizardURL",
-      "enabled": false
+      "onClick": "echo SECF_OpenBootstrap($id, $SetupAddress, \"\", false, $BootstrapJournalStorage);"
     },
     {
       "type": "ValidationTextBox",
       "name": "WizardURL",
-      "caption": "Automatically generated HTML wizard URL — select and copy",
-      "enabled": true,
+      "caption": "Complete administration URL",
       "width": "100%"
     },
     {
       "type": "Button",
-      "caption": "Cancel setup authorization",
-      "onClick": "SECF_CancelGuidedSetup($id);"
+      "name": "RefreshCandidates",
+      "caption": "Refresh approval requests",
+      "onClick": "SECF_RefreshBootstrapForm($id);"
     },
     {
-      "type": "Label",
-      "caption": "One console authorization protects a new empty installation. Origin and proxy trust are never guessed from browser headers. The remaining settings are in the HTML wizard."
+      "type": "Button",
+      "caption": "Recover administrator access",
+      "link": true,
+      "onClick": "echo SECF_OpenRecoveryBootstrap($id);"
     },
     {
-      "type": "ValidationTextBox",
-      "name": "FrontendURL",
-      "caption": "Administration URL — select and copy",
-      "enabled": true,
-      "width": "100%"
+      "type": "Button",
+      "caption": "Cancel unaccepted setup",
+      "onClick": "echo SECF_CancelBootstrap($id);"
+    },
+    {
+      "type": "Button",
+      "caption": "Resolve accepted setup",
+      "onClick": "SECF_RecoverBootstrap($id);"
     },
     {
       "type": "Button",
@@ -174,72 +136,6 @@
       "type": "Button",
       "caption": "Add to Portal → Administration",
       "onClick": "SECF_AddToPortal($id);"
-    },
-    {
-      "type": "Label",
-      "caption": "Portal registration uses its existing AdditionalPages setting, preserves other entries and requires applied Portal settings. No Portal source code is changed."
-    },
-    {
-      "type": "ExpansionPanel",
-      "caption": "Configuration export / import (no vault, keys or sessions)",
-      "items": [
-        {
-          "type": "Button",
-          "caption": "Export configuration",
-          "onClick": "SECF_ExportConfiguration($id);"
-        },
-        {
-          "type": "ValidationTextBox",
-          "name": "ExportJSON",
-          "caption": "Configuration export",
-          "multiline": true
-        },
-        {
-          "type": "ValidationTextBox",
-          "name": "ImportJSON",
-          "caption": "Configuration to import",
-          "multiline": true
-        },
-        {
-          "type": "Button",
-          "caption": "Import configuration — leave disabled",
-          "onClick": "SECF_ImportConfiguration($id, $ImportJSON);"
-        }
-      ]
-    },
-    {
-      "type": "Button",
-      "caption": "Clear Debug",
-      "onClick": "SECF_ClearDebug($id);"
-    },
-    {
-      "type": "ExpansionPanel",
-      "caption": "Administrator enrollment / independent recovery",
-      "items": [
-        {
-          "type": "ValidationTextBox",
-          "name": "AdministratorLabel",
-          "caption": "Administrator label",
-          "value": "Administrator"
-        },
-        {
-          "type": "CheckBox",
-          "name": "AdministratorHardware",
-          "caption": "Use the reviewed hardware trust profile (default off)"
-        },
-        {
-          "type": "Button",
-          "caption": "Generate one-use administrator enrollment code",
-          "link": false,
-          "onClick": "echo SECF_BeginAdministratorEnrollment($id, $AdministratorLabel, $AdministratorHardware);"
-        },
-        {
-          "type": "ValidationTextBox",
-          "name": "AdministratorEnrollmentCode",
-          "caption": "One-use enrollment code (shown only when generated)",
-          "value": ""
-        }
-      ]
     }
   ],
   "status": [

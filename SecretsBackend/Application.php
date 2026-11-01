@@ -75,6 +75,7 @@ final class SecretsBackendApplication
     }
     public function beginEnrollment(string $label, bool $hardware, bool $probe = false, ?array $approval = null): string
     {
+        if ($this->store instanceof SecretsBackendNativeStore) throw new RuntimeException('Code-based native enrollment is closed. Prepare an exact passkey candidate.');
         if ($label === '' || strlen($label) > 80 || preg_match('/[\x00-\x1f]/', $label)) throw new InvalidArgumentException('Invalid administrator label.');
         $current = $this->store->read(); $token = SecretsBackendCodec::b64(random_bytes(32));
         $body=['label' => $label, 'hardware' => $hardware, 'probe' => $probe, 'independentRecovery' => $approval === null];
@@ -82,6 +83,19 @@ final class SecretsBackendApplication
         $this->store->put(hash('sha256', $token), 'enrollment', $body, time() + 600,
             $this->audit($approval===null?'enroll-recovery':'enroll-approved', $approval['credential']??'independent-console-recovery', 'enrollment-authorization'));
         return $token;
+    }
+    /** Only the local adapter calls this after verified genesis commit and one-use login reservation. */
+    public function bootstrapSession(string $id): array
+    {
+        $current=$this->store->read();$entry=$current['state']['identity']['credentials'][$id]??null;
+        if(!$entry||!$entry['active']||!$entry['tested'])throw new RuntimeException('Approved administrator is no longer active.');
+        $this->store->authorize('login',hash('sha256','genesis:'.$id),$current,static function(array $checked)use($id,$entry):void{
+            $key=$checked['state']['identity']['credentials'][$id]??null;
+            if(!$key||!$key['active']||$key['administrator']!==$entry['administrator'])throw new RuntimeException('Administrator changed before login.');
+        },$this->audit('login',$id,'genesis-session'));
+        $raw=SecretsBackendCodec::b64(random_bytes(32));$csrf=SecretsBackendCodec::b64(random_bytes(32));
+        $this->store->put(hash('sha256',$raw),'session',['credential'=>$id,'administrator'=>$entry['administrator'],'revocation'=>$current['state']['identity']['revocation'],'csrf'=>$csrf,'origin'=>$this->settings['origin'],'created'=>time(),'last'=>time()],time()+3600);
+        return ['data'=>['authenticated'=>true,'csrf'=>$csrf],'cookie'=>$this->cookieName().'='.$raw.'; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=3600'];
     }
     private function enrollmentAuthority(array $token,array $current): void
     {
@@ -133,6 +147,36 @@ final class SecretsBackendApplication
         }, $this->audit('enroll-recovery', 'independent-console-recovery', $id));
         return ['registered' => true];
     }
+    private function nativeCandidate(string $action,array $data,array $session,array $current): array
+    {
+        if(!($this->store instanceof SecretsBackendNativeStore))throw new RuntimeException('Native candidates require the native backend.');
+        if($action==='nativeCandidateOptions'){
+            self::exact($data,['label','hardware','probe']);
+            if(!is_string($data['label'])||$data['label']===''||strlen($data['label'])>80||preg_match('/[\x00-\x1f]/',$data['label'])||!is_bool($data['hardware'])||!is_bool($data['probe'])||($data['hardware']&&$data['probe']))throw new RuntimeException('Invalid candidate settings.');
+            $auth=$this->webauthn($data['hardware']);$user=SecretsBackendCodec::b64(random_bytes(32));
+            $args=$auth->getCreateArgs(SecretsBackendCodec::unb64($user),$data['label'],$data['label'],90,'preferred',true,$data['hardware']?true:null,array_map(static fn($c)=>SecretsBackendCodec::unb64($c['id']),array_values($current['state']['identity']['credentials'])));
+            if($data['hardware']||$data['probe'])$args->publicKey->attestation='direct';
+            $id=SecretsBackendCodec::b64(random_bytes(32));$ctx=['challenge'=>SecretsBackendCodec::b64($auth->getChallenge()->getBinaryString()),'origin'=>$this->settings['origin'],'owner'=>$session['administrator'],'userHandle'=>$user];
+            $this->store->put($id,'candidate-prepare',['session'=>$session['hash'],'context'=>$ctx,'settings'=>$data,'head'=>$current['head']],time()+90);
+            return ['prepare'=>$id,'options'=>$args->publicKey];
+        }
+        self::exact($data,['prepare','key','credential','signature']);$p=$this->store->get($data['prepare'],'candidate-prepare');
+        if($p['session']!==$session['hash']||!SecretsBackendCodec::same($p['head'],$current['head']))throw new RuntimeException('Candidate preparation context changed.');
+        $key=SecretsBootstrapVerifier::publicKey($data['key']);
+        $bytes="SECF.ADDKEY.SUBMIT.1\n".$this->settings['origin']."\n".$data['prepare']."\n".$p['context']['challenge']."\n".$key['digest']."\n".SecretsBootstrapVerifier::digest($data['credential'])."\n";
+        SecretsBootstrapVerifier::verifySignature($bytes,$data['signature'],$data['key']);
+        $entry=SecretsBootstrapVerifier::registration($data['credential'],$p['context']);$entry['label']=$p['settings']['label'];
+        $entry['hardware']=$p['settings']['hardware'];$entry['trustVersion']=$this->settings['hardwareTrustVersion']??'none';
+        if($entry['hardware']){
+            if($entry['backupEligible'])throw new RuntimeException('Hardware candidates cannot be backup eligible.');
+            SecretsBackendHardwareTrust::verify(SecretsBackendCodec::unb64($data['credential']['response']['attestationObject']),$this->settings['hardwareRoots'],$this->settings['hardwareAAGUIDs'],hex2bin($entry['aaguid']));
+        }
+        if(isset($current['state']['identity']['credentials'][$entry['id']]))throw new RuntimeException('This credential already exists.');
+        $this->store->get($data['prepare'],'candidate-prepare',true);
+        $candidate=SecretsBackendCodec::b64(random_bytes(32));$body=['entry'=>$entry,'keyDigest'=>$key['digest'],'registrationDigest'=>SecretsBootstrapVerifier::digest($data['credential']),'session'=>$session['hash'],'head'=>$current['head']];
+        $digest=SecretsBootstrapVerifier::digest($body);$this->store->put($candidate,'key-candidate',$body,time()+300);
+        return ['candidate'=>$candidate,'digest'=>$digest,'label'=>$entry['label'],'keyDigest'=>$key['digest']];
+    }
     private function audit(string $action, string $actor, string $target): array
     {
         return ['action' => $action, 'actor' => $actor, 'target' => $target,
@@ -155,6 +199,7 @@ final class SecretsBackendApplication
         if (isset($this->settings['managementProfile']) && SecretsBackendSecurityConfiguration::digest($this->settings['managementProfile']) !== SecretsBackendSecurityConfiguration::digest($current['state']['policy']['management'])) throw new RuntimeException('Security profile changed; repeat complete validation.');
         if ($current['state']['policy']['origin'] !== $this->settings['origin'] || $current['state']['policy']['frontend'] !== (string)$this->settings['frontend']) throw new RuntimeException('Protected origin or frontend binding differs; use independent recovery.');
         if ($action === 'status') { self::exact($data, []); return ['data' => ['ready' => true, 'enrollmentNeeded' => count($current['state']['identity']['credentials']) === 0]]; }
+        if ($this->store instanceof SecretsBackendNativeStore && in_array($action,['enrollmentOptions','enrollmentVerify'],true)) throw new RuntimeException('Code-based enrollment is closed.');
         if ($action === 'enrollmentOptions') return ['data' => $this->enrollmentOptions($data)];
         if ($action === 'enrollmentVerify') return ['data' => $this->enrollmentVerify($data)];
         if ($action === 'authOptions') { self::exact($data, []); return ['data' => $this->challenge($current, $current['state']['identity']['credentials'], false, 'login', [])]; }
@@ -182,6 +227,7 @@ final class SecretsBackendApplication
         $this->rejectionContext = $this->audit('request', $session['credential'], 'management');
         if ($action !== 'session') $this->requireCsrf($request, $session);
         if ($native instanceof SecretsBackendNativeOperations && in_array($action, ['nativeUploadBegin','nativeUploadChunk','nativeUploadFinish','nativeOperationStatus'], true)) return ['data' => $native->request($action, $data)];
+        if (in_array($action,['nativeCandidateOptions','nativeCandidateSubmit'],true)) return ['data'=>$this->nativeCandidate($action,$data,$session,$current)];
         if ($action === 'logout') { self::exact($data, []); $this->store->delete($session['hash']); return ['data' => ['loggedOut' => true], 'cookie' => $this->cookieName() . '=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0']; }
         if ($action === 'session' || $action === 'list') {
             self::exact($data, []); $this->store->authorize('metadata', hash('sha256', $session['hash'] . ':' . $current['head']['digest']), $current,
@@ -223,6 +269,7 @@ final class SecretsBackendApplication
             $committed = $this->store->change($challenge['head'], $operationId, $digest, function (array $state) use ($operation, $id, $counter): array {
                 $state = $this->apply($operation, $state); $state['identity']['credentials'][$id]['counter'] = $counter; $state['identity']['credentials'][$id]['tested'] = true; return $state;
             }, $this->audit($operation['kind'], $id, SecretsBackendCodec::json(array_intersect_key($operation, array_flip(['kind', 'scope', 'path', 'credentialId'])))));
+            if ($operation['kind'] === 'nativeEnrollment') return ['data'=>['committed'=>true,'operationId'=>$operationId,'reloginRequired'=>true]];
             if ($operation['kind'] === 'reveal') {
                 $latest = $this->store->read();
                 if (!SecretsBackendCodec::same($latest['head'], $committed)) throw new RuntimeException('Reveal state changed before authorization.');
@@ -242,7 +289,7 @@ final class SecretsBackendApplication
                 $this->store->authorize(SecretsBackendNativeOperations::actionClass($operation['kind']), $digest, $latest,
                     function(array $checked) use($request,$id):void{$session=$this->session($request,$checked);$key=$checked['state']['identity']['credentials'][$id]??null;if(!is_array($key)||!$key['active']||$key['administrator']!==$session['administrator'])throw new RuntimeException('Native result authority changed.');},
                     $this->audit($operation['kind'],$id,'native-result'));
-                if ($operation['kind'] === 'nativeEnrollment') { if (!SecretsBackendCodec::same($this->store->read()['head'], $committed)) throw new RuntimeException('Enrollment authorization state changed.'); return ['data'=>['committed'=>true,'operationId'=>$operationId,'enrollmentCode'=>$this->beginEnrollment($operation['label'],$operation['hardware'],$operation['probe'],['head'=>$committed,'credential'=>$id,'administrator'=>$session['administrator'],'hardware'=>$challenge['hardware']]),'clearAfterSeconds'=>60]]; }
+
                 return ['data' => ['committed'=>true,'operationId'=>$operationId]+$native->result($operation,$latest)];
             }
             return ['data' => ['committed' => true, 'operationId' => $operationId]];

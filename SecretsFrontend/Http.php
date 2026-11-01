@@ -18,6 +18,7 @@ final class SecretsFrontendHttp
         if (!$settings['Enabled']) return $reply(503, 'Secrets frontend is disabled.');
         $method = $server['REQUEST_METHOD'] ?? '';
         if (!in_array($method, ['GET', 'HEAD', 'POST'], true)) return $reply(405, 'Unsupported method.', ['Allow' => 'GET, HEAD, POST']);
+        foreach (['HTTP_X_HTTP_METHOD_OVERRIDE','HTTP_X_METHOD_OVERRIDE','HTTP_X_HTTP_METHOD'] as $override) if (isset($server[$override])) return $reply(405, 'Method override is not accepted.');
         // Never interpret a query as an operation, file name, redirect or module function.
         if (($server['QUERY_STRING'] ?? '') !== '') return $reply(400, 'Query parameters are not supported.');
         $requestPath = parse_url((string)($server['REQUEST_URI'] ?? ''), PHP_URL_PATH);
@@ -53,14 +54,14 @@ final class SecretsFrontendHttp
                 || !in_array($server['HTTP_SEC_FETCH_SITE'] ?? 'same-origin', ['same-origin', 'none'], true)) return $reply(403, 'Same-origin JSON requests are required.');
             try {
                 $body = SecretsFrontendConfiguration::decode($input);
-                $allowed = ['guidedDiscover', 'guidedPreview', 'guidedApply', 'guidedCancel', 'status', 'setupPreview', 'setupCreate', 'authOptions', 'authVerify', 'enrollmentOptions', 'enrollmentVerify', 'session', 'list', 'configurationPreview', 'nativeUploadBegin', 'nativeUploadChunk', 'nativeUploadFinish', 'nativeOperationStatus', 'prepare', 'approve', 'logout'];
+                $allowed = ['bootstrapPrepare','bootstrapSubmit','bootstrapProof','bootstrapResumeOptions','nativeCandidateOptions','nativeCandidateSubmit', 'guidedDiscover', 'guidedPreview', 'guidedApply', 'guidedCancel', 'status', 'setupPreview', 'setupCreate', 'authOptions', 'authVerify', 'enrollmentOptions', 'enrollmentVerify', 'session', 'list', 'configurationPreview', 'nativeUploadBegin', 'nativeUploadChunk', 'nativeUploadFinish', 'nativeOperationStatus', 'prepare', 'approve', 'logout'];
                 if (count($body) !== 2 || !is_string($body['action'] ?? null) || !in_array($body['action'], $allowed, true) || !is_array($body['data'] ?? null) || $gateway === null) return $reply(400, 'Unsupported API request.');
                 $result = $gateway(['action' => $body['action'], 'data' => $body['data'], 'origin' => $origin,
                     'remote' => (string)($server['REMOTE_ADDR'] ?? ''), 'cookie' => (string)($server['HTTP_COOKIE'] ?? ''), 'csrf' => (string)($server['HTTP_X_CSRF_TOKEN'] ?? '')]);
                 if (!is_array($result) || !in_array($result['status'] ?? 0, [200, 400, 401, 403, 409, 429, 503], true) || !is_array($result['data'] ?? null)) throw new RuntimeException('Invalid backend response.');
                 $apiHeaders = $headers; $apiHeaders['Content-Type'] = 'application/json; charset=utf-8';
                 if (($result['cookie'] ?? '') !== '') {
-                    if (!is_string($result['cookie']) || !preg_match('/^__Host-SECB_[1-9][0-9]*=(?:[A-Za-z0-9_-]{43})?; Path=\/; Secure; HttpOnly; SameSite=Strict; Max-Age=(?:0|3600)$/D', $result['cookie'])) throw new RuntimeException('Invalid backend cookie.');
+                    if (!is_string($result['cookie']) || !preg_match('/^__Host-(?:SECB_[1-9][0-9]*|SECFB_[a-f0-9]{32}_[a-f0-9]{16})=(?:[A-Za-z0-9_-]{43})?; Path=\/; Secure; HttpOnly; SameSite=Strict; Max-Age=(?:0|900|3600)$/D', $result['cookie'])) throw new RuntimeException('Invalid backend cookie.');
                     $apiHeaders['Set-Cookie'] = $result['cookie'];
                 }
                 return ['status' => $result['status'], 'headers' => $apiHeaders, 'body' => SecretsFrontendConfiguration::encode($result['data'])];
@@ -73,7 +74,7 @@ final class SecretsFrontendHttp
         foreach (['Portal' => $portal, 'Dokumentation' => $documentation] as $label => $target) {
             if (preg_match('~^/hook/[A-Za-z0-9_-]+$~D', $target)) $links .= '<a href="' . $escape($target) . '">' . $label . '</a>';
         }
-        $html = str_replace(['%%NONCE%%', '%%BOOT%%', '%%NAVIGATION%%', '%%NATIVE_PANELS%%', '/* %%NATIVE_ADMIN%% */'], [$escape($nonce), $boot, $links, (string)file_get_contents(__DIR__ . '/native-panels.html'), (string)file_get_contents(__DIR__ . '/native-admin.js')], (string)file_get_contents(__DIR__ . '/page.html'));
+        $html = str_replace(['%%NONCE%%', '%%BOOT%%', '%%NAVIGATION%%', '%%NATIVE_PANELS%%', '/* %%NATIVE_ADMIN%% */', '/* %%BOOTSTRAP%% */'], [$escape($nonce), $boot, $links, (string)file_get_contents(__DIR__ . '/native-panels.html'), (string)file_get_contents(__DIR__ . '/native-admin.js'), (string)file_get_contents(__DIR__ . '/bootstrap.js')], (string)file_get_contents(__DIR__ . '/page.html'));
         return ['status' => 200, 'headers' => $headers, 'body' => $html];
     }
 }

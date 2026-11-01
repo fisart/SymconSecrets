@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/BackendStorage.php';
 require_once __DIR__ . '/NativePlatform.php';
 require_once __DIR__ . '/Codec.php';
+require_once __DIR__ . '/BootstrapVerifier.php';
 
 /** One encrypted complete-state journal, implemented solely with supplied PHP. */
 final class SecretsBackendNativeStore implements SecretsBackendStorage
@@ -52,8 +53,10 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
         $plain = sodium_crypto_box_seal_open(SecretsBackendCodec::unb64($sealed), $key);
         if (!is_string($plain)) throw new RuntimeException('Peer payload authentication failed.'); return $plain;
     }
-    public static function initialize(string $directory, string $keys, array $binding, array $profile, string $initializationId, bool $resume = false): array
+    public static function initialize(string $directory, string $keys, array $binding, array $profile, string $initializationId, array $admission, bool $resume = false, ?callable $publicationGuard = null): array
     {
+        $first = SecretsBootstrapVerifier::genesis($admission, $binding, $initializationId);
+        $genesisDigest = SecretsBootstrapVerifier::digest($admission);
         $cap = SecretsBackendNativePlatform::capabilities();
         if ($cap['missing']) throw new RuntimeException('The supplied Symcon PHP lacks: ' . implode(', ', $cap['missing']));
         if (PHP_OS_FAMILY === 'Windows' && ($binding['privateACLConfirmed'] ?? false) !== true) throw new RuntimeException('Confirm private Windows folder ACLs in the wizard before initialization.');
@@ -87,22 +90,26 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
             self::publishFile($directory . '/native.json', SecretsBackendCodec::json($id));
         }
         if (!is_file($directory . '/native.lock')) self::publishFile($directory . '/native.lock', '');
-        $store = new self($directory, $keys, '');
+        $store = new self($directory, $keys, '', null, $publicationGuard);
         $create($keys . '/data-' . $store->identity['keyId'] . '.key', static fn() => random_bytes(32));
         if ($store->identity['deploymentId'] !== $initializationId || self::canonical($store->identity['binding']) !== self::canonical($binding)) throw new RuntimeException('Native initialization binding changed.');
-        $store->locked(function () use ($store, $profile, $binding): void {
-            if ($store->frame !== null) { if ($store->frame['state']['identity']['credentials'] || $store->frame['state']['vault']['revision'] !== '0') throw new RuntimeException('An initialized vault requires its normal recovery, not bootstrap.'); return; } // Exact interrupted initialization only.
+        $store->locked(function () use ($store, $profile, $binding, $first, $admission, $genesisDigest): void {
+            if ($store->frame !== null) { if (($store->frame['state']['native']['genesisDigest'] ?? '') !== $genesisDigest || !isset($store->frame['state']['identity']['credentials'][$first['id']])) throw new RuntimeException('A different or legacy genesis requires recovery.'); return; } // Exact interrupted initialization only.
             $empty = ['type' => 'object', 'entries' => []];
             $state = ['vault' => ['global' => $empty, 'local' => $empty, 'revision' => '0'],
-                'identity' => ['credentials' => [], 'revocation' => '0', 'ownerId' => SecretsBackendCodec::b64(random_bytes(32))],
+                'identity' => ['credentials' => [$first['id'] => $first], 'revocation' => '0', 'ownerId' => $first['administrator']],
                 'policy' => ['origin' => $binding['origin'], 'frontend' => (string)$binding['frontend'], 'version' => '1', 'management' => $profile,
                     'hardware' => ['write' => false, 'identity' => false, 'export' => false, 'reveal' => false]],
                 'pairing' => ['peers' => []], 'stream' => ['globalRevision' => '0', 'next' => [], 'received' => []],
                 'operations' => ['outcomes' => [], 'audit' => []], 'outbox' => ['jobs' => []],
-                'native' => ['activeDataKeyId' => $store->identity['keyId'], 'vaultId' => $store->identity['deploymentId'], 'globalTreeId' => $store->identity['globalTreeId'], 'ownershipEpoch' => '1', 'globalWritable' => true,
+                'native' => ['genesisFormat' => 'SECF.Genesis.1', 'genesisDigest' => $genesisDigest, 'initializationOperation' => $admission['operation'], 'candidateDigest' => $admission['candidateDigest'], 'planDigest' => $admission['planDigest'], 'genesisAdmission' => $admission, 'activeDataKeyId' => $store->identity['keyId'], 'vaultId' => $store->identity['deploymentId'], 'globalTreeId' => $store->identity['globalTreeId'], 'ownershipEpoch' => '1', 'globalWritable' => true,
                     'trees' => [], 'received' => [], 'machines' => [], 'providers' => [], 'effects' => [], 'externalPredecessors' => [], 'transfers' => [], 'invites' => [], 'deliveryReceipts' => []]];
-            $store->frame = ['sequence' => '0', 'previous' => str_repeat('0', 64), 'head' => $store->newHead($state, '0'),
-                'state' => $state, 'runtime' => '', 'active' => false, 'ephemeral' => [], 'telemetry' => [], 'outcomeHeads' => []];
+            $state['operations']['audit'][] = ['operationId'=>$admission['operation'],'at'=>gmdate('c'),'deployment'=>$store->identity['deploymentId'],'backend'=>(string)$binding['backend'],'frontend'=>(string)$binding['frontend'],
+                'actor'=>$store->opaque($first['id']),'action'=>'bootstrap-genesis','target'=>$store->opaque($admission['candidateDigest']),'beforeIndex'=>'0','afterIndex'=>'0','revision'=>'0','afterRevision'=>'0','result'=>'committed'];
+            $state['operations']['outcomes'][$admission['operation']] = ['requestDigest'=>$genesisDigest,'index'=>'0','result'=>'committed'];
+            $head=$store->newHead($state,'0');
+            $store->frame = ['sequence' => '0', 'previous' => str_repeat('0', 64), 'head' => $head,
+                'state' => $state, 'runtime' => '', 'active' => false, 'ephemeral' => [], 'telemetry' => [], 'outcomeHeads' => [$admission['operation']=>$head]];
             $store->dirty = true;
         }, true);
         return $store->identity;
@@ -146,6 +153,9 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
         $frame = json_decode($plain, true, 96, JSON_THROW_ON_ERROR);
         if (($frame['state']['native']['activeDataKeyId'] ?? '') !== $keyId || ($frame['sequence'] ?? '') !== $marker['sequence'] || ($frame['previous'] ?? '') !== $marker['previous']
             || !hash_equals($frame['head']['digest'] ?? '', self::stateDigest($frame['state']))) throw new RuntimeException('Native state/commit binding failed.');
+        $genesis=$frame['state']['native']??[];
+        if(($genesis['genesisFormat']??'')!=='SECF.Genesis.1'||!is_array($genesis['genesisAdmission']??null)||!hash_equals($genesis['genesisDigest']??'',SecretsBootstrapVerifier::digest($genesis['genesisAdmission']))
+            ||($genesis['genesisAdmission']['vault']??'')!==$this->identity['deploymentId']||($genesis['genesisAdmission']['operation']??'')!==($genesis['initializationOperation']??'')||!$frame['state']['identity']['credentials'])throw new RuntimeException('Legacy or incomplete native genesis is locked for explicit recovery.');
         $this->frame = $frame; $this->markerDigest = hash('sha256', SecretsBackendCodec::json($marker + ['mac' => $mac]));
     }
     private function save(): void

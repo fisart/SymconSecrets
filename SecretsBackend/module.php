@@ -286,6 +286,7 @@ class SecretsBackend extends IPSModule
     }
     public function BeginAdminEnrollment(string $Label, bool $Hardware): string
     {
+        if ($this->ReadAttributeBoolean('GuidedV2Only')) throw new RuntimeException('Manual enrollment codes are disabled in native mode.');
         $code = ($this->ReadAttributeBoolean('GuidedV2Only') ? $this->nativeApplication() : $this->application())->beginEnrollment($Label, $Hardware);
         $this->UpdateFormField('EnrollmentCredential', 'value', $code); $this->debug('enrollment-authorized'); return $code;
     }
@@ -412,6 +413,7 @@ class SecretsBackend extends IPSModule
         if (!$native) { try { $sealed = $sealed || $this->bootstrap() !== null; } catch (Throwable $ignored) { $sealed = true; } }
         $fill = function (array &$items) use (&$fill, $sealed, $native, $initialized): void { foreach ($items as &$element) {
             if ($sealed && in_array($element['name'] ?? '', SecretsBackendSecurityConfiguration::FOUNDATION, true)) $element['enabled'] = false;
+            if ($native && (preg_match('/(?:BeginStorageSetup|BeginAdminEnrollment|SealInitialSecurityConfiguration)/',$element['onClick']??'') || in_array($element['name']??'',['SetupCredential','EnrollmentCredential'],true))) $element['visible']=false;
             if ($native && (($element['name'] ?? '') === 'Enabled' || preg_match('/^SECB_(?:BeginStorageSetup|SecurityConfigurationDigest|SealInitialSecurityConfiguration|Recover|BeginAdminEnrollment)\(/', $element['onClick'] ?? ''))) $element['enabled'] = false;
             if ($native && ($element['name'] ?? '') === 'Enabled') { $element['enabled'] = $initialized; $element['caption'] = 'Enable native vault'; }
             if ($native && ($element['onClick'] ?? '') === 'SECB_Recover($id);') { $element['enabled'] = $initialized; $element['caption'] = 'Check native encrypted storage / recover'; }

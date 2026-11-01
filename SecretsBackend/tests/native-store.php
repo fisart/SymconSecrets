@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/../NativeStore.php';
+require_once __DIR__ . '/Fixture.php';
 require_once __DIR__ . '/../Tree.php';
 $checks = 0;
 $ok = static function (bool $v, string $why) use (&$checks): void { if (!$v) throw new RuntimeException($why); ++$checks; };
@@ -10,7 +11,7 @@ $fixture = static function () use (&$roots): array {
     $root = sys_get_temp_dir() . '/sec-native-' . bin2hex(random_bytes(8)); $roots[] = $root;
     $paths = ['vaultDirectory' => $root . '/data', 'keyDirectory' => $root . '/keys'];
     $binding = ['origin' => 'https://native.example.test', 'frontend' => 1, 'backend' => 2, 'privateACLConfirmed' => true];
-    $id = SecretsBackendCodec::uuid(); SecretsBackendNativeStore::initialize($paths['vaultDirectory'], $paths['keyDirectory'], $binding, [], $id);
+    $id = SecretsBackendCodec::uuid(); SecretsBackendNativeStore::initialize($paths['vaultDirectory'], $paths['keyDirectory'], $binding, [], $id, secGenesis($binding,$id));
     $store = new SecretsBackendNativeStore($paths['vaultDirectory'], $paths['keyDirectory'], 'runtime-a'); $store->recover();
     return [$root, $paths, $store, $binding, $id];
 };
@@ -47,12 +48,20 @@ try {
     $no(static fn()=>$s->read(),'Corrupt highest state fell back to old permissions.');
     [$r,$p,$s] = $fixture();unlink($p['keyDirectory'].'/master.key');
     $no(static fn()=>new SecretsBackendNativeStore($p['vaultDirectory'],$p['keyDirectory'],'x'),'Missing master key accepted.');
-    $no(static fn()=>SecretsBackendNativeStore::initialize($p['vaultDirectory'],$p['keyDirectory'],$binding,[],$id,true),'Missing key for ciphertext was regenerated.');
+    $no(static fn()=>SecretsBackendNativeStore::initialize($p['vaultDirectory'],$p['keyDirectory'],$binding,[],$id,secGenesis($binding,$id),true),'Missing key for ciphertext was regenerated.');
     $ok(!file_exists($p['keyDirectory'].'/master.key'),'Missing key was replaced.');
     [$r,$p,$s] = $fixture();$s->invalidate();$candidate=new SecretsBackendNativeStore($p['vaultDirectory'],$p['keyDirectory'],'rejected-runtime');
     $no(static fn()=>$candidate->recover(static function(array $state):void{throw new RuntimeException('Security profile drift');}),'Recovery ignored the pinned-profile validator.');
     $no(static fn()=>$candidate->read(),'Failed recovery nevertheless activated peer/machine access.');
     $ok($candidate->recover() === $candidate->head(),'Corrected explicit recovery could not resume.');
+    foreach(['after_frame','before_marker','after_marker','after_directory_sync']as$point){
+        $r=sys_get_temp_dir().'/sec-genesis-'.bin2hex(random_bytes(8));$roots[]=$r;$uuid=SecretsBackendCodec::uuid();$admission=secGenesis($binding,$uuid);
+        $no(static fn()=>SecretsBackendNativeStore::initialize($r.'/data',$r.'/keys',$binding,[],$uuid,$admission,false,static function($at)use($point){if($at===$point)throw new RuntimeException('Injected genesis interruption');}),'Genesis interruption did not propagate.');
+        SecretsBackendNativeStore::initialize($r.'/data',$r.'/keys',$binding,[],$uuid,$admission,true);
+        $recovered=new SecretsBackendNativeStore($r.'/data',$r.'/keys','genesis-recovery');$recovered->recover();$state=$recovered->read()['state'];
+        $ok(count($state['identity']['credentials'])===1&&isset($state['identity']['credentials'][$admission['registration']['rawId']]),'First usable recovered genesis omitted or changed its administrator.');
+        $ok(isset($state['operations']['outcomes'][$admission['operation']])&&$state['operations']['audit'][0]['action']==='bootstrap-genesis','Genesis omitted its correlated audit/outcome.');
+    }
     $ok(SecretsBackendNativePlatform::normalize('C:\\Symcon\\data',true)==='C:/Symcon/data','Windows normalization failed.');
     $no(static fn()=>SecretsBackendNativePlatform::normalize('C:/Symcon/../keys',true),'Windows traversal accepted.');
     $no(static fn()=>SecretsBackendNativePlatform::normalize('C:/Symcon/CON',true),'Windows device path accepted.');

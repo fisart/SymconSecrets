@@ -29,7 +29,7 @@ Generate a random stable vault UUID at explicit initialization, independent of h
 
 One complete authenticated snapshot contains values and typed hierarchies, administrator credentials/counters, local rights and revocation generations, shared-tree ownership/membership, received-tree cursors, key references, audit entries, mutation outcomes, outbox jobs and OAuth intent/result references. Values and permissions never publish as separate variable writes. Secret values, credentials and private keys never enter unencrypted properties, logs or configuration exports.
 
-The encryption key remains in a separate private key location. Symcon's encrypted Vault-style variable may mirror the committed snapshot for existing native persistence/export conventions, but the mirror is not a second authority. Sessions, challenges and one-use setup input remain transient and bound to a new random runtime nonce on every reload/restart. Reboot invalidation does not establish independent rollback detection.
+The encryption key remains in a separate private key location. Symcon's encrypted Vault-style variable may mirror the committed snapshot for existing native persistence/export conventions, but the mirror is not a second authority. Sessions, challenges and browser setup rights remain transient and bound to a new random runtime nonce on every reload/restart. Reboot invalidation does not establish independent rollback detection.
 
 Keys are immutable files named by vault UUID and key ID. Initialization uses exclusive creation, validates the result and refuses an existing identity/state. A missing/mismatched key locks the affected state; recovery never invents a replacement key for existing ciphertext. Reviewed creation revalidates canonical path separation, ancestors, permissions and symlinks immediately before writes. Platform-specific ACL/path handling needs qualification; the present POSIX path correction is not evidence of Windows qualification.
 
@@ -104,7 +104,7 @@ OAuth/external effects retain uncertainty handling: commit an exact PREPARED int
 
 | Surface | Native replacement contract |
 | --- | --- |
-| Configuration form | Display/configuration; explicit one-use initialization authority; no ordinary permission, key or secret mutation bypass |
+| Configuration form | Display/configuration; exact console-approved passkey candidate and durable initial decision; no ordinary permission, key or secret mutation bypass |
 | Frontend management hook | Fixed same-origin schema; passkey/session/CSRF; exact expected state and action approval; bounded JSON |
 | Native peer hook | Only closed signed/encrypted native messages addressed to this vault/backend; no browser session as peer authority |
 | Local machine APIs | Explicit per-instance/tree/path/action capability; rights and runtime checked at commit/read boundary |
@@ -121,3 +121,7 @@ Test 1, 2, 3 and at least 5 logical vaults, both in one Symcon process and acros
 Record PASS/FAIL/NOT_RUN/N/A against the exact native implementation and runtime. Prior Go/SQLite test results do not qualify the replacement. The native tests now provide implementation evidence listed in RELEASE_STATUS.md. They do not establish real deployment acceptance or production/migration approval.
 
 Native persistence references: [Symcon backup/write frequency](https://www.symcon.de/en/service/documentation/backup-and-restore/), [service/configuration recovery](https://www.symcon.de/en/service/documentation/components/service/), [semaphores](https://www.symcon.de/en/service/documentation/command-reference/process-control/ips-semaphoreenter/). These document API behavior; they are not executed power-loss evidence.
+
+The code-free setup, mandatory first-administrator genesis, restart decision journal,
+additional-key candidates and independent recovery use BOOTSTRAP_IMPLEMENTATION.md.
+Manual native setup/enrollment code methods are closed, including cached callers.
