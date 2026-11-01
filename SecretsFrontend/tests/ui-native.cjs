@@ -7,7 +7,7 @@ const source=require('./page-source.cjs')().replaceAll('%%NONCE%%','test').repla
 const tick=()=>new Promise(r=>setImmediate(r));
 const credential=()=>({type:'public-key',rawId:new Uint8Array([1]).buffer,response:{clientDataJSON:new Uint8Array([1]).buffer,authenticatorData:new Uint8Array([1]).buffer,signature:new Uint8Array([1]).buffer,attestationObject:new Uint8Array([1]).buffer,userHandle:null}});
 async function fixture(){
- const calls=[],errors=[],maskTimers=[];let output={nativeChanged:true},lose=false,delayReveal=false,resolveReveal;const pendingReveal=new Promise(r=>{resolveReveal=r;});
+ const calls=[],errors=[],maskTimers=[],popup={};let output={nativeChanged:true},lose=false,delayReveal=false,resolveReveal;const pendingReveal=new Promise(r=>{resolveReveal=r;});
  const v=new VirtualConsole();v.on('jsdomError',e=>errors.push(e));
  const descriptor={backend:'456',endpoint:'https://secrets.example.test/hook/secrets_peer_456',vaultId:'vault-a',treeId:'tree-a'};
  const n={info:{vaultId:'vault-a',usedBytes:4096,capacityBytes:524288,directorySync:true},peerEndpoint:descriptor.endpoint,peerDescriptor:descriptor,globalTreeId:'tree-a',globalWritable:true,queuedJobs:0,peers:[],ownedTrees:[],received:[{id:'tree-b',owner:'vault-b',at:'2026-11-01T01:00:00Z',revision:'7',entries:[{path:[],type:'object',children:1},{path:['Shared <safe>'],type:'string'}]}],transfers:{},machines:[],hardwareProfile:{version:'none',fingerprints:{},aaguids:[]},providers:[],effects:{}};
@@ -16,9 +16,12 @@ async function fixture(){
   Object.defineProperty(w,'crypto',{value:webcrypto});w.TextEncoder=TextEncoder;const nativeTimeout=w.setTimeout.bind(w);w.setTimeout=(fn,ms,...args)=>{if(ms===30000)maskTimers.push(fn);return nativeTimeout(fn,ms,...args)};
   Object.defineProperty(w,'isSecureContext',{value:true});w.HTMLDialogElement.prototype.showModal=function(){this.open=true};w.HTMLDialogElement.prototype.close=function(){this.open=false};
   Object.defineProperty(w.navigator,'credentials',{value:{get:async()=>credential(),create:async()=>credential()}});
+  w.open=()=>popup;
   w.URL.createObjectURL=()=> 'blob:test';w.URL.revokeObjectURL=()=>{};w.HTMLAnchorElement.prototype.click=function(){};
   w.fetch=async(url,options)=>{const r=JSON.parse(options.body);calls.push(r);let data={};
    if(r.action==='status')data={ready:true,enrollmentNeeded:false};if(r.action==='session')data=snapshot;
+   if(r.action==='connectDiscovery')data={available:true,origin:'https://backup.ipmagic.de'};
+   if(r.action==='connectCandidateReview')data={candidate:r.data.candidate,digest:'connect-digest',fingerprint:'test-fingerprint',origin:'https://backup.ipmagic.de',rights:['read','write','export']};
    if(r.action==='sessionTimeout')data={idleLimit:r.data.seconds};
    if(r.action==='sessionReveal')data=delayReveal?await pendingReveal:{fields:[{field:r.data.operation.path.at(-1)==='Login'?'Password':'value',value:'TEST-VALUE'}]};
    if(r.action==='prepare')data={operationId:'operation-a',challengeId:'challenge-a',options:{challenge:'AQ',allowCredentials:[]},reviewSummary:{kind:r.data.operation.kind},requiresHardware:false};
@@ -29,12 +32,13 @@ async function fixture(){
    return{ok:true,json:async()=>data};
   };
  }});
- await tick();await tick();return{dom,$:id=>dom.window.document.getElementById(id),calls,errors,setOutput:x=>{output=x},lose:()=>{lose=true},setHardware:x=>{snapshot.hardware.reveal=x},delayReveal:()=>{delayReveal=true},resolveReveal,maskTimers};
+ await tick();await tick();return{dom,$:id=>dom.window.document.getElementById(id),calls,errors,popup,setConnect:p=>{n.backupOrigin=p;n.primaryOrigin='https://secrets.example.test';},setOutput:x=>{output=x},lose:()=>{lose=true},setHardware:x=>{snapshot.hardware.reveal=x},delayReveal:()=>{delayReveal=true},resolveReveal,maskTimers};
 }
 async function approve(f,id,output){f.setOutput(output);f.$(id).click();await tick();assert.equal(f.$('review').open,true);f.$('approve').click();await tick();await tick();}
 (async()=>{
  const f=await fixture(),$=f.$;
  assert.equal($('nativeRecoveryEnrollment').hidden,false);$('nativeRecoveryEnrollment').click();assert.match($('message').textContent,/trusted Symcon console/);f.dom.window.document.querySelector('[data-tab="overview"]').click();assert.equal($('nativePeersNav').hidden,false);assert.match($('nativeStorageInfo').textContent,/512 KiB/);assert.equal($('nativePeerURL').value,'https://secrets.example.test/hook/secrets_peer_456');
+ f.dom.window.document.querySelector('[data-tab="nativeKeys"]').click();$('nativeDiscoverConnect').click();await tick();assert.equal($('connectOrigin').value,'https://backup.ipmagic.de');assert.equal($('connectAllow').disabled,false);f.setConnect({origin:'https://backup.ipmagic.de',generation:'a'.repeat(64),status:'pending'});await approve(f,'connectAllow',{committed:true});assert.equal($('connectOpen').disabled,false);$('connectOpen').click();await tick();const beforeCandidate=f.calls.length;f.dom.window.dispatchEvent(new f.dom.window.MessageEvent('message',{origin:'https://evil.example',source:f.popup,data:{type:'SECF.ConnectCandidate.1',candidate:'candidate',digest:'connect-digest'}}));await tick();assert.equal(f.calls.length,beforeCandidate,'Wrong-origin popup message was processed.');Object.defineProperty(f.dom.window.document,'hidden',{value:true,configurable:true});f.dom.window.dispatchEvent(new f.dom.window.MessageEvent('message',{origin:'https://backup.ipmagic.de',source:f.popup,data:{type:'SECF.ConnectCandidate.1',candidate:'candidate',digest:'connect-digest'}}));await tick();assert.equal(f.calls.length,beforeCandidate,'Hidden primary window started review.');Object.defineProperty(f.dom.window.document,'hidden',{value:false,configurable:true});f.dom.window.document.dispatchEvent(new f.dom.window.Event('visibilitychange'));await tick();await tick();assert.equal(f.calls.at(-1).action,'connectCandidateReview');assert.equal($('connectApprove').disabled,false);$('connectApprove').click();await tick();assert.equal(f.calls.at(-1).data.operation.kind,'nativeConnectActivate');assert.equal(f.calls.at(-1).data.operation.digest,'connect-digest');$('cancelReview').click();f.setConnect(null);
  f.dom.window.document.querySelector('[data-tab="secrets"]').click();$('sessionTimeout').value='300';$('sessionTimeout').dispatchEvent(new f.dom.window.Event('change'));await tick();assert.equal(f.calls.at(-1).action,'sessionTimeout');assert.equal(f.calls.at(-1).data.seconds,300);
  const item=name=>[...$('browserItems').querySelectorAll('button')].find(x=>x.textContent.includes(name));
  const askButton=item('ASK');askButton.click();assert.equal(item('ASK'),askButton,'Selection must preserve the row for a real double-click.');askButton.click();askButton.dispatchEvent(new f.dom.window.MouseEvent('dblclick',{bubbles:true}));assert.match($('browserLocation').textContent,/ASK/);

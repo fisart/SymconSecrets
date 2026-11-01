@@ -11,6 +11,7 @@ function nativeOperationForSelection(kind,extra={}){const scope=$('scope').value
 function nativeSelectionChanged(){const scope=$('scope').value,n=snapshot?.native;const readonly=scope.startsWith('received:')||(scope==='global'&&n&&!n.globalWritable)||(scope.startsWith('owned:')&&n?.ownedTrees.find(t=>t.id===scope.slice(6))?.frozen);$('save').disabled=!!readonly;$('delete').disabled=!!readonly||!selected?.path?.length;if(n){$('nativeMachineScope').value=scope;$('nativeMachinePath').value=$('path').value;}}
 function nativeSuggestProvider(){if(!$('nativeProviderURL').value&&!nativeProviderId){const entries=[];for(const scope of ['local','global'])for(const entry of snapshot[scope]||[])entries.push({scope,path:entry.path,type:entry.type});const find=names=>entries.filter(x=>x.type==='string'&&names.includes(String(x.path.at(-1)).replace(/[^a-z]/gi,'').toLowerCase()));const refresh=find(['refreshtoken']),secret=find(['clientsecret']);if(refresh.length===1){$('nativeProviderRefreshScope').value=refresh[0].scope;$('nativeProviderRefreshPath').value=JSON.stringify(refresh[0].path);$('nativeProviderResultScope').value=refresh[0].scope;$('nativeProviderResultPath').value=JSON.stringify(refresh[0].path.slice(0,-1));}if(secret.length===1){$('nativeProviderSecretScope').value=secret[0].scope;$('nativeProviderSecretPath').value=JSON.stringify(secret[0].path);}}}
 function renderNative(){const n=snapshot?.native;for(const id of ['nativePeersNav','nativeRecoveryNav','nativeMachinesNav','nativeKeysNav','nativeProvidersNav'])$(id).hidden=!n;if(!n)return;
+ renderConnect();
  $('nativePeerURL').value=n.peerEndpoint;$('nativeStorageInfo').textContent='Vault '+n.info.vaultId+' · '+Math.ceil(n.info.usedBytes/1024)+' / '+Math.floor(n.info.capacityBytes/1024)+' KiB · '+(n.info.directorySync?'file and directory synchronization':'file synchronization; platform qualification required')+' · standalone full-state rollback detection unavailable.';
  const scopes=[['global',n.globalWritable?'Global · owned':'Global · frozen/received'],['local','Local · never synchronized'],...n.ownedTrees.map(t=>['owned:'+t.id,'Owned shared tree · '+t.id.slice(0,8)]),...n.received.filter(t=>t.id!==n.globalTreeId).map(t=>['received:'+t.id,'Received · '+t.owner.slice(0,8)+' · '+t.at])];nativeSelect('scope',scopes);nativeSelect('nativeMachineScope',scopes);nativeSelectionChanged();renderTree();
  $('nativeDeliveryInfo').textContent=n.queuedJobs+' immutable delivery job(s) awaiting acknowledgement.';const peers=$('nativePeerList');peers.replaceChildren();for(const p of n.peers){const actions=[];if(p.state==='PENDING_APPROVAL')actions.push(['Review and accept',()=>review({kind:'nativeAcceptPair',peerId:p.id},'Activate this exact bilateral pairing. Global trees are shared; local secrets remain private.')]);if(p.active)actions.push(['Resynchronize global snapshot',()=>review({kind:'nativeResync',peerId:p.id},'Request a signed receiver cursor and send the current owner snapshot without lowering its known revision.')]);if(p.state!=='REVOKED')actions.push(['Revoke connection',()=>review({kind:'nativeRevokePeer',peerId:p.id},'Stop this connection. Previously received cached values cannot be erased remotely.')]);nativeRow(peers,p.name+' · '+p.state,p.descriptor.endpoint+' · vault '+p.id+' · pairing '+p.pairingId+' · last received '+(p.lastSync||'not yet'),actions);}
@@ -32,6 +33,7 @@ async function nativeResult(result,ticket){if(result.fields)return false;if(!sna
  message(result.restored?'Reviewed secret values recovered; current authority retained.':result.compacted?'Verified backup accepted; retained outcomes compacted.':'Change committed.');return true;
 }
 run($('nativeCopyPeerURL'),()=>nativeCopy('nativePeerURL'));run($('nativeSensitiveCopy'),()=>nativeCopy('nativeSensitiveValue'));$('nativeSensitiveClose').addEventListener('click',nativeClearSecrets);$('nativeSensitiveDialog').addEventListener('cancel',nativeClearSecrets);
+
 run($('nativeInvite'),()=>review({kind:'nativeInvite'},'Generate a single-use invitation. The requesting vault must still be approved here before sharing.'));
 run($('nativeJoin'),()=>{const invitation=$('nativeInvitation').value.trim();$('nativeInvitation').value='';return review({kind:'nativePair',invitation,name:$('nativePeerName').value},'Review the issuer URL, vault identity and fingerprint. The issuer must approve this exact recipient.');});
 run($('nativeTransfer'),()=>{if(!$('nativeTransferTree').value||!$('nativeTransferPeer').value)throw Error('Choose an owned tree and an active paired new owner.');return review({kind:'nativeTransferOffer',treeId:$('nativeTransferTree').value,peerId:$('nativeTransferPeer').value},'Freeze this writer and offer ownership. It never resumes automatically after a timeout.');});
@@ -54,3 +56,49 @@ run($('nativeRefreshPeers'),load);run($('nativeRefreshProviders'),load);$('scope
 $('nativeMachineScope').addEventListener('change',()=>{const scope=$('nativeMachineScope').value;const readOnly=scope.startsWith('received:')||(scope==='global'&&snapshot?.native&&!snapshot.native.globalWritable);$('nativeMachineWrite').disabled=readOnly;if(readOnly)$('nativeMachineWrite').checked=false;});
 
 run($('nativeRecoveryEnrollment'),()=>{tab('setup');message('In the trusted Symcon console, open Recover administrator access. Then prepare and compare your replacement passkey here. Hardware policies remain enforced.');});
+
+let connectPopup=null,connectCandidate=null,connectPendingMessage=null;
+function renderConnect(){
+ const p=snapshot?.native?.backupOrigin,primary=boot.origin===(snapshot?.native?.primaryOrigin||boot.origin);
+ $('connectWizard').hidden=!primary;
+ if(!primary)return;
+ if(p&&p.status!=='revoked')$('connectOrigin').value=p.origin;
+ const pending=p?.status==='pending',active=p?.status==='active';
+ $('connectAllow').disabled=pending||active||!$('connectOrigin').value;
+ $('connectOpen').disabled=!pending;$('connectApprove').disabled=!pending||!connectCandidate;
+ $('connectRevoke').hidden=!pending&&!active;
+ $('connectState').textContent=active?'Backup access is active. Save the Connect address and test a fresh sign-in.':pending?'Step 3 of 4 · Create the backup passkey, then approve it here.':'Step 1 of 4 · Find your Connect address.';
+ for(let i=1;i<=4;i++)$('connectStep'+i).classList.toggle('active',i===(active?4:pending?connectCandidate?4:3:$('connectOrigin').value?2:1));
+}
+run($('nativeDiscoverConnect'),async ticket=>{const result=await api('connectDiscovery',{},ticket);if(result.available){$('connectOrigin').value=result.origin;$('nativeConnectDiscovery').textContent='Address found. Continue with 2 · Allow backup setup.';renderConnect();}else $('nativeConnectDiscovery').textContent=result.message;});
+run($('connectAllow'),ticket=>review({kind:'nativeConnectStage',origin:$('connectOrigin').value},'Allow restricted backup passkey setup at this exact address. Backup access stays closed until Step 4.',ticket));
+run($('connectOpen'),()=>{connectCandidate=null;connectPopup=window.open(snapshot.native.backupOrigin.origin+boot.path,'secrets-connect-setup','popup,width=760,height=850');if(!connectPopup)throw Error('Allow this setup popup, then select Step 3 again.');});
+async function connectReviewIncoming(){
+ if(document.hidden||!connectPendingMessage||!snapshot)return;
+ const incoming=connectPendingMessage;connectPendingMessage=null;const ticket=generation;
+ try{const candidate=await api('connectCandidateReview',{candidate:incoming.candidate},ticket);if(candidate.digest!==incoming.digest)throw Error('Backup candidate changed. Repeat Step 3.');connectCandidate=candidate;renderConnect();$('nativeConnectDiscovery').textContent='Passkey tested. Compare fingerprint '+candidate.fingerprint+' with the backup window, then continue with Step 4.';}catch(e){if(ticket===generation)message(e.message,true);}
+}
+window.addEventListener('message',event=>{
+ const p=snapshot?.native?.backupOrigin;
+ if(!p||p.status!=='pending'||event.origin!==p.origin||event.source!==connectPopup||event.data?.type!=='SECF.ConnectCandidate.1'||typeof event.data.candidate!=='string'||typeof event.data.digest!=='string')return;
+ connectPendingMessage={candidate:event.data.candidate,digest:event.data.digest};connectReviewIncoming();
+});
+window.addEventListener('focus',connectReviewIncoming);document.addEventListener('visibilitychange',connectReviewIncoming);
+run($('connectApprove'),ticket=>{if(!connectCandidate)throw Error('Complete Step 3 first.');return review({kind:'nativeConnectActivate',candidate:connectCandidate.candidate,digest:connectCandidate.digest},'Compare this exact credential fingerprint with the backup window: '+connectCandidate.fingerprint+'. Grant the displayed administrator access at '+connectCandidate.origin+'.',ticket);});
+run($('connectRevoke'),ticket=>{const p=snapshot.native.backupOrigin;connectCandidate=null;return review({kind:'nativeConnectRevoke',origin:p.origin,generation:p.generation},'Remove this backup route and invalidate all its sessions, challenges and pending setup. Your primary address remains available.',ticket);});
+run($('connectCreate'),async ticket=>{
+ const ctx=await bootstrapKey(),p=await api('connectOptions',{key:ctx.key},ticket);
+ const cred=await ceremony('create',options(p.options,true),ticket);
+ const credential={type:cred.type,rawId:encoded(cred.rawId),response:{clientDataJSON:encoded(cred.response.clientDataJSON),attestationObject:encoded(cred.response.attestationObject)}};
+ const digest=await bootstrapHash(JSON.stringify(bootstrapCanonical(credential)));
+ const bytes=['SECF.CONNECT.REGISTER.1',boot.origin,boot.originGeneration,p.prepare,ctx.keyDigest,digest].join('\n')+'\n';
+ const test=await api('connectSubmit',{prepare:p.prepare,credential,signature:await bootstrapSign(ctx,bytes)},ticket);
+ const proof=assertion(await ceremony('get',options(test.options),ticket));
+ const proofDigest=await bootstrapHash(JSON.stringify(bootstrapCanonical(proof)));
+ const proofBytes=['SECF.CONNECT.TEST.1',boot.origin,boot.originGeneration,test.test,ctx.keyDigest,proofDigest].join('\n')+'\n';
+ const result=await api('connectProof',{test:test.test,credential:proof,signature:await bootstrapSign(ctx,proofBytes)},ticket);
+ $('connectEnrollmentResult').textContent='Passkey tested. Compare fingerprint '+result.fingerprint+' in the primary window and approve Step 4 there.';
+ if(window.opener)window.opener.postMessage({type:'SECF.ConnectCandidate.1',candidate:result.candidate,digest:result.digest},boot.primaryOrigin);
+ $('connectFinish').hidden=false;
+});
+run($('connectFinish'),()=>{location.reload();});

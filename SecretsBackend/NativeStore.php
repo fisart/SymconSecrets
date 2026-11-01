@@ -275,7 +275,7 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
             $old = $this->frame['state']['operations']['outcomes'][$operationId] ?? null;
             if ($old !== null) { if ($old['requestDigest'] !== $requestDigest) throw new RuntimeException('Operation ID reused with different data.'); return $this->frame['outcomeHeads'][$operationId]; }
             if (!SecretsBackendCodec::same($this->frame['head'], $expectedHead)) throw new RuntimeException('Revision conflict; reload and approve the current change.');
-            $maintenance = in_array($audit['action'] ?? '', ['login','reveal','nativeReveal','nativeBackup','nativeCompact','revoke','nativeMachineRevoke','nativeRevokePeer','nativeRotateKey','enroll-recovery','policy'], true);
+            $maintenance = in_array($audit['action'] ?? '', ['nativeConnectRevoke','login','reveal','nativeReveal','nativeBackup','nativeCompact','revoke','nativeMachineRevoke','nativeRevokePeer','nativeRotateKey','enroll-recovery','policy'], true);
             if (count($this->frame['state']['operations']['outcomes']) >= ($maintenance ? 4112 : 3500)) throw new RuntimeException('Operation retention is full; create and verify a backup, then compact explicitly.');
             $state = $mutate($this->frame['state']); $changed = self::stateDigest($state) !== $expectedHead['digest']; $index = $changed ? SecretsBackendCodec::increment($expectedHead['index']) : $expectedHead['index'];
             $event = $this->event($audit, $operationId, 'committed');

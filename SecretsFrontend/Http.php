@@ -35,6 +35,15 @@ final class SecretsFrontendHttp
         $host = $proxy && isset($server['HTTP_X_FORWARDED_HOST']) ? $server['HTTP_X_FORWARDED_HOST'] : ($server['HTTP_HOST'] ?? '');
         try { $requestOrigin = SecretsFrontendConfiguration::origin('https://' . $host); }
         catch (Throwable $exception) { return $reply(403, 'Invalid request host.'); }
+        $primaryOrigin=$origin;$backup=$ui['backupOrigin']??null;
+        if(is_array($backup)&&in_array($backup['status']??'', ['pending','active'],true)&&($backup['origin']??'')===$requestOrigin){
+            // A hostname alone is not transport evidence. Connect deployments
+            // must supply native TLS or an explicitly trusted HTTPS proxy hop.
+            $secure=in_array($server['HTTPS']??'', ['on','1'],true)||($proxy&&($server['HTTP_X_FORWARDED_PROTO']??'')==='https');
+            if(!$secure)return $reply(403,'Backup access requires verified HTTPS transport. Check the Connect relay and trusted proxy configuration.');
+            $origin=$requestOrigin;
+            $headers['Content-Security-Policy']=str_replace('connect-src '.$primaryOrigin,'connect-src '.$origin,$headers['Content-Security-Policy']);
+        }
         if ($requestOrigin !== $origin) {
             if ($method === 'POST') return $reply(403, 'Wrong administrator origin.');
             // Portal additional pages are local paths. Redirect only to the fixed configured origin,
@@ -54,7 +63,7 @@ final class SecretsFrontendHttp
                 || !in_array($server['HTTP_SEC_FETCH_SITE'] ?? 'same-origin', ['same-origin', 'none'], true)) return $reply(403, 'Same-origin JSON requests are required.');
             try {
                 $body = SecretsFrontendConfiguration::decode($input);
-                $allowed = ['bootstrapPrepare','bootstrapSubmit','bootstrapProof','bootstrapResumeOptions','nativeCandidateOptions','nativeCandidateSubmit', 'guidedDiscover', 'guidedPreview', 'guidedApply', 'guidedCancel', 'status', 'setupPreview', 'setupCreate', 'authOptions', 'authVerify', 'enrollmentOptions', 'enrollmentVerify', 'session', 'list', 'sessionReveal', 'sessionTimeout', 'configurationPreview', 'nativeUploadBegin', 'nativeUploadChunk', 'nativeUploadFinish', 'nativeOperationStatus', 'prepare', 'approve', 'logout'];
+                $allowed = ['bootstrapPrepare','bootstrapSubmit','bootstrapProof','bootstrapResumeOptions','nativeCandidateOptions','nativeCandidateSubmit', 'guidedDiscover', 'guidedPreview', 'guidedApply', 'guidedCancel', 'status', 'setupPreview', 'setupCreate', 'authOptions', 'authVerify', 'enrollmentOptions', 'enrollmentVerify', 'session', 'list', 'sessionReveal', 'sessionTimeout', 'configurationPreview', 'connectDiscovery','connectOptions','connectSubmit','connectProof','connectCandidateReview', 'nativeUploadBegin', 'nativeUploadChunk', 'nativeUploadFinish', 'nativeOperationStatus', 'prepare', 'approve', 'logout'];
                 if (count($body) !== 2 || !is_string($body['action'] ?? null) || !in_array($body['action'], $allowed, true) || !is_array($body['data'] ?? null) || $gateway === null) return $reply(400, 'Unsupported API request.');
                 $result = $gateway(['action' => $body['action'], 'data' => $body['data'], 'origin' => $origin,
                     'remote' => (string)($server['REMOTE_ADDR'] ?? ''), 'cookie' => (string)($server['HTTP_COOKIE'] ?? ''), 'csrf' => (string)($server['HTTP_X_CSRF_TOKEN'] ?? '')]);
@@ -68,7 +77,7 @@ final class SecretsFrontendHttp
             } catch (Throwable $exception) { return $reply(503, 'Backend request could not be completed. Check the backend status.'); }
         }
         if ($method === 'HEAD') return ['status' => 200, 'headers' => $headers, 'body' => ''];
-        $boot = json_encode(['origin' => $origin, 'path' => $path, 'theme' => $settings['Theme'], 'guidedV2Only' => ($ui['guidedV2Only'] ?? false) === true], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_THROW_ON_ERROR);
+        $boot = json_encode(['primaryOrigin'=>$primaryOrigin,'backupEnrollment'=>$origin!==$primaryOrigin&&($backup['status']??'')==='pending','originGeneration'=>$origin!==$primaryOrigin?($backup['generation']??''):'','origin' => $origin, 'path' => $path, 'theme' => $settings['Theme'], 'guidedV2Only' => ($ui['guidedV2Only'] ?? false) === true], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_THROW_ON_ERROR);
         $escape = static fn(string $text): string => htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $links = '';
         foreach (['Portal' => $portal, 'Dokumentation' => $documentation] as $label => $target) {

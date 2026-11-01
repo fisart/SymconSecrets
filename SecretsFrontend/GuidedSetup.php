@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/Bootstrap.php';
+require_once __DIR__ . '/ConnectDiscovery.php';
 
 trait SecretsFrontendGuidedSetup
 {
@@ -28,12 +29,21 @@ trait SecretsFrontendGuidedSetup
     private function gateway(array $request): array
     {
         $action=$request['action'];
+        if(str_starts_with($action,'bootstrap')&&$request['origin']!==$this->settings()['AdminOrigin'])return ['status'=>403,'data'=>['error'=>'Use the primary address for initial setup and recovery.'],'cookie'=>''];
         if(in_array($action,['bootstrapPrepare','bootstrapSubmit','bootstrapProof','bootstrapResumeOptions'],true)){
             try{return ['status'=>200]+$this->bootstrapRequest($request);}catch(Throwable $e){return ['status'=>403,'data'=>['error'=>$e->getMessage()],'cookie'=>''];}
         }
         if(in_array($action,['guidedDiscover','guidedPreview','guidedApply','guidedCancel','setupPreview','setupCreate','enrollmentOptions','enrollmentVerify'],true))return ['status'=>403,'data'=>['error'=>'Code-based setup and enrollment have been removed.'],'cookie'=>''];
         $native=$this->bootstrapNative();
         if(!($native['initialized']??false))return ['status'=>$action==='status'?200:503,'data'=>$action==='status'?['ready'=>false,'guidedV2Only'=>true,'setupAvailable'=>$this->guidedActive(),'message'=>'Open setup in the trusted Symcon console, then prepare your first passkey here.']:['error'=>'Native vault not initialized.'],'cookie'=>''];
-        return json_decode(SECB_HandleFrontendRequest($this->backend(),$this->InstanceID,SecretsFrontendConfiguration::encode($request)),true,96,JSON_THROW_ON_ERROR);
+        $reply=json_decode(SECB_HandleFrontendRequest($this->backend(),$this->InstanceID,SecretsFrontendConfiguration::encode($request)),true,96,JSON_THROW_ON_ERROR);
+        if($action==='connectDiscovery'&&($reply['status']??0)===200){
+            $reply['data']=SecretsFrontendConnectDiscovery::discover(
+                static fn($module)=>IPS_GetInstanceListByModuleID($module),
+                static fn($id)=>IPS_GetInstance($id)['InstanceStatus']??0,
+                static function($id){if(function_exists('CC_GetConnectURL'))return CC_GetConnectURL($id);if(function_exists('CC_GetURL'))return CC_GetURL($id);throw new RuntimeException('Connect discovery is unavailable.');}
+            );
+        }
+        return $reply;
     }
 }

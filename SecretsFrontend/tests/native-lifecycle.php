@@ -20,6 +20,9 @@ try {
     secExpect(!file_exists($root.'/data/vault.sqlite')&&is_file($root.'/data/native.json'),'Native setup entered SQLite.');
     $request['cookie']=explode(';',$login['cookie'])[0];$request['csrf']=$login['data']['csrf'];
     $listed=$invoke('session')['data'];secExpect($listed['revision']==='0','Fresh native session failed.');
+    $discovery=$invoke('connectDiscovery')['data'];secExpect(($discovery['available']??null)===false,'Missing Connect instance produced an address.');
+    $savedCookie=$request['cookie'];$request['cookie']='';secReject(static fn()=>$invoke('connectDiscovery'),'Unauthenticated Connect discovery was allowed.');$request['cookie']=$savedCookie;
+    $savedCsrf=$request['csrf'];$request['csrf']='wrong';secReject(static fn()=>$invoke('connectDiscovery'),'Connect discovery accepted invalid CSRF.');$request['csrf']=$savedCsrf;
     $write=['kind'=>'save','scope'=>'global','path'=>['ASK'],'revision'=>'0','mode'=>'create','json'=>'{"User":"native-user","Pass":"NATIVE-SECRET-CANARY"}'];
     $begin=json_decode(json_encode($invoke('prepare',['operation'=>$write])['data']),true);
     $invoke('approve',['challengeId'=>$begin['challengeId'],'credential'=>secAssertion($key,$begin['options']['challenge'],2)]);

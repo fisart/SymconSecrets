@@ -1,0 +1,65 @@
+<?php
+declare(strict_types=1);
+require_once __DIR__.'/BootstrapFixture.php';
+$GLOBALS['moduleIDs']=[5200=>SecretsBackend::FRONTEND,5201=>'{52165EDD-B2C0-40EC-8A59-42A97319B6E2}',700=>'{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}'];
+$hooks=new IPSModule(700);$hooks->properties['Hooks']='[]';$front=new SecretsFrontend(5200);$front->Create();$back=new SecretsBackend(5201);$back->Create();
+$root=sys_get_temp_dir().'/sec-connect-'.bin2hex(random_bytes(8));
+$request=['origin'=>'https://secrets.example.test','cookie'=>'','csrf'=>'','remote'=>'connect-test'];
+$invoke=static function(string $action,array $data=[])use($front,&$request):array{
+ $reply=(new ReflectionMethod(SecretsFrontend::class,'gateway'))->invoke($front,['action'=>$action,'data'=>$data]+$request);
+ if($reply['status']!==200)throw new RuntimeException($action.': '.json_encode($reply));return json_decode(json_encode($reply),true);
+};
+try{
+ $key=secKey();$login=secBootstrapInitialize($front,$request,$key,['backend'=>5201,'portal'=>0,'documentation'=>0,'theme'=>'system','vaultDirectory'=>$root.'/data','keyDirectory'=>$root.'/keys','addPortalLink'=>false,'debugEnabled'=>false,'privateACLConfirmed'=>true,'persistenceConfirmed'=>true]);
+ $request['cookie']=explode(';',$login['cookie'])[0];$request['csrf']=$login['data']['csrf'];$primary=$request;$counter=1;
+ $approved=static function(array $op)use($invoke,$key,&$counter):array{$p=$invoke('prepare',['operation'=>$op])['data'];return $invoke('approve',['challengeId'=>$p['challengeId'],'credential'=>secAssertion($key,$p['options']['challenge'],++$counter)])['data'];};
+ $approved(['kind'=>'save','scope'=>'local','path'=>['Connect-test'],'revision'=>'0','mode'=>'create','json'=>'"CONNECT-TEST-VALUE"']);
+ $identityBefore=file_get_contents($root.'/data/native.json');
+ $origin='https://backup.ipmagic.de';
+ $approved(['kind'=>'nativeConnectStage','origin'=>$origin]);
+ $p=$invoke('session')['data']['native']['backupOrigin'];secExpect($p['status']==='pending','Backup was activated without a candidate.');
+ $settings=array_replace(SecretsFrontendConfiguration::DEFAULTS,['Enabled'=>true,'AdminOrigin'=>$primary['origin']]);$path='/hook/secrets_frontend_5200';$server=['REQUEST_METHOD'=>'GET','REQUEST_URI'=>$path,'HTTP_HOST'=>'backup.ipmagic.de'];
+ $http=SecretsFrontendHttp::response($settings,5200,$server,$path,'','', '',null,['backupOrigin'=>$p]);secExpect($http['status']===403,'Backup host was accepted without HTTPS evidence.');
+ $server['HTTPS']='on';$http=SecretsFrontendHttp::response($settings,5200,$server,$path,'','', '',null,['backupOrigin'=>$p]);secExpect($http['status']===200&&str_contains($http['body'],'"backupEnrollment":true'),'Pending HTTPS page was not served independently.');
+ $server['HTTPS']='off';$server['HTTP_X_FORWARDED_PROTO']='https';$http=SecretsFrontendHttp::response($settings,5200,$server,$path,'','', '',null,['backupOrigin'=>$p]);secExpect($http['status']===403,'Untrusted forwarding headers established HTTPS.');
+ $generation=$p['generation'];$request=['origin'=>$origin,'cookie'=>'','csrf'=>'','remote'=>'connect-test'];
+ secReject(static fn()=>$invoke('authOptions'),'Pending origin admitted login.');
+ secReject(static fn()=>$invoke('session'),'Pending origin admitted general access.');
+ $browser=secKey();$jwk=secJwk($browser);$kd=SecretsBootstrapVerifier::publicKey($jwk)['digest'];$backupKey=secKey();
+ $p=$invoke('connectOptions',['key'=>$jwk])['data'];$registration=secRegistration($backupKey,$p['options']['challenge'],$origin);
+ $bytes=implode("\n",['SECF.CONNECT.REGISTER.1',$origin,$generation,$p['prepare'],$kd,SecretsBootstrapVerifier::digest($registration)])."\n";
+ $test=$invoke('connectSubmit',['prepare'=>$p['prepare'],'credential'=>$registration,'signature'=>secRawSign($browser,$bytes)])['data'];
+ $assertion=secAssertion($backupKey,$test['options']['challenge'],1,$origin);
+ $bytes=implode("\n",['SECF.CONNECT.TEST.1',$origin,$generation,$test['test'],$kd,SecretsBootstrapVerifier::digest($assertion)])."\n";
+ $candidate=$invoke('connectProof',['test'=>$test['test'],'credential'=>$assertion,'signature'=>secRawSign($browser,$bytes)])['data'];
+ secReject(static fn()=>$invoke('session'),'Possession-tested candidate obtained general access.');
+ secReject(static fn()=>$invoke('connectProof',['test'=>$test['test'],'credential'=>$assertion,'signature'=>secRawSign($browser,$bytes)]),'Possession proof was replayed.');
+ $request=$primary;$review=$invoke('connectCandidateReview',['candidate'=>$candidate['candidate']])['data'];secExpect($review['digest']===$candidate['digest'],'Candidate digest differed across origins.');
+ secReject(static fn()=>$approved(['kind'=>'nativeConnectActivate','candidate'=>$candidate['candidate'],'digest'=>str_repeat('0',64)]),'Changed candidate digest was admitted.');
+ $approved(['kind'=>'nativeConnectActivate','candidate'=>$candidate['candidate'],'digest'=>$candidate['digest']]);
+ $primarySession=$invoke('session')['data'];secExpect($primarySession['native']['backupOrigin']['status']==='active','Backup not activated.');
+ secReject(static fn()=>$approved(['kind'=>'revoke','credentialId'=>$key['id']]),'Backup credential was counted as the last primary route.');
+ $request=['origin'=>$origin,'cookie'=>'','csrf'=>'','remote'=>'connect-test'];
+ $options=$invoke('authOptions')['data'];$ids=array_column($options['options']['allowCredentials'],'id');secExpect($ids===[$backupKey['id']],'Backup login offered primary credentials.');
+ secReject(static fn()=>$invoke('authVerify',['challengeId'=>$options['challengeId'],'credential'=>secAssertion($key,$options['options']['challenge'],10,$origin)]),'Primary credential logged in at backup.');
+ $options=$invoke('authOptions')['data'];$logged=$invoke('authVerify',['challengeId'=>$options['challengeId'],'credential'=>secAssertion($backupKey,$options['options']['challenge'],2,$origin)]);
+ $request['cookie']=explode(';',$logged['cookie'])[0];$request['csrf']=$logged['data']['csrf'];$backupSession=$request;
+ secExpect($invoke('session')['data']['native']['backupOrigin']['status']==='active','Backup session unavailable.');
+ $revealed=$invoke('sessionReveal',['operation'=>['kind'=>'reveal','scope'=>'local','path'=>['Connect-test'],'revision'=>'1']])['data'];secExpect(str_contains(json_encode($revealed),'CONNECT-TEST-VALUE'),'Backup could not access the existing vault value.');
+ $back->ApplyChanges();secExpect($back->Recover(),'Native restart recovery failed.');secReject(static fn()=>$invoke('session'),'Restart kept the backup session.');
+ $options=$invoke('authOptions')['data'];$logged=$invoke('authVerify',['challengeId'=>$options['challengeId'],'credential'=>secAssertion($backupKey,$options['options']['challenge'],3,$origin)]);$request['cookie']=explode(';',$logged['cookie'])[0];$request['csrf']=$logged['data']['csrf'];$backupSession=$request;
+ $revealed=$invoke('sessionReveal',['operation'=>['kind'=>'reveal','scope'=>'local','path'=>['Connect-test'],'revision'=>'1']])['data'];secExpect(str_contains(json_encode($revealed),'CONNECT-TEST-VALUE'),'Restart lost access to existing values.');secExpect(file_get_contents($root.'/data/native.json')===$identityBefore,'Connect setup changed the pinned vault identity.');
+ $request=$primary;$options=$invoke('authOptions')['data'];$logged=$invoke('authVerify',['challengeId'=>$options['challengeId'],'credential'=>secAssertion($key,$options['options']['challenge'],++$counter)]);$request['cookie']=explode(';',$logged['cookie'])[0];$request['csrf']=$logged['data']['csrf'];$primary=$request;$request=$backupSession;
+
+ secReject(static fn()=>$invoke('prepare',['operation'=>['kind'=>'nativeConnectRevoke','origin'=>$origin,'generation'=>$generation]]),'Backup session changed administrator routes.');
+ $request['cookie']=$primary['cookie'];$request['csrf']=$primary['csrf'];secReject(static fn()=>$invoke('session'),'Primary cookie was accepted on backup.');$request=$backupSession;
+ $staleLogin=$invoke('authOptions')['data'];
+ $request=$primary;$primaryOptions=$invoke('authOptions')['data'];secExpect(!in_array($backupKey['id'],array_column($primaryOptions['options']['allowCredentials'],'id'),true),'Primary offered backup credential.');
+ $approved(['kind'=>'nativeConnectRevoke','origin'=>$origin,'generation'=>$generation]);
+ secExpect($invoke('session')['data']['native']['backupOrigin']['status']==='revoked','Primary session lost on backup revocation.');
+ $request=$backupSession;secReject(static fn()=>$invoke('session'),'Revoked backup session survived.');secReject(static fn()=>$invoke('authVerify',['challengeId'=>$staleLogin['challengeId'],'credential'=>secAssertion($backupKey,$staleLogin['options']['challenge'],3,$origin)]),'Paused login survived revocation.');
+ $request=$primary;$approved(['kind'=>'nativeConnectStage','origin'=>$origin]);$next=$invoke('session')['data']['native']['backupOrigin'];secExpect($next['generation']!==$generation,'Re-added URL reused its generation.');
+ secReject(static fn()=>$invoke('connectCandidateReview',['candidate'=>$candidate['candidate']]),'Old candidate survived re-adding origin.');
+ $request=$backupSession;secReject(static fn()=>$invoke('session'),'Re-added URL revived an old session.');
+ echo "PASS Connect pending enrollment, browser PoP, separate RP/passkey login, exact primary activation, replay rejection and generation revocation\n";
+}finally{$remove=static function($path)use(&$remove){if(is_dir($path)&&!is_link($path)){foreach(scandir($path)as$n)if($n!=='.'&&$n!=='..')$remove($path.'/'.$n);rmdir($path);}elseif(file_exists($path)||is_link($path))unlink($path);};if(is_dir($root))$remove($root);}

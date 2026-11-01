@@ -343,12 +343,12 @@ class SecretsBackend extends IPSModule
             $request = SecretsFrontendConfiguration::decode($RequestJSON);
             if (count($request) !== 6 || !is_string($request['action'] ?? null) || !is_array($request['data'] ?? null)
                 || !is_string($request['origin'] ?? null) || !is_string($request['cookie'] ?? null) || !is_string($request['csrf'] ?? null) || !is_string($request['remote'] ?? null)
-                || $request['origin'] !== $this->configuration()['AdminOrigin']) throw new RuntimeException('Invalid frontend envelope.');
+                || (!$this->ReadAttributeBoolean('GuidedV2Only') && $request['origin'] !== $this->configuration()['AdminOrigin'])) throw new RuntimeException('Invalid frontend envelope.');
             $action = $request['action'];
             if ($this->ReadAttributeBoolean('GuidedV2Only')) {
                 if ($this->nativeInitialized()) {
                     if ($action === 'status') $this->Recover();
-                    $result = $this->nativeApplication()->handle($action, $request['data'], $request);
+                    $result = $this->nativeApplication($request['origin'])->handle($action, $request['data'], $request);
                     if ($action === 'status') $result['data'] += ['nativeBackendImplemented' => true, 'initialized' => true];
                 } else {
                     if ($action !== 'status' || $request['data'] !== []) throw new RuntimeException('Initialize the native vault in the HTML setup wizard first.');
