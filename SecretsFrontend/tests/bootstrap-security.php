@@ -71,7 +71,8 @@ $no(fn()=>$back->BeginAdminEnrollment('Old code',false),'Local native enrollment
 
 // Recovery adds exactly the console-approved key without changing secret values.
 $before=$store->read()['state']['vault'];$replacement=secKey();$front->OpenRecoveryBootstrap();$ctx=secBootstrapCandidate($front,$request,$replacement);$views=json_decode($front->GetBootstrapConsoleView(),true);$view=end($views);$front->ApproveBootstrapCandidate($view['candidate'],$view['digest'],$view['proof']);secBootstrapProof($front,$request,$ctx,'candidateStatus');
-$plan=secBootstrapProof($front,$request,$ctx,'planPreview',$choice)['data'];$o=json_decode(json_encode(secBootstrapProof($front,$request,$ctx,'applyOptions',['planDigest'=>$plan['planDigest']])['data']),true);
+$recoveryChoice=array_replace($choice,['vaultDirectory'=>str_replace('/secrets-native-data/','//secrets-native-data///',$choice['vaultDirectory'])]);
+$plan=secBootstrapProof($front,$request,$ctx,'planPreview',$recoveryChoice)['data'];$o=json_decode(json_encode(secBootstrapProof($front,$request,$ctx,'applyOptions',['planDigest'=>$plan['planDigest']])['data']),true);
 $result=secBootstrapProof($front,$request,$ctx,'applyVerify',['planDigest'=>$plan['planDigest'],'credential'=>secAssertion($replacement,$o['options']['challenge'],1)]);
 $ok($result['data']['status']==='COMMITTED','Console recovery failed.');$after=$store->read()['state'];$ok(isset($after['identity']['credentials'][$replacement['id']])&&$after['vault']===$before,'Recovery reset data or omitted the approved credential.');
 

@@ -182,13 +182,14 @@ trait SecretsFrontendBootstrap
     {
         SecretsBootstrapVerifier::exact($data,['backend','portal','documentation','theme','vaultDirectory','keyDirectory','addPortalLink','debugEnabled','privateACLConfirmed','persistenceConfirmed']);
         $choice=SecretsFrontendCommissioning::choice($data+['proxyIPs'=>$this->settings()['TrustedHTTPSProxyIPs'],'initialize'=>true,'administratorLabel'=>'Administrator']);
+        $paths=SecretsBackendNativePlatform::paths($choice['vaultDirectory'],$choice['keyDirectory'],IPS_GetKernelDir(),$s['mode']==='initial');
+        $choice=array_replace($choice,$paths);
         $id=$choice['backend'];$info=$s['roster'][(string)$id]??null;
         if($id===0&&$s['roster'])throw new RuntimeException('Select one of the console-approved backends.');
         if($s['mode']==='recovery'){
             if($id!==$s['recovery']['backend']||$choice['vaultDirectory']!==$s['recovery']['vaultDirectory']||$choice['keyDirectory']!==$s['recovery']['keyDirectory'])throw new RuntimeException('Recovery cannot replace the existing vault or storage.');
         }elseif($id>0){$current=$this->initialBackend($id);if(!$info||!$current['canConfigure']||$current['digest']!==$info['digest'])throw new RuntimeException('Backend changed after console approval.');}
         foreach(['portal'=>self::PORTAL,'documentation'=>self::DOCS]as$k=>$module)if($choice[$k]>0&&(!IPS_InstanceExists($choice[$k])||IPS_HasChanges($choice[$k])||strtoupper(IPS_GetInstance($choice[$k])['ModuleInfo']['ModuleID']??'')!==$module))throw new RuntimeException('Integration selection changed.');
-        $paths=SecretsBackendNativePlatform::paths($choice['vaultDirectory'],$choice['keyDirectory'],IPS_GetKernelDir(),$s['mode']==='initial');
         $persistence=SecretsBackendNativePlatform::persistence($paths['vaultDirectory'],$paths['keyDirectory'],IPS_GetKernelDir());
         if(SecretsBackendNativePlatform::capabilities()['missing'])throw new RuntimeException('Required native PHP functions are missing.');
         return array_replace($choice,$paths,['origin'=>$s['origin'],'backendDigest'=>$info['digest']??'','vault'=>$s['vault'],'owner'=>$s['owner'],'frontendIdentity'=>$s['frontend'],'frontendInstance'=>$this->InstanceID,
