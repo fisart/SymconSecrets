@@ -99,7 +99,9 @@ Symcon Connect backup access now has a development implementation with automatic
 address discovery, a four-step HTML wizard, separate origin/RP-bound passkeys,
 restricted enrollment, primary-side fresh exact approval and generation-based
 revocation. Synthetic PHP/WebAuthn and browser tests exercise these paths. The
-backup HTTP route fails closed without native HTTPS or an explicitly trusted
-HTTPS proxy. Actual Connect transport, physical-key behavior and primary-
+backup HTTP route accepts native HTTPS, an explicitly trusted HTTPS proxy,
+or the documented exact-active-Connect loopback profile. The latter trusts local
+loopback services and the Connect service; it does not identify the sending
+process cryptographically. Untrusted local proxies must not expose that hop. Actual Connect transport, physical-key behavior and primary-
 certificate outage remain unqualified. Independent review of the exact completed
 implementation is outstanding; the design audit is not production acceptance.

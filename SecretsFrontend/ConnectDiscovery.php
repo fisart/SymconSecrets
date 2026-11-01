@@ -7,6 +7,36 @@ final class SecretsFrontendConnectDiscovery
 {
     public const MODULE = '{9486D575-BE8C-4ED8-B5B5-20930E26DE6F}';
 
+    /** Read from the local Connect core, never from request headers. */
+    public static function local(): array
+    {
+        return self::discover(
+            static fn($module)=>IPS_GetInstanceListByModuleID($module),
+            static fn($id)=>IPS_GetInstance($id)['InstanceStatus']??0,
+            static function($id){
+                if(function_exists('CC_GetConnectURL'))return CC_GetConnectURL($id);
+                if(function_exists('CC_GetURL'))return CC_GetURL($id);
+                throw new RuntimeException('Connect discovery is unavailable.');
+            }
+        );
+    }
+
+    /**
+     * Explicit local relay profile: trust the host's loopback services and the
+     * active Symcon Connect core. This does not prove TLS from PHP flags and is
+     * never administrator authority. Local service/relay isolation is a stated
+     * deployment requirement; untrusted local proxies must not expose this hop.
+     */
+    public static function loopbackRelay(array $server,string $approvedOrigin,array $connect): bool
+    {
+        if(($connect['available']??false)!==true||($connect['origin']??null)!==$approvedOrigin
+            ||!preg_match('~^https://[a-z0-9]{32}\.ipmagic\.de$~D',$approvedOrigin)
+            ||!in_array($server['REMOTE_ADDR']??'', ['127.0.0.1','::1'],true))return false;
+        if(isset($server['HTTP_FORWARDED'])||isset($server['HTTP_X_FORWARDED_HOST'])||isset($server['HTTP_X_FORWARDED_PROTO']))return false;
+        if(!in_array($server['HTTPS']??'', ['', 'on', '1'],true)||!in_array($server['REQUEST_SCHEME']??'', ['', 'https'],true))return false;
+        try{return SecretsFrontendConfiguration::origin('https://'.($server['HTTP_HOST']??''))===$approvedOrigin;}catch(Throwable $e){return false;}
+    }
+
     public static function discover(callable $instances, callable $status, callable $url): array
     {
         try {

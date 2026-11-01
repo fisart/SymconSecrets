@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/Configuration.php';
+require_once __DIR__ . '/ConnectDiscovery.php';
 
 /** Static commissioning UI. No authentication proxy and no legacy secret API calls. */
 final class SecretsFrontendHttp
@@ -37,9 +38,11 @@ final class SecretsFrontendHttp
         catch (Throwable $exception) { return $reply(403, 'Invalid request host.'); }
         $primaryOrigin=$origin;$backup=$ui['backupOrigin']??null;
         if(is_array($backup)&&in_array($backup['status']??'', ['pending','active'],true)&&($backup['origin']??'')===$requestOrigin){
-            // A hostname alone is not transport evidence. Connect deployments
-            // must supply native TLS or an explicitly trusted HTTPS proxy hop.
-            $secure=in_array($server['HTTPS']??'', ['on','1'],true)||($proxy&&($server['HTTP_X_FORWARDED_PROTO']??'')==='https');
+            // The built-in Connect relay can omit PHP TLS flags. Its narrowly
+            // scoped local-loopback profile uses local core discovery as well
+            // as the exact approved host; arbitrary forwarding headers do not qualify.
+            $secure=in_array($server['HTTPS']??'', ['on','1'],true)||($proxy&&($server['HTTP_X_FORWARDED_PROTO']??'')==='https')
+                ||SecretsFrontendConnectDiscovery::loopbackRelay($server,$requestOrigin,$ui['connectDiscovery']??[]);
             if(!$secure){
                 // Observations only: these fields never grant transport trust.
                 $known=static fn($value,$allowed)=>in_array($value,$allowed,true)?$value:($value===null?'not supplied':'other');

@@ -38,11 +38,7 @@ trait SecretsFrontendGuidedSetup
         if(!($native['initialized']??false))return ['status'=>$action==='status'?200:503,'data'=>$action==='status'?['ready'=>false,'guidedV2Only'=>true,'setupAvailable'=>$this->guidedActive(),'message'=>'Open setup in the trusted Symcon console, then prepare your first passkey here.']:['error'=>'Native vault not initialized.'],'cookie'=>''];
         $reply=json_decode(SECB_HandleFrontendRequest($this->backend(),$this->InstanceID,SecretsFrontendConfiguration::encode($request)),true,96,JSON_THROW_ON_ERROR);
         if($action==='connectDiscovery'&&($reply['status']??0)===200){
-            $reply['data']=SecretsFrontendConnectDiscovery::discover(
-                static fn($module)=>IPS_GetInstanceListByModuleID($module),
-                static fn($id)=>IPS_GetInstance($id)['InstanceStatus']??0,
-                static function($id){if(function_exists('CC_GetConnectURL'))return CC_GetConnectURL($id);if(function_exists('CC_GetURL'))return CC_GetURL($id);throw new RuntimeException('Connect discovery is unavailable.');}
-            );
+            $reply['data']=SecretsFrontendConnectDiscovery::local();
         }
         return $reply;
     }

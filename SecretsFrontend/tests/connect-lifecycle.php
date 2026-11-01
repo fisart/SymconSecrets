@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__.'/BootstrapFixture.php';
 $GLOBALS['moduleIDs']=[5200=>SecretsBackend::FRONTEND,5201=>'{52165EDD-B2C0-40EC-8A59-42A97319B6E2}',700=>'{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}'];
 $hooks=new IPSModule(700);$hooks->properties['Hooks']='[]';$front=new SecretsFrontend(5200);$front->Create();$back=new SecretsBackend(5201);$back->Create();
+function CC_GetConnectURL(int $id): string { return $GLOBALS['connectTestUrl']??''; }
 $root=sys_get_temp_dir().'/sec-connect-'.bin2hex(random_bytes(8));
 $request=['origin'=>'https://secrets.example.test','cookie'=>'','csrf'=>'','remote'=>'connect-test'];
 $invoke=static function(string $action,array $data=[])use($front,&$request):array{
@@ -15,13 +16,17 @@ try{
  $approved=static function(array $op)use($invoke,$key,&$counter):array{$p=$invoke('prepare',['operation'=>$op])['data'];return $invoke('approve',['challengeId'=>$p['challengeId'],'credential'=>secAssertion($key,$p['options']['challenge'],++$counter)])['data'];};
  $approved(['kind'=>'save','scope'=>'local','path'=>['Connect-test'],'revision'=>'0','mode'=>'create','json'=>'"CONNECT-TEST-VALUE"']);
  $identityBefore=file_get_contents($root.'/data/native.json');
- $origin='https://backup.ipmagic.de';
+ $origin='https://'.str_repeat('a',32).'.ipmagic.de';
  $approved(['kind'=>'nativeConnectStage','origin'=>$origin]);
  $p=$invoke('session')['data']['native']['backupOrigin'];secExpect($p['status']==='pending','Backup was activated without a candidate.');
- $settings=array_replace(SecretsFrontendConfiguration::DEFAULTS,['Enabled'=>true,'AdminOrigin'=>$primary['origin']]);$path='/hook/secrets_frontend_5200';$server=['REQUEST_METHOD'=>'GET','REQUEST_URI'=>$path,'HTTP_HOST'=>'backup.ipmagic.de','HTTP_COOKIE'=>'DIAG-COOKIE-CANARY','HTTP_AUTHORIZATION'=>'Bearer DIAG-AUTH-CANARY'];
+ $settings=array_replace(SecretsFrontendConfiguration::DEFAULTS,['Enabled'=>true,'AdminOrigin'=>$primary['origin']]);$path='/hook/secrets_frontend_5200';$server=['REQUEST_METHOD'=>'GET','REQUEST_URI'=>$path,'HTTP_HOST'=>parse_url($origin,PHP_URL_HOST),'HTTP_COOKIE'=>'DIAG-COOKIE-CANARY','HTTP_AUTHORIZATION'=>'Bearer DIAG-AUTH-CANARY'];
  $http=SecretsFrontendHttp::response($settings,5200,$server,$path,'','', '',null,['backupOrigin'=>$p]);secExpect($http['status']===403,'Backup host was accepted without HTTPS evidence.');secExpect(str_contains($http['body'],'not supplied')&&str_contains($http['body'],'Check backup connection'),'Blocked Connect request omitted safe transport observations.');secExpect(!str_contains($http['body'],'DIAG-COOKIE-CANARY')&&!str_contains($http['body'],'DIAG-AUTH-CANARY'),'Transport diagnostic exposed request credentials.');
  $server['HTTPS']='on';$http=SecretsFrontendHttp::response($settings,5200,$server,$path,'','', '',null,['backupOrigin'=>$p]);secExpect($http['status']===200&&str_contains($http['body'],'"backupEnrollment":true'),'Pending HTTPS page was not served independently.');
  $server['HTTPS']='off';$server['HTTP_X_FORWARDED_PROTO']='https';$http=SecretsFrontendHttp::response($settings,5200,$server,$path,'','', '',null,['backupOrigin'=>$p]);secExpect($http['status']===403,'Untrusted forwarding headers established HTTPS.');
+ $GLOBALS['moduleIDs'][800]=SecretsFrontendConnectDiscovery::MODULE;$connect=new IPSModule(800);$connect->status=102;$GLOBALS['connectTestUrl']=$origin;
+ $savedServer=$_SERVER;$savedContext=$GLOBALS['_IPS']??null;$_SERVER=['REQUEST_METHOD'=>'GET','REQUEST_URI'=>$path,'HTTP_HOST'=>parse_url($origin,PHP_URL_HOST),'REMOTE_ADDR'=>'127.0.0.1'];$GLOBALS['_IPS']=['SENDER'=>'WebHook','INSTANCE'=>0];
+ ob_start();$front->ProcessHookData();$html=ob_get_clean();secExpect(http_response_code()===200&&str_contains($html,'"backupEnrollment":true'),'Generated Symcon hook rejected the observed loopback Connect relay.');
+ $_SERVER=$savedServer;if($savedContext===null)unset($GLOBALS['_IPS']);else $GLOBALS['_IPS']=$savedContext;
  $generation=$p['generation'];$request=['origin'=>$origin,'cookie'=>'','csrf'=>'','remote'=>'connect-test'];
  secReject(static fn()=>$invoke('authOptions'),'Pending origin admitted login.');
  secReject(static fn()=>$invoke('session'),'Pending origin admitted general access.');

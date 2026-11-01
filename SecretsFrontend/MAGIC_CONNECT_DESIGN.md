@@ -191,8 +191,31 @@ primary foundation and genesis remain pinned. Revocation preserves a tested
 primary route and disables backup credentials; every backup session and challenge
 uses its exact generation. Re-addition requires a fresh candidate and generation.
 
-The HTTP adapter requires either native HTTPS evidence or an explicitly trusted
-proxy IP supplying HTTPS transport evidence before serving a pending/active backup
-route. Unknown Connect relay behavior fails closed. Actual relay headers, internal
+The HTTP adapter accepts native HTTPS evidence, an explicitly trusted HTTPS proxy,
+or the narrowly scoped built-in Connect loopback profile documented below. Actual relay headers, internal
 hop trust, physical passkeys, full outage/no-primary-contact tests and independent
 review of the completed commit remain deployment acceptance gates.
+
+## Observed Symcon Connect loopback transport profile
+
+The installation diagnostic supplied no HTTPS flag, request scheme or trusted
+forwarding metadata, with REMOTE_ADDR=127.0.0.1 and Symcon caller instance 0.
+These missing fields are also covered by the existing primary-URL compatibility
+profile; requiring them unconditionally made the Connect route unusable.
+
+The Connect loopback profile requires the exact approved HTTPS origin to equal
+the address independently returned by the single active local Connect Control
+instance. It accepts only the direct Host for that exact 32-character tenant at
+ipmagic.de, a loopback peer (127.0.0.1 or ::1), and no conflicting scheme, HTTPS
+flag, Forwarded, X-Forwarded-Host or X-Forwarded-Proto. X-Forwarded-For is never
+transport authority. Remote clients cannot qualify by supplying the same Host.
+Address changes, inactive/ambiguous discovery and revoked policy fail closed.
+
+This profile explicitly trusts the local host's loopback services and the Connect
+service as transport intermediaries. It does not cryptographically identify the
+process that opened a loopback socket or infer browser TLS from the Host header.
+Untrusted local proxies must not expose or impersonate this loopback hop. Browser
+HTTPS/secure-context checks, exact Origin checks, independent passkey/RP contexts,
+primary-side exact approval and per-origin sessions remain mandatory. The profile
+is not administrator authority. Physical Connect browser testing, provider/internal
+hop trust qualification and independent audit remain pending.

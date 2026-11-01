@@ -164,10 +164,12 @@ class SecretsFrontend extends IPSModule
             }
             $caller=(int)($GLOBALS['_IPS']['INSTANCE']??0);$callerModule='not supplied';
             if($caller>0&&IPS_InstanceExists($caller))$callerModule=(string)(IPS_GetInstance($caller)['ModuleInfo']['ModuleID']??'not supplied');
+            $backup=$this->bootstrapNative()['backupOrigin']??null;
+            $connect=is_array($backup)&&in_array($backup['status']??'', ['pending','active'],true)?SecretsFrontendConnectDiscovery::local():[];
             $portal = AFSystemPortalNavigationV1::path(0, $settings['PortalInstanceID']);
             $reply = SecretsFrontendHttp::response($settings, $this->InstanceID, $_SERVER, $this->path(), $portal, $this->documentationPath(), $input, function (array $request): array {
                 return $this->gateway($request);
-            }, ['guidedV2Only' => $this->ReadAttributeBoolean('GuidedV2Only'), 'backupOrigin'=>$this->bootstrapNative()['backupOrigin']??null,'transportDiagnostic'=>['instance'=>$caller,'module'=>$callerModule]]);
+            }, ['guidedV2Only' => $this->ReadAttributeBoolean('GuidedV2Only'), 'backupOrigin'=>$backup,'connectDiscovery'=>$connect,'transportDiagnostic'=>['instance'=>$caller,'module'=>$callerModule]]);
             http_response_code($reply['status']); foreach ($reply['headers'] as $name => $value) header($name . ': ' . $value); echo $reply['body'];
         } catch (Throwable $exception) { http_response_code(503); header('Cache-Control: no-store'); echo 'Frontend configuration is unavailable.'; $this->debug('request-refused'); }
     }
