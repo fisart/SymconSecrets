@@ -22,7 +22,8 @@ No production/migration acceptance is implied. Existing SecretsManager and all
 - Complete encrypted snapshot journal and separate keys; immutable authenticated
   publication marker; injected interruption recovery; runtime/session fencing;
   exact operation outcomes and protected disclosure.
-- Masked hierarchy, fresh operation-bound WebAuthn changes/reveal, ordinary and
+- Masked hierarchy; session-authorized reveal unless hardware policy requires
+  a fresh hardware assertion; operation-bound WebAuthn changes, ordinary and
   reviewed hardware credentials, authority-bound additional-key enrollment.
 - Bilateral signed/encrypted pairing, ordered immutable outbox, exact receipts,
   lost-response deduplication, catch-up, revocation, ownership freeze/accept and

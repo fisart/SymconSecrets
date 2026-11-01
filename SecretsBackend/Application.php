@@ -38,7 +38,7 @@ final class SecretsBackendApplication
         $credential = $current['state']['identity']['credentials'][$session['credential']] ?? null;
         if (!is_array($credential) || !$credential['active'] || $session['revocation'] !== $current['state']['identity']['revocation']
             || $session['administrator'] !== $credential['administrator']
-            || $session['origin'] !== $this->settings['origin'] || $session['created'] + 3600 < time() || $session['last'] + 900 < time()) throw new RuntimeException('Administrator session expired or revoked.');
+            || $session['origin'] !== $this->settings['origin'] || $session['created'] + 3600 < time() || $session['last'] + min(900, max(60, (int)($session['idleLimit'] ?? 900))) < time()) throw new RuntimeException('Administrator session expired or revoked.');
         $session['hash'] = $hash; return $session;
     }
     private function requireCsrf(array $request, array $session): void
@@ -229,11 +229,37 @@ final class SecretsBackendApplication
         if ($native instanceof SecretsBackendNativeOperations && in_array($action, ['nativeUploadBegin','nativeUploadChunk','nativeUploadFinish','nativeOperationStatus'], true)) return ['data' => $native->request($action, $data)];
         if (in_array($action,['nativeCandidateOptions','nativeCandidateSubmit'],true)) return ['data'=>$this->nativeCandidate($action,$data,$session,$current)];
         if ($action === 'logout') { self::exact($data, []); $this->store->delete($session['hash']); return ['data' => ['loggedOut' => true], 'cookie' => $this->cookieName() . '=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0']; }
+        if ($action === 'sessionTimeout') {
+            if (!($this->store instanceof SecretsBackendNativeStore)) throw new RuntimeException('Session settings are available only for the native vault.');
+            self::exact($data, ['seconds']);
+            if (!is_int($data['seconds']) || !in_array($data['seconds'], [60, 300, 900], true)) throw new InvalidArgumentException('Choose 1, 5 or 15 minutes.');
+            $updated = $this->store->refreshAdministratorSession($session['hash'], $data['seconds']);
+            return ['data' => ['idleLimit' => $updated['idleLimit']]];
+        }
+        if ($action === 'sessionReveal') {
+            if (!($this->store instanceof SecretsBackendNativeStore)) throw new RuntimeException('Session reveal is available only for the native vault.');
+            self::exact($data, ['operation']);
+            if (!is_array($data['operation']) || !in_array($data['operation']['kind'] ?? null, ['reveal', 'nativeReveal'], true)) throw new InvalidArgumentException('Only an exact reveal is permitted.');
+            $operation = $this->operation($data['operation'], $current['state']);
+            if ($current['state']['policy']['hardware']['reveal']) return ['data' => ['requiresHardware' => true]];
+            $target = SecretsBackendCodec::json(array_intersect_key($operation, array_flip(['kind','scope','treeId','path'])));
+            $this->rejectionContext = $this->audit('reveal', $session['credential'], $target);
+            $this->store->authorize('reveal', hash('sha256', SecretsBackendCodec::json($operation)), $current,
+                function (array $checked) use ($request, $data): void {
+                    $this->session($request, $checked);
+                    if ($checked['state']['policy']['hardware']['reveal']) throw new RuntimeException('Hardware approval is now required.');
+                    $this->operation($data['operation'], $checked['state']);
+                }, $this->audit('reveal', $session['credential'], $target));
+            $this->store->refreshAdministratorSession($session['hash']);
+            if ($operation['kind'] === 'nativeReveal') return ['data' => $native->result($operation, $current)];
+            return ['data' => ['fields' => SecretsBackendTree::reveal(SecretsBackendTree::at($current['state']['vault'][$operation['scope']], $operation['path'])), 'clearAfterSeconds' => 30]];
+        }
         if ($action === 'session' || $action === 'list') {
             self::exact($data, []); $this->store->authorize('metadata', hash('sha256', $session['hash'] . ':' . $current['head']['digest']), $current,
                 function (array $checked) use ($request): void { $this->session($request, $checked); }, $this->audit('metadata', $session['credential'], 'listing'));
-            $session['last'] = time(); $this->store->replace($session['hash'], 'session', array_diff_key($session, ['hash' => true]), $session['created'] + 3600);
-            return ['data' => ['authenticated' => true, 'csrf' => $session['csrf'], 'revision' => $current['state']['vault']['revision'], 'hardware' => $current['state']['policy']['hardware'],
+            if ($this->store instanceof SecretsBackendNativeStore) $session = $this->store->refreshAdministratorSession($session['hash']) + ['hash' => $session['hash']];
+            else { $session['last'] = time(); $this->store->replace($session['hash'], 'session', array_diff_key($session, ['hash' => true]), $session['created'] + 3600); }
+            return ['data' => ['authenticated' => true, 'csrf' => $session['csrf'], 'idleLimit' => (int)($session['idleLimit'] ?? 900), 'revision' => $current['state']['vault']['revision'], 'hardware' => $current['state']['policy']['hardware'],
                 'global' => SecretsBackendTree::listing($current['state']['vault']['global']), 'local' => SecretsBackendTree::listing($current['state']['vault']['local']),
                 'native' => $native instanceof SecretsBackendNativeOperations ? $native->metadata($current['state']) : null,
                 'credentials' => array_map(static fn($c) => array_intersect_key($c, array_flip(['id', 'label', 'active', 'hardware', 'aaguid', 'trustVersion', 'tested'])), array_values($current['state']['identity']['credentials']))]];

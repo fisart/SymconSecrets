@@ -7,7 +7,7 @@ const source=require('./page-source.cjs')().replaceAll('%%NONCE%%','test').repla
 const tick=()=>new Promise(r=>setImmediate(r));
 const credential=()=>({type:'public-key',rawId:new Uint8Array([1]).buffer,response:{clientDataJSON:new Uint8Array([1]).buffer,authenticatorData:new Uint8Array([1]).buffer,signature:new Uint8Array([1]).buffer,attestationObject:new Uint8Array([1]).buffer,userHandle:null}});
 async function fixture(){
- const calls=[],errors=[];let output={nativeChanged:true},lose=false;
+ const calls=[],errors=[];let output={nativeChanged:true},lose=false,delayReveal=false,resolveReveal;const pendingReveal=new Promise(r=>{resolveReveal=r;});
  const v=new VirtualConsole();v.on('jsdomError',e=>errors.push(e));
  const descriptor={backend:'456',endpoint:'https://secrets.example.test/hook/secrets_peer_456',vaultId:'vault-a',treeId:'tree-a'};
  const n={info:{vaultId:'vault-a',usedBytes:4096,capacityBytes:524288,directorySync:true},peerEndpoint:descriptor.endpoint,peerDescriptor:descriptor,globalTreeId:'tree-a',globalWritable:true,queuedJobs:0,peers:[],ownedTrees:[],received:[{id:'tree-b',owner:'vault-b',at:'2026-11-01T01:00:00Z',revision:'7',entries:[{path:[],type:'object',children:1},{path:['Shared <safe>'],type:'string'}]}],transfers:{},machines:[],hardwareProfile:{version:'none',fingerprints:{},aaguids:[]},providers:[],effects:{}};
@@ -19,6 +19,8 @@ async function fixture(){
   w.URL.createObjectURL=()=> 'blob:test';w.URL.revokeObjectURL=()=>{};w.HTMLAnchorElement.prototype.click=function(){};
   w.fetch=async(url,options)=>{const r=JSON.parse(options.body);calls.push(r);let data={};
    if(r.action==='status')data={ready:true,enrollmentNeeded:false};if(r.action==='session')data=snapshot;
+   if(r.action==='sessionTimeout')data={idleLimit:r.data.seconds};
+   if(r.action==='sessionReveal')data=delayReveal?await pendingReveal:{fields:[{field:'value',value:'TEST-VALUE'}]};
    if(r.action==='prepare')data={operationId:'operation-a',challengeId:'challenge-a',options:{challenge:'AQ',allowCredentials:[]},reviewSummary:{kind:r.data.operation.kind},requiresHardware:false};
    if(r.action==='approve'){if(lose){lose=false;return{ok:false,json:async()=>({error:'Reply lost'})};}data=output;}
    if(r.action==='nativeOperationStatus')data={result:'COMMITTED'};
@@ -27,25 +29,26 @@ async function fixture(){
    return{ok:true,json:async()=>data};
   };
  }});
- await tick();await tick();return{dom,$:id=>dom.window.document.getElementById(id),calls,errors,setOutput:x=>{output=x},lose:()=>{lose=true}};
+ await tick();await tick();return{dom,$:id=>dom.window.document.getElementById(id),calls,errors,setOutput:x=>{output=x},lose:()=>{lose=true},setHardware:x=>{snapshot.hardware.reveal=x},delayReveal:()=>{delayReveal=true},resolveReveal};
 }
 async function approve(f,id,output){f.setOutput(output);f.$(id).click();await tick();assert.equal(f.$('review').open,true);f.$('approve').click();await tick();await tick();}
 (async()=>{
  const f=await fixture(),$=f.$;
  assert.equal($('nativeRecoveryEnrollment').hidden,false);$('nativeRecoveryEnrollment').click();assert.match($('message').textContent,/trusted Symcon console/);f.dom.window.document.querySelector('[data-tab="overview"]').click();assert.equal($('nativePeersNav').hidden,false);assert.match($('nativeStorageInfo').textContent,/512 KiB/);assert.equal($('nativePeerURL').value,'https://secrets.example.test/hook/secrets_peer_456');
- f.dom.window.document.querySelector('[data-tab="secrets"]').click();
+ f.dom.window.document.querySelector('[data-tab="secrets"]').click();$('sessionTimeout').value='300';$('sessionTimeout').dispatchEvent(new f.dom.window.Event('change'));await tick();assert.equal(f.calls.at(-1).action,'sessionTimeout');assert.equal(f.calls.at(-1).data.seconds,300);
  const item=name=>[...$('browserItems').querySelectorAll('button')].find(x=>x.textContent.includes(name));
  const askButton=item('ASK');askButton.click();assert.equal(item('ASK'),askButton,'Selection must preserve the row for a real double-click.');askButton.click();askButton.dispatchEvent(new f.dom.window.MouseEvent('dblclick',{bubbles:true}));assert.match($('browserLocation').textContent,/ASK/);
  item('Login').dispatchEvent(new f.dom.window.MouseEvent('dblclick',{bubbles:true}));assert.match($('browserLocation').textContent,/ASK \/ Login/);
  $('browserNewEntry').click();$('browserName').value='Token';$('browserValue').value='DUMMY-VALUE';$('browserSubmit').click();await tick();assert.equal($('review').open,true);
  let graphical=f.calls.filter(r=>r.action==='prepare').at(-1).data.operation;assert.deepEqual(graphical.path,['ASK','Login','Token']);assert.equal(graphical.mode,'create');assert.equal(graphical.json,'"DUMMY-VALUE"');assert.equal($('browserValue').value,'');$('cancelReview').click();
- item('Password').click();$('browserReveal').click();await tick();graphical=f.calls.filter(r=>r.action==='prepare').at(-1).data.operation;assert.equal(graphical.kind,'reveal');assert.deepEqual(graphical.path,['ASK','Login','Password']);f.setOutput({fields:[{field:'value',value:'TEST-VALUE'}]});$('approve').click();await tick();await tick();assert.match($('revealed').textContent,/Value: TEST-VALUE/);assert.doesNotMatch($('revealed').textContent,/\{\s*"field"/);
+ item('Password').click();const previousApprovals=f.calls.filter(r=>r.action==='approve').length;$('browserReveal').click();await tick();graphical=f.calls.filter(r=>r.action==='sessionReveal').at(-1).data.operation;assert.equal(graphical.kind,'reveal');assert.deepEqual(graphical.path,['ASK','Login','Password']);assert.equal(f.calls.filter(r=>r.action==='approve').length,previousApprovals,'Showing a value asked for another passkey.');assert.match($('revealed').textContent,/Value: TEST-VALUE/);assert.doesNotMatch($('revealed').textContent,/\{\s*"field"/);
  $('browserEdit').click();assert.equal($('browserValue').value,'');assert.equal($('revealed').hidden,true);$('browserValue').value='UPDATED';$('browserSubmit').click();await tick();graphical=f.calls.filter(r=>r.action==='prepare').at(-1).data.operation;assert.deepEqual(graphical.path,['ASK','Login','Password']);assert.equal(graphical.mode,'replace');assert.equal(graphical.json,'"UPDATED"');assert.equal($('browserValue').value,'');$('cancelReview').click();
+ f.setHardware(true);item('Password').click();$('browserReveal').click();await tick();assert.equal(f.calls.at(-1).action,'prepare');assert.equal($('review').open,true,'Hardware policy did not retain passkey approval.');$('cancelReview').click();f.setHardware(false);
  $('browserNewFolder').click();$('browserName').value='Subfolder';$('browserSubmit').click();await tick();graphical=f.calls.filter(r=>r.action==='prepare').at(-1).data.operation;assert.deepEqual(graphical.path,['ASK','Login','Subfolder']);assert.equal(graphical.json,'{}');$('cancelReview').click();
  $('browserUp').click();assert.match($('browserLocation').textContent,/ASK/);$('browserBack').click();assert.match($('browserLocation').textContent,/Login/);$('browserFolders').querySelector('button').click();assert.equal($('browserLocation').textContent,'All secrets');
  $('tree').querySelectorAll('button')[1].click();assert.equal($('nativeMachineScope').value,'global');assert.equal($('nativeMachinePath').value,'["ASK"]');
  $('scope').value='received:tree-b';$('scope').dispatchEvent(new f.dom.window.Event('change'));assert.equal($('browserNewFolder').disabled,true);assert.equal($('browserNewEntry').disabled,true);assert.equal($('save').disabled,true);assert.equal($('delete').disabled,true);assert.equal($('tree').querySelector('safe'),null);
- $('tree').querySelectorAll('button')[1].click();$('reveal').click();await tick();const op=f.calls.at(-1).data.operation;assert.equal(op.kind,'nativeReveal');assert.equal(op.revision,'7');assert.equal(op.treeId,'tree-b');$('cancelReview').click();
+ $('tree').querySelectorAll('button')[1].click();$('reveal').click();await tick();const op=f.calls.at(-1).data.operation;assert.equal(f.calls.at(-1).action,'sessionReveal');assert.equal(op.kind,'nativeReveal');assert.equal(op.revision,'7');assert.equal(op.treeId,'tree-b');
  f.dom.window.document.querySelector('[data-tab="nativePeers"]').click();await approve(f,'nativeInvite',{invitation:'PAIR-ONE-USE'});assert.equal($('nativeSensitiveValue').value,'PAIR-ONE-USE');assert.equal($('nativeSensitiveDialog').open,true);
  f.dom.window.document.querySelector('[data-tab="overview"]').click();assert.equal($('nativeSensitiveValue').value,'');assert.equal($('nativeSensitiveDialog').open,false);
  f.dom.window.document.querySelector('[data-tab="nativeRecovery"]').click();await approve(f,'nativeBackup',{backup:'{"encrypted":true}',recoveryKey:'BACKUP-RECOVERY-KEY'});assert.equal($('nativeSensitiveValue').value,'BACKUP-RECOVERY-KEY');$('nativeSensitiveClose').click();assert.equal($('nativeSensitiveValue').value,'');
@@ -55,5 +58,6 @@ async function approve(f,id,output){f.setOutput(output);f.$(id).click();await ti
  assert.equal($('review').open,true);const candidateOp=f.calls.filter(r=>r.action==='prepare').at(-1).data.operation;assert.equal(candidateOp.candidate,'candidate-id');assert.equal(candidateOp.digest,'exact-digest');assert.equal(f.calls.some(r=>r.action==='enrollmentOptions'),false);
  const sessionsBefore=f.calls.filter(r=>r.action==='session').length;$('approve').click();await tick();await tick();assert.equal(f.calls.filter(r=>r.action==='session').length,sessionsBefore);assert.equal($('login').hidden,false);assert.equal($('logout').hidden,true);assert.match($('message').textContent,/Sign in again/);
  $('nativeInvitation').value='SHOULD-CLEAR';$('nativeRecoveryKey').value='SHOULD-CLEAR';f.dom.window.dispatchEvent(new f.dom.window.Event('pagehide'));assert.equal($('nativeInvitation').value,'');assert.equal($('nativeRecoveryKey').value,'');assert.equal(f.dom.window.localStorage.length,0);assert.equal(f.dom.window.sessionStorage.length,0);assert.equal(f.errors.length,0,f.errors.map(e=>e.message).join('\n'));f.dom.window.close();
+ const race=await fixture();race.dom.window.document.querySelector('[data-tab="secrets"]').click();race.$('tree').querySelectorAll('button')[1].click();race.delayReveal();race.$('reveal').click();await tick();race.dom.window.document.querySelector('[data-tab="overview"]').click();race.resolveReveal({fields:[{field:'value',value:'DELAYED-SECRET'}]});await tick();await tick();assert.equal(race.$('revealed').textContent,'','Late session reveal survived navigation.');race.dom.window.close();
  process.stdout.write('PASS integrated native HTML: masked shared trees, scope defaults, exact approval, one-use outputs, backup download, lost-result lookup, re-login after enrollment and navigation cleanup\n');
 })().catch(e=>{process.stderr.write(e.stack+'\n');process.exit(1);});

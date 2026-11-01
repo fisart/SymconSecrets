@@ -27,6 +27,22 @@ try {
     $begin=json_decode(json_encode($invoke('prepare',['operation'=>['kind'=>'reveal','scope'=>'global','path'=>['ASK'],'revision'=>'1']])['data']),true);
     $reveal=$invoke('approve',['challengeId'=>$begin['challengeId'],'credential'=>secAssertion($key,$begin['options']['challenge'],3)])['data'];
     secExpect(str_contains(json_encode($reveal),'NATIVE-SECRET-CANARY'),'Native selected-record reveal failed.');
+    // Session-only reads remain scoped, CSRF protected, revision checked and subject to hardware policy.
+    $sessionRead=['kind'=>'reveal','scope'=>'global','path'=>['ASK'],'revision'=>'1'];
+    secExpect($invoke('sessionTimeout',['seconds'=>60])['data']['idleLimit']===60,'One-minute timeout was not applied.');
+    secReject(static fn()=>$invoke('sessionTimeout',['seconds'=>1800]),'Session timeout exceeded the original maximum.');
+    $sessionStore=(new ReflectionMethod(SecretsBackend::class,'nativeStore'))->invoke($back);$cookieValue=explode('=',explode(';',$request['cookie'])[0],2)[1];$sessionId=hash('sha256',$cookieValue);$savedSession=$sessionStore->get($sessionId,'session');$expired=$savedSession;$expired['last']=time()-61;$sessionStore->replace($sessionId,'session',$expired,$expired['created']+3600);
+    secReject(static fn()=>$invoke('sessionReveal',['operation'=>$sessionRead]),'Expired session revealed a secret.');
+    $sessionStore->replace($sessionId,'session',$savedSession,$savedSession['created']+3600);secExpect($invoke('sessionTimeout',['seconds'=>900])['data']['idleLimit']===900,'Default timeout was not restored.');
+    $shown=$invoke('sessionReveal',['operation'=>$sessionRead])['data'];secExpect(str_contains(json_encode($shown['fields']),'NATIVE-SECRET-CANARY'),'Signed-in session could not show selected values.');
+    secReject(static fn()=>$invoke('sessionReveal',['operation'=>array_replace($sessionRead,['revision'=>'0'])]),'Session reveal accepted a stale revision.');
+    secReject(static fn()=>$invoke('sessionReveal',['operation'=>array_replace($sessionRead,['kind'=>'delete'])]),'Session reveal accepted a write operation.');
+    $csrf=$request['csrf'];$request['csrf']='wrong';secReject(static fn()=>$invoke('sessionReveal',['operation'=>$sessionRead]),'Session reveal accepted invalid CSRF.');$request['csrf']=$csrf;
+    $cookie=$request['cookie'];$request['cookie']='';secReject(static fn()=>$invoke('sessionReveal',['operation'=>$sessionRead]),'Session reveal accepted an absent session.');$request['cookie']=$cookie;
+    $nativeStore=(new ReflectionMethod(SecretsBackend::class,'nativeStore'))->invoke($back);$current=$nativeStore->read();
+    $nativeStore->change($current['head'],SecretsBackendCodec::uuid(),hash('sha256','test-hardware-on'),static function(array $s):array{$s['policy']['hardware']['reveal']=true;return $s;});
+    $protected=$invoke('sessionReveal',['operation'=>$sessionRead])['data'];secExpect(($protected['requiresHardware']??false)===true&&!isset($protected['fields']),'Session reveal bypassed enforced hardware policy.');
+    $current=$nativeStore->read();$nativeStore->change($current['head'],SecretsBackendCodec::uuid(),hash('sha256','test-hardware-off'),static function(array $s):array{$s['policy']['hardware']['reveal']=false;return $s;});
     $counter=3;
     $approved=static function(array $operation)use($invoke,$key,&$counter):array{
         $prepared=json_decode(json_encode($invoke('prepare',['operation'=>$operation])['data']),true);
@@ -87,6 +103,7 @@ try {
     $front->properties['TrustedHTTPSProxyIPs']='[]';secExpect($back->Recover(),'Restored protected frontend trust did not permit recovery.');
     $back->ApplyChanges();$back->Recover();
     $rejected=$gateway->invoke($front,['action'=>'session','data'=>[]]+$request);secExpect($rejected['status']!==200,'Native restart retained a session.');
+    secReject(static fn()=>$invoke('sessionReveal',['operation'=>$sessionRead]),'Restarted backend accepted an old session for a reveal.');
     echo "PASS native wizard, real WebAuthn, encrypted writes/reveal, scoped machine read/write/dedup/revocation, key rotation, authenticated backup/compaction/value recovery and restart fencing; no PDO/SQLite or external authority\n";
 } finally {
     $remove=static function($path)use(&$remove){if(is_dir($path)&&!is_link($path)){foreach(scandir($path)as$n)if($n!=='.'&&$n!=='..')$remove($path.'/'.$n);rmdir($path);}elseif(file_exists($path)||is_link($path))unlink($path);};if(is_dir($root))$remove($root);

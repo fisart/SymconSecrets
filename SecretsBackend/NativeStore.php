@@ -323,6 +323,22 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
     {
         $this->locked(function () use ($id, $kind, $body, $expires): void { $this->get($id, $kind); $this->frame['ephemeral'][$id] = ['kind' => $kind, 'expires' => $expires, 'body' => $body]; $this->dirty = true; });
     }
+    /** Preserve concurrent timeout changes and never revive a logged-out or expired session. */
+    public function refreshAdministratorSession(string $id, ?int $idleLimit = null): array
+    {
+        return $this->locked(function () use ($id, $idleLimit): array {
+            $session = $this->get($id, 'session'); $now = time();
+            $limit = min(900, max(60, (int)($session['idleLimit'] ?? 900)));
+            if ($session['created'] + 3600 < $now || $session['last'] + $limit < $now) throw new RuntimeException('Administrator session expired.');
+            if ($idleLimit !== null) {
+                if (!in_array($idleLimit, [60, 300, 900], true)) throw new InvalidArgumentException('Invalid session timeout.');
+                $session['idleLimit'] = $idleLimit;
+            }
+            $session['last'] = $now;
+            $this->frame['ephemeral'][$id] = ['kind' => 'session', 'expires' => $session['created'] + 3600, 'body' => $session]; $this->dirty = true;
+            return $session;
+        });
+    }
     public function rate(string $key, int $limit): void
     {
         $this->locked(function () use ($key, $limit): void {
