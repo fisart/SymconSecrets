@@ -51,14 +51,14 @@ persisted or privately backed up.
 
 ## HTML administration
 
-- **Secrets:** the Explorer-style browser shows folders on the left and their
-  contents on the right. Single-click to select, double-click a folder to open
-  it or a secret to show it while signed in. A hardware-key policy can require additional approval. Use Back or Up to navigate.
-  Create folders and text secrets with the buttons; changes and deletes require
-  review and passkey approval. Existing lists and other typed values remain
-  available in the advanced editor. Local values are never synchronized;
-  received shared trees remain read-only. The session inactivity timeout can be set
-  to 1, 5 or 15 minutes for the current sign-in; the maximum session is one hour.
+- **Secrets:** browse folders on the left and contents on the right. Choose
+  **Show folder values** to show direct values beside their names, or select a
+  secret and use the eye icon. Click a displayed text value to edit or delete
+  it. Changes and deletion require review and passkey approval. Hide values
+  manually or wait 30 seconds. Hardware-protected reveal still requires a key.
+  Lists and other typed values remain in the advanced editor. Local values are
+  not synchronized and received shared trees are read-only. Each sign-in can
+  use a 1, 5 or 15-minute inactivity timeout (maximum session: one hour).
 - **Peers:** create a short-lived invitation, approve its exact recipient on the
   issuing vault, inspect immutable pending deliveries and revoke connections.
   Every vault works standalone. One owner writes each shared tree. Optional

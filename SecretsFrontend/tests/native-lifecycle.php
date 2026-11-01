@@ -47,6 +47,9 @@ try {
     secReject(static fn()=>$invoke('sessionReveal',['operation'=>$sessionRead]),'Expired session revealed a secret.');
     $sessionStore->replace($sessionId,'session',$savedSession,$savedSession['created']+3600);secExpect($invoke('sessionTimeout',['seconds'=>900])['data']['idleLimit']===900,'Default timeout was not restored.');
     $shown=$invoke('sessionReveal',['operation'=>$sessionRead])['data'];secExpect(str_contains(json_encode($shown['fields']),'NATIVE-SECRET-CANARY'),'Signed-in session could not show selected values.');
+    $rootReveal=$invoke('sessionReveal',['operation'=>array_replace($sessionRead,['path'=>[]])])['data'];secExpect($rootReveal['fields']===[],'Root reveal unexpectedly exposed nested values.');
+    secReject(static fn()=>$invoke('prepare',['operation'=>['kind'=>'delete','scope'=>'global','path'=>[],'revision'=>'1']]),'Root deletion became available.');
+
     secReject(static fn()=>$invoke('sessionReveal',['operation'=>array_replace($sessionRead,['revision'=>'0'])]),'Session reveal accepted a stale revision.');
     secReject(static fn()=>$invoke('sessionReveal',['operation'=>array_replace($sessionRead,['kind'=>'delete'])]),'Session reveal accepted a write operation.');
     $csrf=$request['csrf'];$request['csrf']='wrong';secReject(static fn()=>$invoke('sessionReveal',['operation'=>$sessionRead]),'Session reveal accepted invalid CSRF.');$request['csrf']=$csrf;

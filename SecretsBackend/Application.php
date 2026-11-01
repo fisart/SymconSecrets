@@ -328,7 +328,7 @@ final class SecretsBackendApplication
         if (is_string($kind) && str_starts_with($kind, 'native') && ($this->settings['nativeOps'] ?? null) instanceof SecretsBackendNativeOperations) return $this->settings['nativeOps']->normalize($operation, $state, $stored);
         if (in_array($kind, ['save', 'delete', 'reveal'], true)) {
             self::exact($operation, $kind === 'save' ? ['kind', 'scope', 'path', 'revision', 'mode', 'json'] : ['kind', 'scope', 'path', 'revision']);
-            if (!in_array($operation['scope'], ['global', 'local'], true) || !is_array($operation['path']) || !$operation['path'] || !is_string($operation['revision']) || $operation['revision'] !== $state['vault']['revision']) throw new RuntimeException('Invalid scope or stale revision.');
+            if (!in_array($operation['scope'], ['global', 'local'], true) || !is_array($operation['path']) || (!$operation['path'] && $kind !== 'reveal') || !is_string($operation['revision']) || $operation['revision'] !== $state['vault']['revision']) throw new RuntimeException('Invalid scope or stale revision.');
             SecretsBackendTree::path($operation['path']);
             if ($kind === 'save') { if (!is_string($operation['json']) || !in_array($operation['mode'], ['create', 'replace'], true)) throw new InvalidArgumentException('Invalid save.'); SecretsBackendTree::parse($operation['json']); }
             else SecretsBackendTree::at($state['vault'][$operation['scope']], $operation['path']);
