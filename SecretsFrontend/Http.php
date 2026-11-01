@@ -40,7 +40,20 @@ final class SecretsFrontendHttp
             // A hostname alone is not transport evidence. Connect deployments
             // must supply native TLS or an explicitly trusted HTTPS proxy hop.
             $secure=in_array($server['HTTPS']??'', ['on','1'],true)||($proxy&&($server['HTTP_X_FORWARDED_PROTO']??'')==='https');
-            if(!$secure)return $reply(403,'Backup access requires verified HTTPS transport. Check the Connect relay and trusted proxy configuration.');
+            if(!$secure){
+                // Observations only: these fields never grant transport trust.
+                $known=static fn($value,$allowed)=>in_array($value,$allowed,true)?$value:($value===null?'not supplied':'other');
+                $remote=filter_var($server['REMOTE_ADDR']??'',FILTER_VALIDATE_IP)!==false?$server['REMOTE_ADDR']:'not supplied';
+                $diagnostic=['HTTPS'=>$known($server['HTTPS']??null,['on','off','1','0','']),
+                    'REQUEST_SCHEME'=>$known($server['REQUEST_SCHEME']??null,['http','https','']),
+                    'REMOTE_ADDR'=>$remote,'trustedProxy'=>$proxy,
+                    'forwardedProto'=>$known($server['HTTP_X_FORWARDED_PROTO']??null,['http','https','']),
+                    'forwardedHostPresent'=>isset($server['HTTP_X_FORWARDED_HOST']),
+                    'forwardedPresent'=>isset($server['HTTP_FORWARDED']),
+                    'symconCaller'=>$ui['transportDiagnostic']??['instance'=>0,'module'=>'not supplied']];
+                $detail=htmlspecialchars(json_encode($diagnostic,JSON_PRETTY_PRINT|JSON_THROW_ON_ERROR),ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8');
+                return $reply(403,'<!doctype html><html lang="en"><meta charset="utf-8"><title>Check backup connection</title><h1>Check backup connection</h1><p>Symcon did not supply the HTTPS transport evidence expected by this module. Backup registration is paused.</p><p>Copy the connection details below for the developer. They contain no cookies, passkeys or vault values.</p><pre>'.$detail.'</pre></html>');
+            }
             $origin=$requestOrigin;
             $headers['Content-Security-Policy']=str_replace('connect-src '.$primaryOrigin,'connect-src '.$origin,$headers['Content-Security-Policy']);
         }

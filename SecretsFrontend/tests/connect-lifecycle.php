@@ -18,8 +18,8 @@ try{
  $origin='https://backup.ipmagic.de';
  $approved(['kind'=>'nativeConnectStage','origin'=>$origin]);
  $p=$invoke('session')['data']['native']['backupOrigin'];secExpect($p['status']==='pending','Backup was activated without a candidate.');
- $settings=array_replace(SecretsFrontendConfiguration::DEFAULTS,['Enabled'=>true,'AdminOrigin'=>$primary['origin']]);$path='/hook/secrets_frontend_5200';$server=['REQUEST_METHOD'=>'GET','REQUEST_URI'=>$path,'HTTP_HOST'=>'backup.ipmagic.de'];
- $http=SecretsFrontendHttp::response($settings,5200,$server,$path,'','', '',null,['backupOrigin'=>$p]);secExpect($http['status']===403,'Backup host was accepted without HTTPS evidence.');
+ $settings=array_replace(SecretsFrontendConfiguration::DEFAULTS,['Enabled'=>true,'AdminOrigin'=>$primary['origin']]);$path='/hook/secrets_frontend_5200';$server=['REQUEST_METHOD'=>'GET','REQUEST_URI'=>$path,'HTTP_HOST'=>'backup.ipmagic.de','HTTP_COOKIE'=>'DIAG-COOKIE-CANARY','HTTP_AUTHORIZATION'=>'Bearer DIAG-AUTH-CANARY'];
+ $http=SecretsFrontendHttp::response($settings,5200,$server,$path,'','', '',null,['backupOrigin'=>$p]);secExpect($http['status']===403,'Backup host was accepted without HTTPS evidence.');secExpect(str_contains($http['body'],'not supplied')&&str_contains($http['body'],'Check backup connection'),'Blocked Connect request omitted safe transport observations.');secExpect(!str_contains($http['body'],'DIAG-COOKIE-CANARY')&&!str_contains($http['body'],'DIAG-AUTH-CANARY'),'Transport diagnostic exposed request credentials.');
  $server['HTTPS']='on';$http=SecretsFrontendHttp::response($settings,5200,$server,$path,'','', '',null,['backupOrigin'=>$p]);secExpect($http['status']===200&&str_contains($http['body'],'"backupEnrollment":true'),'Pending HTTPS page was not served independently.');
  $server['HTTPS']='off';$server['HTTP_X_FORWARDED_PROTO']='https';$http=SecretsFrontendHttp::response($settings,5200,$server,$path,'','', '',null,['backupOrigin'=>$p]);secExpect($http['status']===403,'Untrusted forwarding headers established HTTPS.');
  $generation=$p['generation'];$request=['origin'=>$origin,'cookie'=>'','csrf'=>'','remote'=>'connect-test'];
