@@ -6,7 +6,7 @@
     "test": "node ui.cjs",
     "test:security": "node ui-transport.cjs && node ui-races.cjs",
     "test:guided": "node ui-guided.cjs",
-    "test:native": "node ui-native.cjs"
+    "test:native": "node ui-native.cjs && node ui-bootstrap.cjs"
   },
   "devDependencies": {
     "jsdom": "26.1.0"
