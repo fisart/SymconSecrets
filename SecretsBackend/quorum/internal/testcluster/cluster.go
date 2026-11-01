@@ -44,15 +44,14 @@ func UUID() string {
 	s := hex.EncodeToString(b)
 	return s[:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:]
 }
-func endpoint(t *testing.T) string {
+func endpoint(t *testing.T) (string, net.Listener) {
 	t.Helper()
 	l, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
 		t.Fatal(e)
 	}
 	addr := l.Addr().String()
-	l.Close()
-	return "http://" + addr
+	return "http://" + addr, l
 }
 func New(t *testing.T) *Cluster {
 	t.Helper()
@@ -61,8 +60,23 @@ func New(t *testing.T) *Cluster {
 	cfgs := make([]config, 3)
 	initial := []string{}
 	token := UUID()
+	// Keep all six addresses reserved while constructing the member roster.
+	// Closing every probe immediately can hand the same port to two voters.
+	reservations := make([][2]net.Listener, len(cfgs))
+	defer func() {
+		for _, pair := range reservations {
+			for _, listener := range pair {
+				if listener != nil {
+					listener.Close()
+				}
+			}
+		}
+	}()
 	for i := range cfgs {
-		cfgs[i] = config{Name: fmt.Sprintf("voter-%d", i), Dir: filepath.Join(root, fmt.Sprintf("member-%d", i)), Client: endpoint(t), Peer: endpoint(t), Token: token}
+		clientURL, clientListener := endpoint(t)
+		peerURL, peerListener := endpoint(t)
+		reservations[i] = [2]net.Listener{clientListener, peerListener}
+		cfgs[i] = config{Name: fmt.Sprintf("voter-%d", i), Dir: filepath.Join(root, fmt.Sprintf("member-%d", i)), Client: clientURL, Peer: peerURL, Token: token}
 		initial = append(initial, cfgs[i].Name+"="+cfgs[i].Peer)
 		c.Endpoints = append(c.Endpoints, cfgs[i].Client)
 	}
@@ -89,6 +103,8 @@ func New(t *testing.T) *Cluster {
 		}
 	})
 	for i := range c.members {
+		reservations[i][0].Close()
+		reservations[i][1].Close()
 		c.Start(t, i)
 	}
 	cli, e := clientv3.New(clientv3.Config{Endpoints: c.Endpoints, DialTimeout: 2 * time.Second})

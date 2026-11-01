@@ -9,6 +9,10 @@ trait SecretsBackendNativeTransfer
     {
         $target=$state['pairing']['peers'][$targetId]??null;if(!is_array($target)||!$target['active'])throw new RuntimeException('Pair the intended new owner before transferring a tree.');
         $local=$this->descriptor();$isGlobal=$treeId===$state['native']['globalTreeId'];
+        if($isGlobal)foreach($state['native']['effects']as$effect){
+            $provider=$state['native']['providers'][$effect['providerId']]??null;
+            if(is_array($provider)&&in_array('global',[$provider['resultScope'],$provider['refreshScope']],true)&&in_array($effect['state'],['PREPARED','SENT_UNKNOWN','RETRY_SAFE','QUARANTINED'],true))throw new RuntimeException('Resolve outstanding global provider effects before transferring ownership.');
+        }
         $owned=$isGlobal?['node'=>$state['vault']['global'],'revision'=>$state['stream']['globalRevision'],'epoch'=>$state['native']['ownershipEpoch'],'frozen'=>!$state['native']['globalWritable']]:($state['native']['trees'][$treeId]??null);
         if(!is_array($owned)||$owned['frozen'])throw new RuntimeException('This vault cannot transfer a frozen or non-owned tree.');
         $recipients=[];

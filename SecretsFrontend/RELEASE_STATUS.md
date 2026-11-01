@@ -42,7 +42,7 @@ assertions (not physical keys). Native test groups cover:
 | native-store.php | 40 persistence/fencing/idempotence/corruption/path checks |
 | native-lifecycle.php | Wizard, first/extra WebAuthn credentials, scoped machines, key rotation, backup authentication/compaction/value recovery, stale admission and restart fencing |
 | native-peers.php | 84 checks over 1/2/3/5 vaults, bilateral approval, lost replies, transfer, replay/forgery/revocation and aggregate trees larger than 64 KiB |
-| native-effects.php | 18 exact-intent/capture/unknown/retry/restart/revocation checks |
+| native-effects.php | 22 exact-intent/capture/unknown/retry/restart/revocation checks |
 | HTML DOM tests | Complete rendered native assets, setup/defaults, exact-origin transport, late-response cleanup, approval, one-use output and additional-key re-login |
 | Original-code check | All 33 original blobs unchanged; existing password regressions pass |
 
@@ -74,3 +74,8 @@ instance's credentials/peer identity automatically.
 Earlier audits and closed fixes remain in AUDIT_REMEDIATION.md and
 AUDIT_CORRECTIONS_154d575.md. Their Go/SQLite component results do not approve
 this new persistence or synchronization implementation.
+
+The CI test-cluster helper reserves all six member ports until startup, avoiding
+duplicate voter addresses observed in a historical component test. Native OAuth
+intents additionally bind client-secret bytes and the writable global lineage;
+active unresolved global effects block ordinary owner transfer.
