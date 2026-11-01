@@ -77,7 +77,7 @@
   "actions": [
     {
       "type": "Label",
-      "caption": "Open setup, prepare your first passkey in the browser, then compare and approve its request here. No code is copied or entered."
+      "caption": "First-time setup: follow steps 1–5 in order. Steps 1 and 3 are here; steps 2, 4 and 5 are in the browser."
     },
     {
       "type": "ValidationTextBox",
@@ -95,7 +95,7 @@
     {
       "type": "Button",
       "name": "OpenBootstrap",
-      "caption": "Open setup / administration",
+      "caption": "Step 1: Open setup",
       "link": true,
       "onClick": "echo SECF_OpenBootstrap($id, $SetupAddress, \"\", false, $BootstrapJournalStorage);"
     },
@@ -108,7 +108,7 @@
     {
       "type": "Button",
       "name": "RefreshCandidates",
-      "caption": "Refresh approval requests",
+      "caption": "Step 3: Refresh approval requests",
       "onClick": "SECF_RefreshBootstrapForm($id);"
     },
     {
@@ -121,7 +121,7 @@
     {
       "type": "Label",
       "name": "RecoveryAvailability",
-      "caption": "Administrator recovery is available after vault initialization. Use Open setup / administration to complete initial setup."
+      "caption": "Administrator recovery is available after setup. For a new vault, start with Step 1: Open setup."
     },
     {
       "type": "Button",

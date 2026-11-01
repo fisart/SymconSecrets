@@ -61,6 +61,11 @@ async function fixture({delayCreate=false}={}){
  const vector=f.cryptoChecks[0];const verifier=spawnSync(process.env.PHP_BINARY||'php',['-n','-r',"require 'SecretsBackend/BootstrapVerifier.php'; $v=json_decode(stream_get_contents(STDIN),true); SecretsBootstrapVerifier::message($v['message'],$v['key']); echo 'OK';"],{cwd:require('node:path').join(__dirname,'../..'),input:JSON.stringify(vector),encoding:'utf8'});
  assert.equal(verifier.status,0,verifier.stdout+verifier.stderr);assert.equal(verifier.stdout,'OK','Actual WebCrypto signature did not interoperate with PHP/OpenSSL.');
  assert.equal(f.calls.some(r=>/guided|enrollmentOptions|setupCreate/.test(r.action)),false);assert.equal(f.errors.length,0,f.errors.map(e=>e.message).join('\n'));assert.equal(f.dom.window.localStorage.length,0);assert.equal(f.dom.window.sessionStorage.length,0);f.dom.window.close();
+ const automatic=await fixture();automatic.$('bsPrepare').click();await wait(()=>!automatic.$('bsWaiting').hidden);automatic.approve();
+ for(let i=0;i<100&&automatic.$('bsConfiguration').hidden;i++)await new Promise(r=>setTimeout(r,50));
+ assert.equal(automatic.$('bsConfiguration').hidden,false,'Approved setup did not automatically advance.');
+ assert.match(automatic.dom.window.document.querySelector('#guide').textContent,/Step 3: Refresh approval requests/);
+ assert.doesNotMatch(automatic.dom.window.document.querySelector('#guide').textContent,/ten-minute setup code/);automatic.dom.window.close();
  const late=await fixture({delayCreate:true});late.$('bsPrepare').click();await wait(()=>late.calls.some(r=>r.action==='bootstrapPrepare'));late.dom.window.dispatchEvent(new late.dom.window.Event('pagehide'));late.resolve();await tick();await tick();assert.equal(late.calls.some(r=>r.action==='bootstrapSubmit'),false,'Navigated page submitted a late passkey.');late.dom.window.close();
  console.log('PASS code-free rendered setup, actual WebCrypto/PHP interoperability, serial signed transport, approved defaults, atomic completion/login and late-candidate cleanup');
 })().catch(e=>{process.stderr.write(e.stack+'\n');process.exit(1);});

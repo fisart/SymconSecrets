@@ -17,25 +17,23 @@ qualification, not production/migration approval.
 
 ## Initial setup
 
-1. Update the development branch and use the separate SecretsFrontend. A unique
-   eligible backend is selected automatically; if none exists, setup proposes one.
-2. In the console, choose **Open setup / administration**. Enter the trusted HTTPS
-   origin only if unknown. Verify private/persistent setup storage only when the
-   supplied platform cannot establish it. The complete link is displayed without
-   any code or other authorization in its URL.
-3. In the browser choose **Prepare first passkey**. For a recent interrupted
-   preparation, **Use an already prepared passkey** proves possession again.
-4. Refresh the console request list, compare all four identifier groups against
-   the browser and approve that exact request. No candidate is selected by arrival
-   order or automatically trusted because it is the only one.
-5. Review the detected defaults. Change optional settings only when needed;
-   confirm any unresolved vault persistence/Windows ACL condition.
-6. Choose **Set up and sign in** and confirm the exact plan with your prepared
-   passkey. Its administrator entry, initial audit and operation outcome publish
-   in the first usable encrypted state, before activation and session creation.
-7. Test with invented secrets. After a lost completion reply, resolve the accepted
-   operation in the console and use normal passkey sign-in; never start a second
-   setup to replace an uncertain operation.
+Update the development branch and use the separate SecretsFrontend. A unique
+eligible backend is selected automatically; if none exists, setup proposes one.
+
+1. In the console, click **Step 1: Open setup**. Enter the trusted HTTPS address
+   if requested and confirm private persistent setup storage if asked.
+2. In the browser, click **Prepare first passkey** and follow the device prompt.
+   Leave the browser open.
+3. In the console, click **Step 3: Refresh approval requests**. Compare all four
+   identifier groups and click the matching **Step 3: Approve** button. Return
+   to the browser; it checks automatically and continues after approval.
+4. Review the suggested settings in the browser. Confirm storage persistence or
+   permissions if requested, then click **Review setup plan**.
+5. Check the summary, click **Set up and sign in**, and confirm with the prepared
+   passkey. The vault contains that administrator when it becomes usable.
+
+Test with invented secrets. After a lost completion reply, use **Resolve accepted
+setup** in the console; never start a second setup to replace an uncertain operation.
 
 The [code-free implementation contract](BOOTSTRAP_IMPLEMENTATION.md) documents
 nonce recovery, cancellation/restart, automatic backend creation and test limits.

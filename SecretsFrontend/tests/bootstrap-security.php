@@ -24,7 +24,7 @@ $action=static function(SecretsFrontend $front,string $name):array{foreach(json_
 $unboundProperties=$back->properties;$back->properties['FrontendInstanceID']=$front->InstanceID;$back->properties['AdminOrigin']=$request['origin'];
 $ok($action($front,'OpenRecoveryBootstrap')['enabled']===false&&$action($front,'RecoveryAvailability')['visible']===true,'Empty backend exposed administrator recovery in the console.');
 $beforeRecovery=[$back->attributes,$back->properties,$front->buffers];
-try{$front->OpenRecoveryBootstrap();throw new LogicException('Empty backend entered recovery.');}catch(RuntimeException $e){$ok(str_contains($e->getMessage(),'Use Open setup / administration'),'Empty backend reached nativeStore instead of explaining initial setup.');}
+try{$front->OpenRecoveryBootstrap();throw new LogicException('Empty backend entered recovery.');}catch(RuntimeException $e){$ok(str_contains($e->getMessage(),'Step 1: Open setup'),'Empty backend reached nativeStore instead of explaining initial setup.');}
 $ok([$back->attributes,$back->properties,$front->buffers]===$beforeRecovery&&!is_dir($choice['vaultDirectory']),'Rejected recovery changed or initialized the empty backend.');
 $back->properties=$unboundProperties;
 $key=secKey();$ctx=secBootstrapCandidate($front,$request,$key);

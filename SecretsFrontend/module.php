@@ -216,7 +216,7 @@ class SecretsFrontend extends IPSModule
         try{$views=json_decode($this->GetBootstrapConsoleView(),true);foreach($views as$v){
             $literal=static fn(string $text)=>var_export($text,true);
             $payload='SECF_ApproveBootstrapCandidate($id, '.$literal($v['candidate']).', '.$literal($v['digest']).', '.$literal($v['proof']).');';
-            $form['actions'][]=['type'=>'Button','caption'=>'Approve '.$v['comparison'],'confirm'=>'Compare all four groups with the browser: '.$v['comparison'].' · '.$v['purpose'].' · frontend '.$v['frontend'].' · '.$v['origin'].'. Approve exactly this request?','onClick'=>$payload];
+            $form['actions'][]=['type'=>'Button','caption'=>'Step 3: Approve '.$v['comparison'],'confirm'=>'Compare all four groups with the browser: '.$v['comparison'].' · '.$v['purpose'].' · frontend '.$v['frontend'].' · '.$v['origin'].'. Approve exactly this request?','onClick'=>$payload];
             $form['actions'][]=['type'=>'Button','caption'=>'Reject '.$v['comparison'],'onClick'=>'SECF_RejectBootstrapCandidate($id, '.$literal($v['candidate']).', '.$literal($v['digest']).');'];
         }}catch(Throwable $ignored){}
         try{$j=$this->bootstrapJournal();$j->locked(function()use($j,&$form):void{foreach($j->decisions()as$d){
