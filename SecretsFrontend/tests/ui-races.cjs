@@ -2,7 +2,7 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
-const source=fs.readFileSync(__dirname+'/../page.html','utf8').replaceAll('%%NONCE%%','test').replace('%%BOOT%%',JSON.stringify({origin:'https://secrets.example.test',path:'/hook/secrets_frontend_123',theme:'system'})).replace('%%NAVIGATION%%','');
+const source=require('./page-source.cjs')().replaceAll('%%NONCE%%','test').replace('%%BOOT%%',JSON.stringify({origin:'https://secrets.example.test',path:'/hook/secrets_frontend_123',theme:'system'})).replace('%%NAVIGATION%%','');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r});return{promise,resolve};};
 const credential=()=>({type:'public-key',rawId:new Uint8Array([1]).buffer,response:{clientDataJSON:new Uint8Array([1]).buffer,authenticatorData:new Uint8Array([1]).buffer,signature:new Uint8Array([1]).buffer,userHandle:null}});

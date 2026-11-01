@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
 const {JSDOM,VirtualConsole}=require('jsdom');
-const original=fs.readFileSync(path.join(__dirname,'../page.html'),'utf8');
+const original=require('./page-source.cjs')();
 const html=original.replaceAll('%%NONCE%%','test-nonce').replace('%%BOOT%%',JSON.stringify({origin:'https://secrets.example.test',path:'/hook/secrets_frontend_123',theme:'system'})).replace('%%NAVIGATION%%','');
 const calls=[];let failPreview=false;let createWasVolatile=false;
 const errors=[];const console=new VirtualConsole();console.on('jsdomError',error=>errors.push(error));

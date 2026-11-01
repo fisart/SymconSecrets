@@ -79,7 +79,7 @@ trait SecretsFrontendGuidedSetup
     private function guidedSelection(array $grant, array $data): array
     {
         $choice = SecretsFrontendCommissioning::choice($data);
-        $choice['deployment'] = SecretsFrontendDeployment::validate($choice['deployment'] ?? SecretsFrontendDeployment::defaults($grant['origin']), $grant['origin']);
+        if (isset($choice['deployment'])) $choice['deployment'] = SecretsFrontendDeployment::validate($choice['deployment'], $grant['origin']);
         $id = $choice['backend'];
         if (!array_key_exists((string)$id, $grant['backends'])) throw new RuntimeException('Backend was not authorized by the console. Repeat discovery.');
         $info = $this->initialBackend($id);
@@ -89,7 +89,8 @@ trait SecretsFrontendGuidedSetup
             if ($other > 0 && (!IPS_InstanceExists($other) || strtoupper(IPS_GetInstance($other)['ModuleInfo']['ModuleID'] ?? '') !== $module || IPS_HasChanges($other))) throw new RuntimeException('An integration instance changed. Repeat discovery.');
         }
         if ($choice['addPortalLink'] && $choice['portal'] === 0) throw new RuntimeException('Select a Portal or clear the link option.');
-        return array_replace($choice, SecretsFrontendCommissioning::paths($choice['vaultDirectory'], $choice['keyDirectory'], IPS_GetKernelDir()), ['origin' => $grant['origin'], 'backendDigest' => $info['digest']]);
+        if ($choice['initialize'] && SecretsBackendNativePlatform::capabilities()['missing']) throw new RuntimeException('The supplied PHP is missing native vault functions: ' . implode(', ', SecretsBackendNativePlatform::capabilities()['missing']));
+        return array_replace($choice, SecretsBackendNativePlatform::paths($choice['vaultDirectory'], $choice['keyDirectory'], IPS_GetKernelDir(), !($info['nativeInitializationPending'] ?? false)), ['origin' => $grant['origin'], 'backendDigest' => $info['digest']]);
     }
     private function guidedRequest(string $action, array $data): array
     {
@@ -105,7 +106,7 @@ trait SecretsFrontendGuidedSetup
                 foreach ($grant['backends'] as $id => $digest) {
                     $info = $this->initialBackend((int)$id);
                     if ($info['canConfigure'] && hash_equals($digest, $info['digest'])) $backends[] = ['id' => (int)$id, 'name' => $this->setupName((int)$id, 'SecretsBackend'),
-                        'defaults' => ['vaultDirectory' => $info['vaultDirectory'] ?: SecretsFrontendCommissioning::defaults((int)$id)['vaultDirectory'], 'keyDirectory' => $info['keyDirectory'] ?: SecretsFrontendCommissioning::defaults((int)$id)['keyDirectory']]];
+                        'defaults' => ['vaultDirectory' => (!$info['vaultDirectory'] || $info['vaultDirectory'] === '/var/lib/symcon-secrets-development/' . $id . '/vault') ? SecretsFrontendCommissioning::defaults((int)$id)['vaultDirectory'] : $info['vaultDirectory'], 'keyDirectory' => (!$info['keyDirectory'] || $info['keyDirectory'] === '/var/lib/symcon-secrets-development-keys/' . $id) ? SecretsFrontendCommissioning::defaults((int)$id)['keyDirectory'] : $info['keyDirectory']]];
                 }
                 $portals = $this->discovered(self::PORTAL, 'Portal'); $documentation = $this->discovered(self::DOCS, 'Dokumentation');
                 $pick = static function (array $items, int $current): int { $ids = array_column($items, 'id'); return in_array($current, $ids, true) ? $current : (count($ids) === 1 ? $ids[0] : 0); };
@@ -115,7 +116,7 @@ trait SecretsFrontendGuidedSetup
                     'defaults' => ['backend' => $pick($backends, $this->ReadPropertyInteger('BackendInstanceID')), 'portal' => $portal,
                         'documentation' => $pick($documentation, $this->ReadPropertyInteger('DocumentationInstanceID')), 'theme' => $this->settings()['Theme'],
                         'proxyIPs' => $this->settings()['TrustedHTTPSProxyIPs'], 'debugEnabled' => $this->ReadPropertyBoolean('DebugEnabled'), 'addPortalLink' => $portal > 0,
-                        'deployment' => $this->deploymentDefaults($grant['origin']), 'backendEnabled' => false, 'connectionTrust' => 'not-configured', 'hardwareTrust' => 'not-configured'],
+                        'initialize' => true, 'administratorLabel' => 'Administrator', 'backendEnabled' => false, 'connectionTrust' => 'not-configured', 'hardwareTrust' => 'not-configured'],
                     'requirements' => SecretsFrontendCommissioning::requirements(), 'expires' => $grant['expires']];
             }
             if ($action === 'guidedPreview') {
@@ -124,11 +125,13 @@ trait SecretsFrontendGuidedSetup
                 $planId = rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
                 $grant['plan'] = ['id' => $planId, 'configuration' => $plan]; $this->SetBuffer('GuidedSetup', SecretsFrontendConfiguration::encode($grant));
                 return ['planId' => $planId, 'configuration' => $plan, 'writable' => ['vault' => SecretsFrontendCommissioning::writable($plan['vaultDirectory']), 'keys' => SecretsFrontendCommissioning::writable($plan['keyDirectory'])],
-                    'deploymentPlan' => SecretsFrontendDeployment::describe($plan['deployment'], $grant['origin']), 'quorumConnected' => false, 'message' => 'Only instance settings will be saved. No folders, vault, keys, administrator or connection trust will be created.'];
+                    'deploymentPlan' => isset($plan['deployment']) ? SecretsFrontendDeployment::describe($plan['deployment'], $grant['origin']) : null,
+                    'persistence' => SecretsBackendNativePlatform::persistence($plan['vaultDirectory'], $plan['keyDirectory'], IPS_GetKernelDir()),
+                    'native' => SecretsBackendNativePlatform::capabilities(), 'quorumConnected' => false, 'message' => $plan['initialize'] ? 'Create a new encrypted native vault at these exact paths, then register the first passkey. Existing vaults are never replaced.' : 'Save settings only; no storage or credentials will be created.'];
             }
             if ($action !== 'guidedApply' || count($data) !== 2 || !is_string($data['planId'] ?? null) || !is_array($grant['plan']) || !hash_equals($grant['plan']['id'], $data['planId'])) throw new RuntimeException('Review the exact setup plan first.');
             $plan = $grant['plan']['configuration'];
-            $choice = array_intersect_key($plan, array_flip(['backend', 'portal', 'documentation', 'theme', 'vaultDirectory', 'keyDirectory', 'proxyIPs', 'addPortalLink', 'debugEnabled', 'deployment']));
+            $choice = array_intersect_key($plan, array_flip(['backend', 'portal', 'documentation', 'theme', 'vaultDirectory', 'keyDirectory', 'proxyIPs', 'addPortalLink', 'debugEnabled', 'deployment', 'initialize', 'privateACLConfirmed', 'persistenceConfirmed', 'administratorLabel']));
             $this->guidedSelection($grant, $choice); // Recheck every fixed identity/digest immediately before consumption.
             $this->forgetGuidedSetup(); // Consume before any configuration or integration side effect.
             try {
@@ -143,12 +146,26 @@ trait SecretsFrontendGuidedSetup
                 $this->SetValue('Status', 'Setup incomplete. Inspect the applied settings and start a fresh console authorization. No vault was activated.');
                 throw new RuntimeException('Setup could not finish. Settings may be partly applied; no vault was activated. Review the instances and issue a fresh setup code.');
             }
-            $this->WriteAttributeString('DeploymentDraft', SecretsFrontendConfiguration::encode($plan['deployment']));
+            if (isset($plan['deployment'])) $this->WriteAttributeString('DeploymentDraft', SecretsFrontendConfiguration::encode($plan['deployment']));
+            $native = null;
+            if ($plan['initialize']) {
+                if (!function_exists('SECB_InitializeNativeStorage')) throw new RuntimeException('Update the separate backend module to the native implementation first.');
+                $info = $this->initialBackend($plan['backend']);
+                $native = json_decode(SECB_InitializeNativeStorage($plan['backend'], $this->InstanceID, $info['digest'], $plan['privateACLConfirmed'], $plan['persistenceConfirmed'], $plan['administratorLabel']), true, 16, JSON_THROW_ON_ERROR);
+            }
             $this->WriteAttributeBoolean('GuidedConfigured', true);
-            return ['configured' => true, 'quorumConnected' => false, 'vaultCreated' => false, 'portalRegistered' => $plan['addPortalLink'],
-                'message' => 'Configuration saved. The Symcon-native backend is not implemented yet; vault operations remain disabled.',
-                'configurationExport' => ['deployment' => SecretsFrontendDeployment::describe($plan['deployment'], $grant['origin']), 'frontend' => json_decode($this->ExportConfiguration(), true, 16, JSON_THROW_ON_ERROR), 'backend' => json_decode(SECB_ExportConfiguration($plan['backend']), true, 16, JSON_THROW_ON_ERROR)]];
+            return ['configured' => true, 'quorumConnected' => false, 'vaultCreated' => $native !== null, 'native' => $native, 'portalRegistered' => $plan['addPortalLink'],
+                'message' => $native['message'] ?? 'Settings saved. Use the native initialization option to create the encrypted vault.',
+                'configurationExport' => ['deployment' => isset($plan['deployment']) ? SecretsFrontendDeployment::describe($plan['deployment'], $grant['origin']) : null, 'frontend' => json_decode($this->ExportConfiguration(), true, 16, JSON_THROW_ON_ERROR), 'backend' => json_decode(SECB_ExportConfiguration($plan['backend']), true, 16, JSON_THROW_ON_ERROR)]];
         } finally { IPS_SemaphoreLeave($lock); }
+    }
+    public function BeginAdministratorEnrollment(string $Label, bool $Hardware): string
+    {
+        if (!function_exists('SECB_GetNativeInfo') || !function_exists('SECB_BeginAdminEnrollment')) throw new RuntimeException('Update the native backend first.');
+        $id = $this->backend(); $info = json_decode(SECB_GetNativeInfo($id), true);
+        if (!($info['nativeMode'] ?? false) || !($info['initialized'] ?? false)) throw new RuntimeException('Initialize the native vault in the HTML wizard first.');
+        $code = SECB_BeginAdminEnrollment($id, $Label, $Hardware);
+        $this->UpdateFormField('AdministratorEnrollmentCode', 'value', $code); return $code;
     }
     private function gateway(array $request): array
     {
@@ -156,8 +173,13 @@ trait SecretsFrontendGuidedSetup
             try { return ['status' => 200, 'data' => $this->guidedRequest($request['action'], $request['data']), 'cookie' => '']; }
             catch (Throwable $exception) { return ['status' => 403, 'data' => ['error' => $exception->getMessage()], 'cookie' => '']; }
         }
-        if ($this->ReadAttributeBoolean('GuidedV2Only')) return ['status' => $request['action'] === 'status' ? 200 : 503,
-            'data' => $request['action'] === 'status' ? ['ready' => false, 'configured' => $this->ReadAttributeBoolean('GuidedConfigured'), 'guidedV2Only' => true, 'setupAvailable' => $this->guidedActive(), 'message' => 'Open the setup wizard. The Symcon-native backend is not implemented yet; vault operations remain disabled.'] : ['error' => 'The Symcon-native backend is not implemented yet. Vault operations remain disabled; this setup does not use the older anchor backend.'], 'cookie' => ''];
+        if ($this->ReadAttributeBoolean('GuidedV2Only')) {
+            $id = $this->ReadPropertyInteger('BackendInstanceID'); $native = null;
+            if ($id > 0 && function_exists('SECB_GetNativeInfo')) { try { $native = json_decode(SECB_GetNativeInfo($this->backend()), true); } catch (Throwable $ignored) {} }
+            if (($native['nativeMode'] ?? false) && ($native['initialized'] ?? false) && function_exists('SECB_HandleFrontendRequest')) return json_decode(SECB_HandleFrontendRequest($id, $this->InstanceID, SecretsFrontendConfiguration::encode($request)), true, 96, JSON_THROW_ON_ERROR);
+            return ['status' => $request['action'] === 'status' ? 200 : 503,
+                'data' => $request['action'] === 'status' ? ['ready' => false, 'configured' => $this->ReadAttributeBoolean('GuidedConfigured'), 'guidedV2Only' => true, 'nativeBackendImplemented' => true, 'setupAvailable' => $this->guidedActive(), 'message' => 'Initialize the native encrypted vault in the HTML setup wizard.'] : ['error' => 'Native vault not initialized. Open the setup assistant; V1 fallback is disabled.'], 'cookie' => ''];
+        }
         if (!function_exists('SECB_HandleFrontendRequest')) throw new RuntimeException('The separate backend API is not installed.');
         return json_decode(SECB_HandleFrontendRequest($this->backend(), $this->InstanceID, SecretsFrontendConfiguration::encode($request)), true, 32, JSON_THROW_ON_ERROR);
     }

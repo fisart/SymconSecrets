@@ -95,7 +95,7 @@ class SecretsFrontend extends IPSModule
             if ($settings['Enabled'] && !$this->guidedActive() && !$this->ReadAttributeBoolean('GuidedV2Only')) $this->backend();
             $this->syncHook($settings['Enabled']);
             if ($settings['AdminOrigin'] !== '') $this->updateWizardLinks();
-            $this->SetValue('Status', !$settings['Enabled'] ? 'Disabled.' : ($this->ReadAttributeBoolean('GuidedV2Only') ? 'HTML setup available. Symcon-native backend not implemented yet; vault operations disabled.' : 'Development frontend available. Backend authorizes every administrative operation.'));
+            $this->SetValue('Status', !$settings['Enabled'] ? 'Disabled.' : ($this->ReadAttributeBoolean('GuidedV2Only') ? 'Native HTML setup and administration available; the backend checks every operation.' : 'Development frontend available. Backend authorizes every administrative operation.'));
             $this->SetValue('IntegrationStatus', 'Portal: use Add to Portal below. Documentation: bundled manual and catalog entry. Central backup: registration review required; exports contain configuration only.');
             $this->SetStatus($settings['Enabled'] ? 102 : 104); $this->debug('configuration-checked'); return true;
         } catch (Throwable $exception) {

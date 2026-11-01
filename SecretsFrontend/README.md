@@ -1,112 +1,99 @@
-# Secrets Frontend and separate Secrets Backend
+# Symcon-native secrets administration
 
-Development implementation 0.1.0. These are **two new modules in SymconSecrets**, not an update or replacement of the existing `SecretsManager` module. Existing module source, storage, passkeys and configuration remain unchanged. Do not migrate production data yet.
+This development branch adds two separate modules, `SecretsFrontend` (SECF) and
+`SecretsBackend` (SECB). The existing `SecretsManager` and its SEC APIs are
+unchanged. No old vault, passkey or integration is adopted automatically.
 
-**Current direction:** a Symcon-native replacement, standalone by default with
-optional two/three/larger sets and no added runtime services or extensions. The
-[native protocol review draft](NATIVE_PROTOCOL.md) is **not implemented**. The
-external-runtime components documented below are earlier development work and
-are not the replacement's architecture. The [response to the independent audit
-of 154d575](AUDIT_CORRECTIONS_154d575.md) records the two source corrections,
-regressions and remaining TLS/native implementation gates.
+The native backend now implements encrypted local storage, passkey administration,
+optional peer synchronization, scoped integration access, backups/value recovery,
+data-key rotation and OAuth uncertainty handling. It requires only functions in
+the supplied Symcon PHP. No SQLite/PDO, database, Go/Python service, shell command
+or installed extension is used by the native runtime. Development tools and the
+retained historical prototype tests are separate.
 
-## Current V2 availability
+See [release status](RELEASE_STATUS.md) for executed checks and acceptance gates.
+This is a development implementation awaiting independent audit and real Symcon
+qualification, not production/migration approval.
 
-The HTML setup assistant provides discovery, defaults, exact review, settings
-application and a saved peer-deployment draft. The interface now uses a
-responsive card layout, clear progress, light/dark appearance and collapsed
-advanced settings. The Storage step retains an explicitly labelled **earlier quorum deployment
-draft** for compatibility with saved prototype plans. Those external-service
-fields are not requirements for the planned standalone/optional-peer native system.
-The current installation's HTTPS origin is prefilled. Unknown addresses and
-trust remain unconfigured. You can download the reviewed draft separately.
-Native exports with a draft use `SECF.Config.v2`; older v1 exports remain
-accepted. Imports stay disabled and a v2 draft never enables V1 fallback.
+## Initial setup
 
-New PHP V2 bundle/key-envelope and original-intent components pass component
-interop tests, but are not connected to a management route. The wizard still
-ends at **connection pending**. It cannot yet initialize a working V2 vault.
-See [the current checkpoint and remaining implementation](V2_INTEGRATION_CHECKPOINT.md).
+1. Update `feature/secrets-frontend` in Module Control. Use separate new backend
+   and frontend instances. Existing instance selections and a unique eligible
+   backend are detected automatically.
+2. In SecretsFrontend, enter the trusted HTTPS address normally used for Symcon.
+   A saved address is prefilled. The form immediately generates the complete
+   clickable wizard URL, including port and its own instance ID, with a copyable
+   field. Only a deliberately trusted exact proxy IP may rewrite Host routing.
+3. Generate the ten-minute one-use setup code in that form and open the HTML
+   wizard. No script, object-ID lookup or external command is needed.
+4. Review detected instances, suggested storage locations and capabilities.
+   Defaults use separate private per-instance folders inside Symcon's data
+   directory, device appearance, Debug off and standalone operation. Keep native
+   initialization selected to create the new vault; settings-only remains an
+   explicit option. The earlier external-service draft is hidden from this flow.
+5. Review the exact plan. If the host cannot establish container persistence or
+   a private Windows ACL, confirm or correct that specific condition in the HTML
+   wizard. A mount observation does not prove the backup/power-loss properties.
+6. Apply the reviewed plan and register the first administrator passkey. The
+   initialization authorization is consumed before effects; existing storage is
+   never replaced. A lost/expired first registration code can be regenerated in
+   the frontend form's administrator enrollment/recovery section.
+7. Sign in and test with invented secrets first. Changes and selected-record
+   reveal require a fresh passkey approval. Listings stay masked. Configuration
+   downloads contain settings only, never vaults, keys or credentials.
 
-## Earlier V1 development components
+The trusted HTTPS origin cannot safely be inferred from an unauthenticated
+request header. Available PHP/Symcon functions, storage capacity, instance IDs,
+paths and peer descriptors are detected; only unresolved choices are requested.
+Default folders are recommendations, never an assertion that a Docker volume is
+persisted or privately backed up.
 
-The following features describe the separate earlier single-anchor development
-path. Fresh guided V2 setup blocks that path; these are not usable V2 functions.
+## HTML administration
 
+- **Secrets:** global/local typed records, masked listing, reviewed edits and
+  exact-record reveal. Local values are never synchronized. Received shared
+  trees show source/freshness and stay read-only on subscribers.
+- **Peers:** create a short-lived invitation, approve its exact recipient on the
+  issuing vault, inspect immutable pending deliveries and revoke connections.
+  Every vault works standalone. One owner writes each shared tree. Optional
+  transfer freezes the old owner before the selected new owner accepts. A fork
+  creates a different tree identity and never claims to fence a lost old writer.
+- **Recovery:** approve an encrypted complete backup and keep the separately
+  displayed recovery key apart from it. Recover into a separately initialized
+  vault if needed. The default restore creates a local copy; replace-values is
+  explicit. Current administrators, rights and peer identities are retained.
+  Thus a backup never silently restores old administrative authority.
+- **Automation access:** grant one named integration an exact local/global path
+  and its descendants. Read-only is the default. Tokens are shown once; writes
+  require an expected revision, sequence and stable operation UUID. Revoke grants
+  individually. See the backend README for callable APIs.
+- **Keys:** approve new credentials and independently reviewed public hardware
+  trust roots/AAGUIDs. Ordinary attestation inspection never establishes hardware
+  trust. Two eligible hardware credentials must pass real assertion tests before
+  hardware-only policy is enabled. Adding a key invalidates previous sessions.
+- **OAuth:** choose an HTTPS provider and stored token references. Recognized
+  field names are suggested from masked metadata. Manual approved refresh is
+  available; automatic refresh requires explicitly confirmed provider idempotency.
+  Unknown non-idempotent outcomes are quarantined, not retried automatically.
 
-- `SecretsFrontend` (`SECF`): responsive HTML interface with overview, typed secret hierarchy, selected-record reveal, reviewed create/replace/delete, administrator credentials, hardware policy, storage commissioning wizard and guide.
-- `SecretsBackend` (`SECB`): separate encrypted SQLite vault, separate key directory, administrator-only WebAuthn API, one-use approvals, protected core manifests and external-anchor Prepare/advance/Publish recovery.
-- Independent development anchor service under `SecretsBackend/anchor`, using mutual TLS, signed messages and a durable decision ledger. It must run outside the Symcon VM and its backup/restore scope.
-- Both instances have a `Debug` text variable and `DebugEnabled` switch immediately below the instance. Diagnostics use fixed event codes; request bodies, credentials, secret values and key bytes are not logged.
-- Both modules have strict configuration import/export. Imports leave the target disabled. Exports contain settings and file references only: no vault contents, master/private keys, passkeys, sessions, setup codes or pending approvals.
-- The frontend can add its link to the existing Portal's **AdditionalPages → Administration** setting. This is an explicit console action; it preserves existing rows and does not change Portal source code.
+One-use outputs clear on navigation/page hiding and are never put in URLs,
+properties, exports, logs or browser persistent storage. A lost commit response
+is resolved by its operation ID; the browser never automatically repeats the
+change. A lost secret-bearing output must be regenerated through fresh approval.
 
-Read [the audit remediation and evidence](AUDIT_REMEDIATION.md) and [the release status](RELEASE_STATUS.md) before testing. A working development flow is not evidence that the complete v1.3 suite has passed.
+## Deployment and recovery limits
 
-## Start with the HTML setup assistant
+HTTPS must be provided by the configured public listener and any relay hops.
+The browser enforces secure context/exact origin, and server requests enforce
+fixed Host/Origin/schema, authentication and CSRF. These checks do not prove that
+an alternate plaintext listener is isolated. Verify the real endpoints.
 
-1. Update the installed `feature/secrets-frontend` branch in Module Control. Keep your existing SecretsManager unchanged.
-2. Open **SecretsFrontend**. Paste the trusted HTTPS address you use for Symcon. A saved origin is prefilled; paths/query are discarded. A proxy IP is needed only if that proxy rewrites the Host header and supplies `X-Forwarded-Host`; allow only its exact IP. Neither browser Host headers nor forwarded headers establish trust automatically.
+Every restart invalidates sessions/approvals and checks the committed snapshot.
+Corrupt newest state or missing keys lock the vault rather than selecting older
+permissions. Standalone cannot detect a consistent restoration of *all* trusted
+files without an independent current reference. Directory/file sync does not
+certify physical power-loss durability. Windows uses an explicitly labelled
+file-sync-only profile and requires private-ACL confirmation.
 
-   Like the existing Light Control and Dokumentation modules, the frontend supports native, NAT and relay HTTPS endpoints without requiring PHP TLS flags or a core WebServer caller. The public endpoint must provide HTTPS with a valid certificate; TLS termination belongs to that listener/relay. The browser checks its actual protocol, exact configured origin and secure context before sending any API request or credential; an HTTP/wrong-origin page clears its controls and navigates only to the fixed HTTPS wizard URL. CSP permits connections only to that HTTPS origin. Server-side host/Origin/JSON, backend authentication, CSRF, one-use setup authority and Secure/HttpOnly session cookies remain enforced. A caller-supplied Origin is an application request check, not proof of network encryption; do not expose a plaintext backend listener to untrusted networks. The custom public port is preserved and need not match an internal port behind NAT.
-3. In the **SecretsFrontend** form (the new frontend instance, not the existing SecretsManager or separate backend), click **Generate one-use setup code · valid for 10 minutes**. The code appears both in a copyable dialog and in the field immediately below that button. Copy it, open the displayed wizard URL and paste it into the HTML page. Generating a fresh code replaces the earlier one. Codes are shown at generation only; if you reopen the form and no longer have the code, generate another. Applying instance settings or cancelling setup clears the authorization and displayed code. The code authorizes initial settings for new, empty backend instances only; it is not an administrator credential.
-4. The HTML wizard discovers eligible backends, Portal and Dokumentation. Existing valid selections are reused; a unique candidate is auto-selected. Ambiguous backends require a choice. Review suggested vault/key folders, appearance, proxy list and Debug. **Restore suggested defaults** restores recommendations for the selected backend.
-5. Review the exact summary and save. The wizard applies reciprocal instance references and origin, storage path settings and preferences, optionally registers the Portal link through its existing extension, and offers a settings-only download. It does not create folders, keys, a vault, administrators or connection trust.
-
-**The V2 quorum runtime is still unconnected.** Initial configuration ends at **Settings saved · connection pending**. The backend stays disabled. The new guided mode explicitly blocks the earlier V1 anchor routes; it never silently activates that architecture. Storage creation, runtime connection and administrator enrollment will continue in this assistant when their V2 integration is available. A partial apply consumes its code and requires inspection/fresh authorization rather than automatic replay.
-
-Every wizard entry has a declared default: existing value first, unique detected instance next, otherwise a safe explicit choice. New backends receive private per-instance folder suggestions. Appearance follows the device; Debug defaults off; proxy list defaults empty; optional integrations default to none when not found. Connection credentials, authority pins and hardware trust default to **not configured**. No authority or hardware root is trusted by default. Suggested parent folders may need OS administrator permissions; no root/SSH password is collected.
-
-The initial console step remains because a publicly reachable setup page cannot issue its own configuration authority. The temporary code is stored only as a hash in a transient buffer, scoped to the origin/frontend/backend roster and exact reviewed plan, bounded by expiry/failed attempts, consumed before mutation and invalidated on reload. Browser inputs and in-memory copies clear on cancellation, navigation, expiry and page hiding. Explicit cancellation also revokes the server grant when reachable. No code is put into URLs, properties, exports, Debug or browser persistent storage.
-
-Both forms retain their previous controls in collapsed advanced sections for independent development/recovery. The earlier V1 commissioning guide below applies only to that separate development path; it does not create a V2 quorum system.
-
-The settings assistant requires PHP 8.2+ and checks its actual JSON, SHA-256, secure-randomness and Symcon instance/semaphore functions. It does not probe PDO/SQLite, create an in-memory database or request added extensions or services. These setup checks do not qualify an implemented native vault: that backend is still unfinished. The earlier V1 prototype separately requires sodium, OpenSSL, curl and PDO SQLite (SQLite 3.51.3+ for WAL); those historical dependencies do not apply to the native settings assistant.
-
-## Wizard: vault and key storage
-
-The two storages are the encrypted vault database and a separate protected key directory, as selected by the owner.
-
-1. Apply the intended paths, frontend binding and HTTPS origin in the backend console.
-2. Click **Issue one-use setup credential**. Copy the short-lived code directly into the HTML wizard's password field. It expires after ten minutes and is not a saved module property.
-3. The browser sends it only in a same-origin HTTPS JSON POST. The backend stores only its hash, expiry, attempt counter and exact setup binding in its transient buffer. The wizard clears the input after submission and previews the exact two paths and permissions.
-4. Review and click **Create both storages**. The code and plan are checked again, consumed before any filesystem mutation and removed from the console field. Existing files are never overwritten. A partial/error result is inspected explicitly; the wizard never manufactures replacement keys for an existing database.
-5. Download the resulting **public anchor provisioning metadata** and complete the external anchor setup. It contains no master key, private signing key or setup credential.
-
-No SSH, root or sudo password is collected. The wizard operates with the Symcon service account; collecting an OS password would not grant that process filesystem privileges automatically. Temporary credential inputs are not stored in localStorage, sessionStorage, URLs, module configuration, backup exports or Debug. They are cleared on cancellation, error, navigation and page hiding. JavaScript/PHP memory and browser/OS internals cannot promise perfect physical erasure of every copy; proxy/body logging, crash dumps and swap remain deployment controls to verify.
-
-Master and private connection keys must persist for normal operation, with directory mode 0700 and file mode 0600. They are distinct from the disposable setup/enrollment credentials. Do not delete them after commissioning.
-
-## Secret hierarchy and change approval
-
-The backend stores typed JSON nodes. `{}` and `[]`, numeric object names and numeric array indexes remain distinct. Paths are JSON lists such as `["Mail", "Password"]` or `["Accounts", 0, "Password"]`. Reserved internal names beginning `__` are rejected. Lists support append at the next exact index; no silent gaps or key coercion.
-
-Names and types are loaded after administrator authentication. Values are not prefilled in editors. Enter a new JSON value and explicitly choose Create or Replace; an empty editor makes no change. Every save/delete is reviewed and bound to a fresh passkey assertion and current vault revision. Stale changes are refused. Revealing an object returns only its immediate scalar fields, not values in nested records; visible values clear after 30 seconds, page hiding, navigation or logout.
-
-The new backend verifies hardware chains separately from the untouched legacy verifier: supplied intermediates never become trust anchors. The first supported hardware profile is **packed ES256**, with the certificate subject/basic constraints and signed matching AAGUID/model extension checked. U2F-only devices and devices without that signed model extension are refused for hardware approval. Real-device compatibility remains unverified.
-
-Hardware-only actions require an active credential enrolled with validated attestation, an approved AAGUID/trust profile, user presence, user verification and consistent non-backup-eligible flags. No roots/model profile is trusted by default. Certificate/metadata maintenance and real devices must be reviewed before enabling this policy. A label or USB transport hint is not proof of hardware.
-
-The present enrollment route is explicitly **independent console enrollment/recovery**: an ordinary web session cannot issue its own enrollment code or activate a new approver. Key revocation/policy changes use bound WebAuthn approval; whenever any hardware action is enabled, identity/policy changes also require an eligible hardware key. There is no normal web bypass through a weaker action-class setting. Two eligible hardware credentials must exist before enforcement; the operator must separately establish that these are two physical keys and test both.
-
-## Security configuration and audit
-
-After initial sealing, ordinary form saves/imports cannot replace storage paths, anchor pins/TLS references, administrator origin or frontend binding. These controls are disabled in the sealed backend form; import rejects differing foundation fields before changing properties. Their eventual relocation/rotation needs the independent recovery tooling, which is not released yet. The encrypted `management-bootstrap.json` and persistent storage binding must remain intact. Missing or changed protected trust files lock management. Debug/cosmetic settings require no passkey approval.
-
-Hardware trust settings saved/imported in the console are **staged**. On the HTML Configuration & backup tab, review their exact revision, roots, models and fingerprints, then approve the configuration operation. Whenever any action requires hardware, an existing eligible hardware credential must approve it. Every changed profile needs a new reviewed revision; credentials from the old trust revision cannot approve under the new profile and need independent recovery enrollment. Stage new root files separately rather than replacing files belonging to the active profile. Do not turn an unavailable key into a weaker fallback.
-
-Mutations have structured, secret-free audit context inside the anchored core. Grant claims and verified signed receipts are encrypted locally and correlated with the witness, with bounded rejected-request telemetry. These records supplement the short Debug variable; production audit retention, safe GC and investigation tooling still need acceptance.
-
-## Portal, Dokumentation and configuration backup
-
-Portal registration uses an existing configuration extension. It does not edit Portal source, enable the Portal or grant authorization through it. `IncludeAdministration` must be enabled in Portal for that category to appear.
-
-The complete guide is bundled here and the HTML interface has a Guide section. [Integration files](integrations/README.md) contain the proposed central Dokumentation catalog entry and configuration-backup registration package. The existing central modules use fixed catalogs/registries. **No files in those modules are modified in this development change**, honoring the instruction not to change other modules. Therefore their central registration is pending an explicit exception for those registration changes; they are not reported as already activated.
-
-Each new module can already export/import its own configuration. The central backup module can discover newly installed exporting instance modules as review candidates, but a candidate is not backup coverage. Its new adapters must be registered and parity-tested before the UI claims native restore support. Do not masquerade as another module ID or use an unchecked property-only restore to bypass disabled-on-import behavior.
-
-Vault backup is a separate requirement. Configuration exports do not back up the encrypted database or external keys. Production vault backup/restore, migration, automatic synchronization and provider/OAuth refresh are not released by this development implementation; see the explicit release gates.
-
-## Trust boundary
-
-The original form.json editor belongs to the untouched old SecretsManager and still controls that old vault. It is not a route into the new vault. New backend changes use only its dedicated API, local commissioning/recovery methods and protected storage. Arbitrary privileged same-process PHP or host administrators can still bypass application rules; the design never claimed process isolation from them. A hardware touch does not verify what a compromised browser displayed.
+The earlier external anchor/quorum prototypes remain in repository history and
+component tests. They are never a native-mode fallback or runtime requirement.

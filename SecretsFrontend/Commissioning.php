@@ -3,8 +3,9 @@ declare(strict_types=1);
 require_once __DIR__ . '/Configuration.php';
 require_once __DIR__ . '/Deployment.php';
 require_once __DIR__ . '/../SecretsBackend/StoragePaths.php';
+require_once __DIR__ . '/../SecretsBackend/NativePlatform.php';
 
-/** Settings-only initial commissioning. No vault, trust enrollment or runtime activation. */
+/** Reviewed initial commissioning; native initialization is explicitly selected by the HTML wizard. */
 final class SecretsFrontendCommissioning
 {
     public static function digest(array $value): string { return hash('sha256', SecretsFrontendConfiguration::encode($value)); }
@@ -21,11 +22,12 @@ final class SecretsFrontendCommissioning
     }
     public static function defaults(int $backend): array
     {
-        return ['vaultDirectory' => '/var/lib/symcon-secrets-development/' . $backend . '/vault', 'keyDirectory' => '/var/lib/symcon-secrets-development-keys/' . $backend];
+        return SecretsBackendNativePlatform::defaults($backend, IPS_GetKernelDir());
     }
     public static function paths(string $vault, string $keys, string $kernel): array
     {
-        return SecretsBackendStoragePaths::pair($vault, $keys, $kernel);
+        try { return SecretsBackendNativePlatform::paths($vault, $keys, $kernel, true); }
+        catch (RuntimeException $error) { throw new InvalidArgumentException($error->getMessage(), 0, $error); }
     }
     public static function writable(string $path): bool
     {
@@ -34,10 +36,10 @@ final class SecretsFrontendCommissioning
     }
     public static function requirements(): array
     {
-        // This assistant saves settings only. Legacy SQLite/anchor diagnostics
-        // do not describe the planned Symcon-native backend or its prerequisites.
+        // Core setup and optional native capabilities are reported separately.
+        // Old prototype dependencies never become native prerequisites.
         return ['php' => PHP_VERSION, 'phpSupported' => version_compare(PHP_VERSION, '8.2.0', '>='),
-            'scope' => 'settings-only', 'runtime' => 'symcon-native', 'nativeBackendImplemented' => false,
+            'scope' => 'settings-only', 'runtime' => 'symcon-native', 'nativeBackendImplemented' => true, 'native' => SecretsBackendNativePlatform::capabilities(),
             'capabilities' => [
                 'JSON' => function_exists('json_encode') && function_exists('json_decode'),
                 'SHA-256' => function_exists('hash') && function_exists('hash_equals') && function_exists('hash_algos') && in_array('sha256', hash_algos(), true),
@@ -48,12 +50,15 @@ final class SecretsFrontendCommissioning
     public static function choice(array $data): array
     {
         $fields = ['backend', 'portal', 'documentation', 'theme', 'vaultDirectory', 'keyDirectory', 'proxyIPs', 'addPortalLink', 'debugEnabled'];
-        if (array_diff(array_keys($data), array_merge($fields, ['deployment'])) || array_diff($fields, array_keys($data))) throw new InvalidArgumentException('Unexpected setup fields.');
+        if (array_diff(array_keys($data), array_merge($fields, ['deployment', 'initialize', 'privateACLConfirmed', 'persistenceConfirmed', 'administratorLabel'])) || array_diff($fields, array_keys($data))) throw new InvalidArgumentException('Unexpected setup fields.');
         foreach (['backend', 'portal', 'documentation'] as $key) if (!is_int($data[$key]) || $data[$key] < 0) throw new InvalidArgumentException('Choose an available instance.');
         foreach (['theme', 'vaultDirectory', 'keyDirectory'] as $key) if (!is_string($data[$key])) throw new InvalidArgumentException('Invalid setup text.');
         if (!is_bool($data['debugEnabled'])) throw new InvalidArgumentException('Choose a Boolean Debug setting.');
         if (!is_bool($data['addPortalLink'])) throw new InvalidArgumentException('Choose whether to add the Portal link.');
         SecretsFrontendConfiguration::validate(array_replace(SecretsFrontendConfiguration::DEFAULTS, ['Theme' => $data['theme'], 'TrustedHTTPSProxyIPs' => $data['proxyIPs']]));
+        foreach (['initialize', 'privateACLConfirmed', 'persistenceConfirmed'] as $flag) { if (isset($data[$flag]) && !is_bool($data[$flag])) throw new InvalidArgumentException('Use Boolean initialization confirmations.'); $data[$flag] ??= false; }
+        $data['administratorLabel'] ??= 'Administrator';
+        if (!is_string($data['administratorLabel']) || $data['administratorLabel'] === '' || strlen($data['administratorLabel']) > 80 || preg_match('/[\x00-\x1f]/', $data['administratorLabel'])) throw new InvalidArgumentException('Choose a short administrator label.');
         return $data;
     }
 }

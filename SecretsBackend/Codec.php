@@ -42,7 +42,9 @@ final class SecretsBackendCodec
     public static function increment(string $number): string
     {
         if (!preg_match('/^(0|[1-9][0-9]*)$/D', $number) || strlen($number) > 19 || (strlen($number) === 19 && strcmp($number, '9223372036854775807') >= 0)) throw new RuntimeException('Counter exhausted.');
-        return (string)((int)$number + 1);
+        $digits = str_split($number); $carry = true;
+        for ($i = count($digits) - 1; $i >= 0 && $carry; --$i) { if ($digits[$i] === '9') $digits[$i] = '0'; else { $digits[$i] = (string)((int)$digits[$i] + 1); $carry = false; } }
+        return ($carry ? '1' : '') . implode('', $digits);
     }
     public static function seal(string $plain, string $key, string $context): string
     {

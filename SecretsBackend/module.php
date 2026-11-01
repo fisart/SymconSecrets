@@ -3,9 +3,13 @@ declare(strict_types=1);
 require_once __DIR__ . '/Application.php';
 require_once __DIR__ . '/SecurityConfiguration.php';
 require_once __DIR__ . '/StoragePaths.php';
+require_once __DIR__ . '/NativeBackend.php';
+require_once __DIR__ . '/NativeRuntime.php';
 
 class SecretsBackend extends IPSModule
 {
+    use SecretsBackendNativeBackend;
+    use SecretsBackendNativeRuntime;
     public const FRONTEND = '{8D6AE8F7-EA3A-4513-AA14-C3F9613B0E83}';
     private const STRINGS = ['DataDirectory', 'KeyDirectory', 'AdminOrigin', 'AnchorURL', 'AnchorPublicKey', 'AnchorKeyID', 'ClientCertificatePath', 'ClientKeyPath', 'AnchorCAFile', 'HardwareRootsDirectory', 'HardwareAAGUIDs', 'HardwareTrustVersion'];
     public function Create(): void
@@ -13,13 +17,14 @@ class SecretsBackend extends IPSModule
         parent::Create();
         $this->RegisterAttributeString('StorageBinding', '');
         $this->RegisterAttributeBoolean('ProvisioningSealed', false);
-        $this->RegisterAttributeBoolean('GuidedV2Only', false);
+        $this->RegisterAttributeBoolean('GuidedV2Only', true);
+        foreach (['NativeVaultUUID', 'NativeInitUUID', 'NativeInitPlan'] as $attribute) $this->RegisterAttributeString($attribute, '');
         $this->RegisterPropertyBoolean('Enabled', false); $this->RegisterPropertyBoolean('DebugEnabled', false);
         $this->RegisterPropertyInteger('FrontendInstanceID', 0);
         foreach (self::STRINGS as $name) {
             $default = match ($name) {
-                'DataDirectory' => '/var/lib/symcon-secrets-development/' . $this->InstanceID . '/vault',
-                'KeyDirectory' => '/var/lib/symcon-secrets-development-keys/' . $this->InstanceID,
+                'DataDirectory' => SecretsBackendNativePlatform::defaults($this->InstanceID, IPS_GetKernelDir())['vaultDirectory'],
+                'KeyDirectory' => SecretsBackendNativePlatform::defaults($this->InstanceID, IPS_GetKernelDir())['keyDirectory'],
                 'HardwareAAGUIDs' => '[]', 'HardwareTrustVersion' => 'none', default => '',
             };
             $this->RegisterPropertyString($name, $default);
@@ -29,6 +34,7 @@ class SecretsBackend extends IPSModule
         $this->RegisterVariableString('StorageStatus', 'Vault / key storage', '', 20);
         $this->RegisterVariableString('Debug', 'Debug', '~TextBox', 50);
         $this->RegisterTimer('Recovery', 0, 'SECB_Recover($_IPS[\'TARGET\']);');
+        $this->RegisterTimer('NativeJobs', 0, 'SECB_RunNativeJobs($_IPS[\'TARGET\']);');
         $this->RegisterMessage(0, 10103);
     }
     public function ApplyChanges(): void
@@ -38,6 +44,7 @@ class SecretsBackend extends IPSModule
         try {
         parent::ApplyChanges(); $this->SetBuffer('Runtime', SecretsBackendCodec::b64(random_bytes(32))); $this->SetBuffer('Setup', '');
         $this->SetBuffer('RecoveryDelay', '1000');
+        if ($this->ReadAttributeBoolean('GuidedV2Only') && ($this->ReadAttributeString('StorageBinding') === '' || ((json_decode($this->ReadAttributeString('StorageBinding'), true)['kind'] ?? '') === 'native'))) { $this->SetValue('DebugEnabled', $this->ReadPropertyBoolean('DebugEnabled')); $this->nativeApply(); return; }
         if ($this->ReadAttributeString('StorageBinding') !== '') {
             try { $this->store(true)->invalidate(); }
             catch (Throwable $exception) {
@@ -55,14 +62,14 @@ class SecretsBackend extends IPSModule
     }
     public function MessageSink($TimeStamp, $SenderID, $Message, $Data): void
     {
-        if ((int)$SenderID === 0 && (int)$Message === 10103 && $this->ReadPropertyBoolean('Enabled') && !$this->ReadAttributeBoolean('GuidedV2Only')) $this->SetTimerInterval('Recovery', 100);
+        if ((int)$SenderID === 0 && (int)$Message === 10103 && $this->ReadPropertyBoolean('Enabled') && (!$this->ReadAttributeBoolean('GuidedV2Only') || $this->nativeInitialized())) $this->SetTimerInterval('Recovery', 100);
     }
     private function nativeUnavailable(): void
     {
         $this->SetTimerInterval('Recovery', 0);
         $this->SetStatus(201);
-        $this->SetValue('Status', 'Symcon-native backend not implemented yet; vault operations disabled. No additional database or anchor service is required for native setup.');
-        $this->SetValue('StorageStatus', 'Settings only; native storage creation is not implemented yet. No vault activated.');
+        $this->SetValue('Status', 'Native vault not initialized. Open the HTML setup wizard; no additional database or anchor service is required.');
+        $this->SetValue('StorageStatus', 'Native encrypted storage has not been created yet.');
     }
     private function configuration(): array
     {
@@ -147,6 +154,7 @@ class SecretsBackend extends IPSModule
     }
     protected function store(bool $allowDrift = false): SecretsBackendStore
     {
+        require_once __DIR__ . '/Store.php';
         $paths = $this->boundPaths(); $identity = $this->identity(); $bootstrap = $this->bootstrap();
         if ($bootstrap !== null) {
             if (!$allowDrift && !SecretsBackendSecurityConfiguration::sameFoundation($bootstrap['profile']['settings'], $this->configuration())) throw new RuntimeException('Provisioned foundation settings changed; ordinary apply/import cannot replace anchor trust or storage.');
@@ -165,7 +173,7 @@ class SecretsBackend extends IPSModule
         if (!IPS_SemaphoreEnter($lock, 100)) return false;
         try {
         $this->SetTimerInterval('Recovery', 0);
-        if ($this->ReadAttributeBoolean('GuidedV2Only')) { $this->nativeUnavailable(); return false; }
+        if ($this->ReadAttributeBoolean('GuidedV2Only')) return $this->nativeRecover();
         if (!$this->ReadPropertyBoolean('Enabled')) return false;
         try {
             $this->configuration();
@@ -198,9 +206,9 @@ class SecretsBackend extends IPSModule
     {
         $empty = true;
         foreach (['DataDirectory', 'KeyDirectory'] as $field) { $path = $this->ReadPropertyString($field); if ($path !== '' && (is_link($path) || (is_dir($path) && count(scandir($path) ?: []) > 2) || (file_exists($path) && !is_dir($path)))) $empty = false; }
-        return SecretsFrontendConfiguration::encode(['backend' => $this->InstanceID, 'canConfigure' => !$this->ReadAttributeBoolean('ProvisioningSealed') && $this->ReadAttributeString('StorageBinding') === '' && $empty && !IPS_HasChanges($this->InstanceID),
+        return SecretsFrontendConfiguration::encode(['backend' => $this->InstanceID, 'canConfigure' => !$this->ReadAttributeBoolean('ProvisioningSealed') && $this->ReadAttributeString('StorageBinding') === '' && ($empty || $this->ReadAttributeString('NativeInitPlan') !== '') && !$this->nativeInitialized() && !IPS_HasChanges($this->InstanceID),
             'frontend' => $this->ReadPropertyInteger('FrontendInstanceID'), 'origin' => $this->ReadPropertyString('AdminOrigin'), 'vaultDirectory' => $this->ReadPropertyString('DataDirectory'), 'keyDirectory' => $this->ReadPropertyString('KeyDirectory'),
-            'digest' => hash('sha256', SecretsFrontendConfiguration::encode($this->initialSettingsSnapshot())), 'quorumConnected' => false]);
+            'nativeInitializationPending' => $this->ReadAttributeString('NativeInitPlan') !== '' && !$this->nativeInitialized(), 'digest' => hash('sha256', SecretsFrontendConfiguration::encode($this->initialSettingsSnapshot())), 'quorumConnected' => false]);
     }
     /** Initial settings only. No files/credentials, no enable, no trust pin or rights changes. */
     public function ConfigureInitialSetup(int $FrontendInstanceID, string $ExpectedDigest, string $SettingsJSON): bool
@@ -216,7 +224,7 @@ class SecretsBackend extends IPSModule
             $data = SecretsFrontendConfiguration::decode($SettingsJSON);
             if (count($data) !== 4 || array_diff(array_keys($data), ['origin', 'vaultDirectory', 'keyDirectory', 'debugEnabled']) || !is_bool($data['debugEnabled'] ?? null) || !is_string($data['origin'] ?? null) || !is_string($data['vaultDirectory'] ?? null) || !is_string($data['keyDirectory'] ?? null)) throw new RuntimeException('Invalid initial settings.');
             require_once __DIR__ . '/../SecretsFrontend/Commissioning.php';
-            $paths = SecretsFrontendCommissioning::paths($data['vaultDirectory'], $data['keyDirectory'], IPS_GetKernelDir());
+            $paths = SecretsBackendNativePlatform::paths($data['vaultDirectory'], $data['keyDirectory'], IPS_GetKernelDir(), $this->ReadAttributeString('NativeInitPlan') === '');
             $origin = SecretsFrontendConfiguration::origin($data['origin']);
             if ($origin === '' || $origin !== SecretsFrontendConfiguration::origin(IPS_GetProperty($FrontendInstanceID, 'AdminOrigin'))) throw new RuntimeException('Pinned frontend origin changed.');
             // Consume the initial mode before configuration changes. A partial apply remains disabled.
@@ -225,12 +233,12 @@ class SecretsBackend extends IPSModule
             foreach (['Enabled' => false, 'DebugEnabled' => $data['debugEnabled'], 'FrontendInstanceID' => $FrontendInstanceID, 'AdminOrigin' => $origin, 'DataDirectory' => $paths['vaultDirectory'], 'KeyDirectory' => $paths['keyDirectory']] as $key => $value) IPS_SetProperty($this->InstanceID, $key, $value);
         } finally { IPS_SemaphoreLeave($setupLock); IPS_SemaphoreLeave($lock); }
         IPS_ApplyChanges($this->InstanceID);
-        $this->SetValue('StorageStatus', 'Settings prepared by HTML wizard. Native storage creation is not implemented yet; no vault created.');
+        $this->SetValue('StorageStatus', 'Settings prepared by HTML wizard. Native encrypted storage has not been initialized yet.');
         return true;
     }
     public function BeginStorageSetup(): string
     {
-        if ($this->ReadAttributeBoolean('GuidedV2Only')) throw new RuntimeException('Symcon-native backend not implemented yet. Vault operations remain disabled; the guided setup does not initialize a V1 anchor vault.');
+        if ($this->ReadAttributeBoolean('GuidedV2Only')) throw new RuntimeException('The native wizard initializes storage directly. These earlier V1 controls are not used.');
         if ($this->ReadAttributeString('StorageBinding') !== '') throw new RuntimeException('This instance is already bound to storage; initial setup cannot replace an existing deployment.');
         $settings = $this->configuration(); $paths = $this->paths();
         if ($settings['FrontendInstanceID'] <= 0 || $settings['AdminOrigin'] === '' || $paths['vault'] === '' || $paths['keys'] === '') throw new RuntimeException('Select the new frontend, exact HTTPS origin and two separate absolute directory paths first.');
@@ -271,13 +279,14 @@ class SecretsBackend extends IPSModule
     }
     protected function initializeStorage(array $paths, array $settings): array
     {
+        require_once __DIR__ . '/Store.php';
         // Recheck after review and immediately before any key/state creation.
         $checked = SecretsBackendStoragePaths::pair($paths['vault'], $paths['keys'], IPS_GetKernelDir());
         return SecretsBackendStore::initialize($checked['vaultDirectory'], $checked['keyDirectory'], $settings['AdminOrigin'], $settings['FrontendInstanceID']);
     }
     public function BeginAdminEnrollment(string $Label, bool $Hardware): string
     {
-        $code = $this->application()->beginEnrollment($Label, $Hardware);
+        $code = ($this->ReadAttributeBoolean('GuidedV2Only') ? $this->nativeApplication() : $this->application())->beginEnrollment($Label, $Hardware);
         $this->UpdateFormField('EnrollmentCredential', 'value', $code); $this->debug('enrollment-authorized'); return $code;
     }
     /** Independent initial provisioning ONLY; never a fallback for existing administrator rights. */
@@ -336,8 +345,14 @@ class SecretsBackend extends IPSModule
                 || $request['origin'] !== $this->configuration()['AdminOrigin']) throw new RuntimeException('Invalid frontend envelope.');
             $action = $request['action'];
             if ($this->ReadAttributeBoolean('GuidedV2Only')) {
-                if ($action !== 'status' || $request['data'] !== []) throw new RuntimeException('Symcon-native backend not implemented yet; vault operations disabled.');
-                $result = ['data' => ['ready' => false, 'guidedV2Only' => true, 'nativeBackendImplemented' => false, 'message' => 'Symcon-native backend not implemented yet; no vault activated.']];
+                if ($this->nativeInitialized()) {
+                    if ($action === 'status') $this->Recover();
+                    $result = $this->nativeApplication()->handle($action, $request['data'], $request);
+                    if ($action === 'status') $result['data'] += ['nativeBackendImplemented' => true, 'initialized' => true];
+                } else {
+                    if ($action !== 'status' || $request['data'] !== []) throw new RuntimeException('Initialize the native vault in the HTML setup wizard first.');
+                    $result = ['data' => ['ready' => false, 'guidedV2Only' => true, 'nativeBackendImplemented' => true, 'message' => 'Native vault not initialized; complete the HTML setup wizard.']];
+                }
             }
             elseif (in_array($action, ['setupPreview', 'setupCreate'], true)) $result = $this->setup($action, $request['data']);
             elseif ($action === 'status' && (!is_file($this->paths()['vault'] . '/vault.sqlite') || !$this->ReadPropertyBoolean('Enabled') || $this->GetBuffer('Runtime') === '')) {
@@ -349,7 +364,8 @@ class SecretsBackend extends IPSModule
             if (!$this->ReadAttributeBoolean('GuidedV2Only')) { try {
                 if ($this->store(true)->recoveryRequired()) { $this->SetStatus(200); $this->scheduleRecovery(); }
             } catch (Throwable $ignored) { if ($this->ReadPropertyBoolean('Enabled')) $this->scheduleRecovery(); } }
-            else $this->nativeUnavailable();
+            elseif (!$this->nativeInitialized()) $this->nativeUnavailable();
+            else { try { $this->nativeStore()->read(); } catch (Throwable $ignored) { $this->SetStatus(200); $this->SetTimerInterval('NativeJobs', 0); } }
             $this->SetValue('Status', 'Request refused: ' . $exception->getMessage());
             // No exception text, secret input or filesystem details are sent to unauthenticated clients.
             return SecretsBackendCodec::json(['status' => 403, 'data' => ['error' => 'Request refused. Check login, revision, approval and backend status.'], 'cookie' => '']);
@@ -391,11 +407,14 @@ class SecretsBackend extends IPSModule
     {
         $form = json_decode((string)file_get_contents(__DIR__ . '/form.json'), true, 32, JSON_THROW_ON_ERROR);
         $native = $this->ReadAttributeBoolean('GuidedV2Only');
-        $sealed = $this->ReadAttributeBoolean('ProvisioningSealed');
+        $initialized = $native && $this->nativeInitialized();
+        $sealed = $this->ReadAttributeBoolean('ProvisioningSealed') || $initialized;
         if (!$native) { try { $sealed = $sealed || $this->bootstrap() !== null; } catch (Throwable $ignored) { $sealed = true; } }
-        $fill = function (array &$items) use (&$fill, $sealed, $native): void { foreach ($items as &$element) {
+        $fill = function (array &$items) use (&$fill, $sealed, $native, $initialized): void { foreach ($items as &$element) {
             if ($sealed && in_array($element['name'] ?? '', SecretsBackendSecurityConfiguration::FOUNDATION, true)) $element['enabled'] = false;
             if ($native && (($element['name'] ?? '') === 'Enabled' || preg_match('/^SECB_(?:BeginStorageSetup|SecurityConfigurationDigest|SealInitialSecurityConfiguration|Recover|BeginAdminEnrollment)\(/', $element['onClick'] ?? ''))) $element['enabled'] = false;
+            if ($native && ($element['name'] ?? '') === 'Enabled') { $element['enabled'] = $initialized; $element['caption'] = 'Enable native vault'; }
+            if ($native && ($element['onClick'] ?? '') === 'SECB_Recover($id);') { $element['enabled'] = $initialized; $element['caption'] = 'Check native encrypted storage / recover'; }
             if (($element['name'] ?? '') === 'BackendWizardURL') {
                 $id = $this->ReadPropertyInteger('FrontendInstanceID');
                 if ($id > 0 && IPS_InstanceExists($id) && strtoupper(IPS_GetInstance($id)['ModuleInfo']['ModuleID'] ?? '') === self::FRONTEND) { try { $element['value'] = SecretsFrontendConfiguration::origin(IPS_GetProperty($id, 'AdminOrigin')) . '/hook/secrets_frontend_' . $id; } catch (Throwable $ignored) {} }

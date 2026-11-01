@@ -2,7 +2,7 @@
   "elements": [
     {
       "type": "Label",
-      "caption": "Configure this new backend from SecretsFrontend → Start HTML setup. The wizard saves instance references and storage settings only. The Symcon-native backend is not implemented yet; no vault is activated. Native setup requires no added database or anchor service."
+      "caption": "Configure this new backend from the SecretsFrontend HTML wizard. It detects instances, suggests private storage and creates the native encrypted vault when initialization is selected. Standalone is the default; peers are optional. No added database or anchor service is required. Development acceptance is pending."
     },
     {
       "type": "ValidationTextBox",
@@ -250,7 +250,7 @@
     {
       "code": 201,
       "icon": "inactive",
-      "caption": "Symcon-native backend not implemented yet; vault operations disabled"
+      "caption": "Native vault awaiting initialization or recovery; see Backend status"
     }
   ]
 }

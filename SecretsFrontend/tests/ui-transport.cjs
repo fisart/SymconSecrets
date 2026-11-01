@@ -5,7 +5,7 @@ const {JSDOM,VirtualConsole}=require('jsdom');
 const origin='https://test.hermitage.ap-fischer.de:46910';
 const hook='/hook/secrets_frontend_50365';
 const canonical=origin+hook;
-const html=fs.readFileSync(__dirname+'/../page.html','utf8').replaceAll('%%NONCE%%','test').replace('%%BOOT%%',JSON.stringify({origin,path:hook,theme:'system'})).replace('%%NAVIGATION%%','');
+const html=require('./page-source.cjs')().replaceAll('%%NONCE%%','test').replace('%%BOOT%%',JSON.stringify({origin,path:hook,theme:'system'})).replace('%%NAVIGATION%%','');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 async function fixture(url,secure){
  const calls=[],errors=[],console=new VirtualConsole();console.on('jsdomError',e=>errors.push(e));

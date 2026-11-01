@@ -18,7 +18,7 @@ $nativeStatus->attributes['GuidedV2Only'] = true;
 $nativeStatus->properties['Enabled'] = true; // Old console setting must not activate V1.
 $nativeStatus->ApplyChanges();
 secExpect($nativeStatus->status === 201 && $nativeStatus->timers['Recovery'] === 0, 'Native apply reported active/error or scheduled legacy recovery.');
-secExpect(str_contains($nativeStatus->values['Status'], 'not implemented') && !str_contains($nativeStatus->values['Status'], 'SQLite'), 'Native status retained the misleading database diagnosis.');
+secExpect(str_contains($nativeStatus->values['Status'], 'not initialized') && !str_contains($nativeStatus->values['Status'], 'SQLite'), 'Native status retained the misleading database diagnosis.');
 secExpect(!$nativeStatus->Recover() && $nativeStatus->status === 201, 'Native recovery activated an unfinished vault.');
 $nativeStatus->MessageSink(time(), 0, 10103, []);
 secExpect($nativeStatus->timers['Recovery'] === 0, 'Runlevel notification scheduled legacy recovery in native mode.');
@@ -32,7 +32,7 @@ $nativeStatus->properties['AdminOrigin'] = 'https://wizard.example.test';
 foreach (['status' => 200, 'authOptions' => 403] as $action => $expectedStatus) {
     $reply = json_decode($nativeStatus->HandleFrontendRequest(3981, json_encode(['action' => $action, 'data' => [], 'origin' => 'https://wizard.example.test', 'cookie' => '', 'csrf' => '', 'remote' => 'test'])), true);
     secExpect($reply['status'] === $expectedStatus, 'Native status/refusal semantics changed.');
-    if ($action === 'status') secExpect($reply['data']['ready'] === false && $reply['data']['nativeBackendImplemented'] === false, 'Backend status overstated native readiness.');
+    if ($action === 'status') secExpect($reply['data']['ready'] === false && $reply['data']['nativeBackendImplemented'] === true, 'Backend status overstated native readiness.');
 }
 secExpect($nativeStatus->legacyStoreCalls === 0 && $nativeStatus->timers['Recovery'] === 0 && $nativeStatus->status === 201, 'Native status/refusal entered legacy storage or scheduled recovery.');
 

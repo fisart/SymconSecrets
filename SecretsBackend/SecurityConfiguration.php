@@ -40,8 +40,32 @@ final class SecretsBackendSecurityConfiguration
     }
     public static function verify(array $profile, array $frontend): void
     {
+        if (($profile['version'] ?? '') === 'native-1') {
+            if (!hash_equals(self::digest($profile['frontendSecurity']), self::digest($frontend))
+                || !hash_equals(self::digest($profile['files']), self::digest(self::nativeRoots($profile['settings'])))) throw new RuntimeException('Approved native frontend or hardware trust material changed.');
+            return;
+        }
         if (($profile['version'] ?? '') !== '1' || !hash_equals(self::digest($profile['frontendSecurity']), self::digest($frontend))
             || !hash_equals(self::digest($profile['files']), self::digest(self::fingerprints($profile['settings'])))) throw new RuntimeException('Protected security configuration drifted; restore approved files or use explicit independent recovery.');
+    }
+    public static function nativeProfile(array $settings, array $frontend): array
+    {
+        $protected = self::settings($settings);
+        return ['version' => 'native-1', 'settings' => $protected, 'frontendSecurity' => $frontend, 'files' => self::nativeRoots($protected)];
+    }
+    private static function nativeRoots(array $settings): array
+    {
+        $roots = $settings['HardwareRootsDirectory']; $files = [];
+        if ($roots !== '') {
+            if (is_link($roots) || !is_dir($roots)) throw new RuntimeException('Reviewed hardware trust directory is unavailable.');
+            $paths = glob($roots . '/*.pem') ?: [];
+            if (!$paths || count($paths) > 32) throw new RuntimeException('Choose one to 32 reviewed hardware root certificates.');
+            foreach ($paths as $path) {
+                if (is_link($path) || !is_file($path) || filesize($path) > 131072) throw new RuntimeException('Unsafe or oversized hardware trust certificate.');
+                $files[basename($path)] = hash_file('sha256', $path);
+            }
+        }
+        ksort($files, SORT_STRING); return ['HardwareRoots' => $files];
     }
     public static function sameFoundation(array $old, array $new): bool
     {

@@ -8,8 +8,8 @@ if (extension_loaded('pdo_sqlite') || class_exists('PDO', false)) {
 }
 $requirements = SecretsFrontendCommissioning::requirements();
 if ($requirements['scope'] !== 'settings-only' || $requirements['runtime'] !== 'symcon-native'
-    || $requirements['nativeBackendImplemented'] !== false) {
-    throw new RuntimeException('Setup diagnostics must not claim a working native backend.');
+    || $requirements['nativeBackendImplemented'] !== true) {
+    throw new RuntimeException('Setup diagnostics must report the available native implementation separately from vault initialization.');
 }
 foreach (['extensions', 'sqlite', 'legacyWalSupported', 'quorumConnected'] as $legacyField) {
     if (array_key_exists($legacyField, $requirements)) throw new RuntimeException('Legacy prerequisite leaked into native setup checks.');
@@ -20,4 +20,4 @@ foreach (['JSON', 'SHA-256', 'Secure randomness'] as $core) {
 if ($requirements['capabilities']['Symcon semaphores'] !== (function_exists('IPS_SemaphoreEnter') && function_exists('IPS_SemaphoreLeave'))) {
     throw new RuntimeException('Unavailable Symcon APIs must not be reported as present.');
 }
-echo "PASS native setup diagnostics execute without PDO/SQLite or loaded extensions; actual setup capabilities and unfinished backend remain explicit\n";
+echo "PASS native setup diagnostics execute without PDO/SQLite or loaded extensions; actual setup capabilities remain separate from vault initialization\n";

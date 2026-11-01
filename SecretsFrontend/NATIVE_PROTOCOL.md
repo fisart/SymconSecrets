@@ -1,8 +1,8 @@
-# Symcon-native vault protocol — review draft 1
+# Symcon-native vault protocol — native implementation profile
 
-Date: 31 October 2026 (Europe/Rome).
+Date: 1 November 2026 (Europe/Rome).
 
-**Status: normative proposal for independent review; NOT IMPLEMENTED or deployment-qualified.** “Must” below specifies the replacement, not behavior already present in the published modules. This document addresses audit design gaps B-01/B-02/B-03. It does not close them independently.
+**Status: implemented development profile; independent audit and real deployment qualification pending.** See RELEASE_STATUS.md for executed native checks and explicit limits. This revises the earlier proposal; historical component audits do not independently close B-01/B-02/B-03 for the replacement.
 
 ## 1. Scope and changed guarantees
 
@@ -10,7 +10,7 @@ The replacement supports one fully standalone logical vault and optional sets of
 
 Runtime dependencies are Symcon APIs and functions available in its supplied PHP: JSON, cryptographic randomness, hashing/OpenSSL, supplied sodium for authenticated peer key operations, filesystem operations, semaphores, timers and supplied HTTPS client functionality. No PDO/SQLite, Python/Go process, etcd, shell command, installed PHP extension, OS package or external database is a runtime prerequisite. Development test tools are not runtime dependencies. Exact available functions, algorithms and platform permission behavior must be checked inside the actual Symcon process, without installing a replacement runtime.
 
-The external Go/Python/SQLite authority architecture is retired as the replacement's architecture. Its retained components and correction tests are historical/reference work, not an allowed native-mode fallback. The published guided mode currently refuses V1 fallback, but native activation and complete retirement of the prototype routes are still implementation work. Native imports/activation must refuse external-runtime configurations rather than silently choosing them.
+The external Go/Python/SQLite authority architecture is retired as the replacement's architecture. Its retained components and correction tests are historical/reference work, not an allowed native-mode fallback. Guided native mode refuses V1 fallback and initializes the native store explicitly. Earlier prototype code remains accessible only to separately provisioned historical instances; no native route selects it. Native imports/activation must refuse external-runtime configurations rather than silently choosing them.
 
 The existing SecretsManager, its SEC APIs, vault variables, key files, portal settings and integrations remain unchanged. A new vault never automatically adopts its data or authority. Migration is separately reviewed and explicitly authorized.
 
@@ -37,7 +37,7 @@ Keys are immutable files named by vault UUID and key ID. Initialization uses exc
 
 Use a bounded private encrypted snapshot journal, not independent updates to several Symcon variables. The implementation must provide a supplied-PHP filesystem adapter with injected-failure tests and real platform qualification. No shell fsync helper is permitted.
 
-Publication sequence, under a per-vault Symcon semaphore and an appropriate native file lock preventing a second local process from sharing that store:
+Publication sequence, under the native exclusive file lock, with Symcon semaphores additionally serializing initialization/lifecycle/job entry points:
 
 1. Read the complete current committed snapshot. Revalidate the actual runtime, expected commit digest, current actor/rights, exact reviewed change, key generation and operation UUID/digest. A UUID with a different digest is rejected. An already committed exact operation returns its stored metadata outcome after current disclosure authorization; it does not execute again.
 2. Construct the successor snapshot in memory. Include values, permission changes, audit, original operation outcome and immutable outbox entries in that same snapshot. Increment the local commit counter once. A metadata-only update need not increment a shared-tree revision.
@@ -58,7 +58,7 @@ Recovery selection is deterministic:
 | Two authenticated successors claim the same predecessor/counter | Quarantine and require reconciliation; do not choose by timestamp |
 | Entire consistent older state/key/binding set restored | May be undetectable standalone; B-03 applies |
 
-Retain the current and immediately preceding complete generations plus all live pending references. Cleanup must never remove a file/key needed by either selected generation or a pending effect/backup. The initial implementation cap is 16 MiB per complete snapshot, 10,000 retained operation/audit identifiers and 1,000 undelivered jobs. At capacity, refuse the affected new operation before side effects; an explicitly approved authenticated compaction/checkpoint may retire history. Never evict retry state and then accept an old sequence as a new mutation.
+Retain the current and immediately preceding complete generations plus all live pending references. Cleanup must never remove a file/key needed by either selected generation or a pending effect/backup. The implementation caps a complete plaintext snapshot at 4 MiB or a lower automatically derived memory budget. Ordinary writes reserve 25% capacity for maintenance. There are 3500 ordinary retained mutation outcomes, 4112 including reserved maintenance outcomes, 128 undelivered jobs and 32 peers. Explicit verified-backup compaction retains the latest 512 outcomes/audit entries. At capacity, refuse the affected new operation before side effects; an explicitly approved authenticated compaction/checkpoint may retire history. Never evict retry state and then accept an old sequence as a new mutation.
 
 **Durability boundary:** file/rename/readback success alone is not proof of power-loss durability. A qualified adapter must support the necessary supplied-PHP file and directory synchronization, filesystem/permission assumptions and actual interruption tests. Unsupported/unqualified adapters cannot advertise strict durable success or production readiness. Any weaker development acknowledgement must be explicitly labelled unqualified. Native mode does not add a database to conceal this gap.
 
@@ -70,7 +70,7 @@ Each shared tree has a stable tree UUID, one writer vault UUID, ownership epoch,
 
 Pairing is bilateral: PROPOSED → APPROVED_BOTH → ACTIVE → REVOKED. Record a random pair UUID, both stable vault UUIDs, signing/wrapping key IDs and fingerprints, endpoint/hook routing bindings, pairing epoch, tree IDs, exact permitted selectors/actions and whether later authenticated cached reads are allowed. Both administrators approve the same descriptor digest. Pairing grants no administrator enrollment, blanket secret access or local-only key access. Endpoint/origin alone is never an instance identity.
 
-Peer messages use a separate native protocol/domain, never the old quorum wire format. A closed versioned signed envelope binds: message purpose, pair UUID/epoch, sender/recipient vault UUIDs and key IDs, intended destination backend/hook, tree UUID/ownership epoch, immutable operation UUID, delivery sequence, owner revision, predecessor and content digests, payload length/digest, and a receiver challenge for sensitive delivery. IDs/counters/digests have strict formats; metadata is bounded at 64 KiB. Larger encrypted payloads use a bounded staged upload with a final whole-payload digest and no publication until complete.
+Peer messages use a separate native protocol/domain, never the old quorum wire format. A closed versioned signed envelope binds: message purpose, pair UUID/epoch, sender/recipient vault UUIDs and key IDs, intended destination backend/hook, tree UUID/ownership epoch, immutable operation UUID, delivery sequence, owner revision, predecessor and content digests, payload length/digest, and a receiver challenge for sensitive delivery. IDs/counters/digests have strict formats; Browser management JSON requests remain bounded at 64 KiB; backup uploads use session-bound staged chunks and a final whole-payload digest. Native peer envelopes carry a complete sealed typed tree and are bounded at twice the receiver’s native capacity plus 64 KiB. Combined shared trees may exceed one browser-edit request, within the complete-state budget. Peer responses remain bounded at 64 KiB.
 
 Encrypt selected data to the explicitly approved recipient with the supplied reviewed primitive and authenticate the exact envelope with the sender's pinned key. Verify all bindings, sizes and current permissions before decrypting or dispatching. Unknown fields, algorithms, identities, hooks or epochs are rejected. No generic PHP function, file path or URL dispatch is accepted. Multiple vaults sharing an HTTPS origin must still fail sender/recipient swaps and wrong-backend delivery.
 
@@ -98,7 +98,7 @@ Backups are authenticated encrypted snapshots with explicit key/recovery envelop
 
 Key rotation prepares/verifies new key material before the successor commit references it. Retained snapshots, approved recovery envelopes and uncertain effects keep their required key generations pinned. Interrupted rotation never replaces a missing old key with random bytes. Key removal is a separate approved cleanup after reference checks.
 
-OAuth/external effects retain uncertainty handling: commit an exact PREPARED intent and then SENT_UNKNOWN before dispatch, serialize that slot, and never automatically repeat an uncertain non-idempotent request. Capture a provider response into an authenticated encrypted local completion record before acknowledging it. A completion applies only against the same current provider policy, token predecessor and effect ID; otherwise quarantine it. A new runtime may recover a captured completion but cannot turn UNKNOWN into permission to resend. These native paths still need implementation and tests.
+OAuth/external effects retain uncertainty handling: commit an exact PREPARED intent and then SENT_UNKNOWN before dispatch, serialize that slot, and never automatically repeat an uncertain non-idempotent request. Capture a provider response into an authenticated encrypted local completion record before acknowledging it. A completion applies only against the same current provider policy, token predecessor and effect ID; otherwise quarantine it. A new runtime may recover a captured completion but cannot turn UNKNOWN into permission to resend. These native paths are implemented and exercised with injected provider transport; actual provider idempotency and HTTPS behavior remain deployment tests.
 
 ## 8. Route/dependency and deployment inventory
 
@@ -118,6 +118,6 @@ The public HTTPS listener and protected relay hop remain deployment requirements
 
 Test 1, 2, 3 and at least 5 logical vaults, both in one Symcon process and across hosts. Include injected interruption before/after every key/snapshot/commit/mirror boundary; real restart/storage interruption; lost acknowledgement; duplicate and conflicting IDs; forged/recipient-swapped messages; reordered/gapped/replayed deliveries; revoked/offline subscribers; same-host instance confusion; owner transfer and divergent backup restore; missing/old/new keys; authorization revocation during a paused commit; hardware policy and every privileged route; bounded cleanup and uncertain OAuth completion.
 
-Record PASS/FAIL/NOT_RUN/N/A against the exact native implementation and runtime. Prior Go/SQLite test results do not qualify the replacement. The present audit corrections do not constitute native implementation, real deployment acceptance or production/migration approval.
+Record PASS/FAIL/NOT_RUN/N/A against the exact native implementation and runtime. Prior Go/SQLite test results do not qualify the replacement. The native tests now provide implementation evidence listed in RELEASE_STATUS.md. They do not establish real deployment acceptance or production/migration approval.
 
 Native persistence references: [Symcon backup/write frequency](https://www.symcon.de/en/service/documentation/backup-and-restore/), [service/configuration recovery](https://www.symcon.de/en/service/documentation/components/service/), [semaphores](https://www.symcon.de/en/service/documentation/command-reference/process-control/ips-semaphoreenter/). These document API behavior; they are not executed power-loss evidence.

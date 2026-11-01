@@ -53,7 +53,7 @@ final class SecretsFrontendHttp
                 || !in_array($server['HTTP_SEC_FETCH_SITE'] ?? 'same-origin', ['same-origin', 'none'], true)) return $reply(403, 'Same-origin JSON requests are required.');
             try {
                 $body = SecretsFrontendConfiguration::decode($input);
-                $allowed = ['guidedDiscover', 'guidedPreview', 'guidedApply', 'guidedCancel', 'status', 'setupPreview', 'setupCreate', 'authOptions', 'authVerify', 'enrollmentOptions', 'enrollmentVerify', 'session', 'list', 'configurationPreview', 'prepare', 'approve', 'logout'];
+                $allowed = ['guidedDiscover', 'guidedPreview', 'guidedApply', 'guidedCancel', 'status', 'setupPreview', 'setupCreate', 'authOptions', 'authVerify', 'enrollmentOptions', 'enrollmentVerify', 'session', 'list', 'configurationPreview', 'nativeUploadBegin', 'nativeUploadChunk', 'nativeUploadFinish', 'nativeOperationStatus', 'prepare', 'approve', 'logout'];
                 if (count($body) !== 2 || !is_string($body['action'] ?? null) || !in_array($body['action'], $allowed, true) || !is_array($body['data'] ?? null) || $gateway === null) return $reply(400, 'Unsupported API request.');
                 $result = $gateway(['action' => $body['action'], 'data' => $body['data'], 'origin' => $origin,
                     'remote' => (string)($server['REMOTE_ADDR'] ?? ''), 'cookie' => (string)($server['HTTP_COOKIE'] ?? ''), 'csrf' => (string)($server['HTTP_X_CSRF_TOKEN'] ?? '')]);
@@ -73,7 +73,7 @@ final class SecretsFrontendHttp
         foreach (['Portal' => $portal, 'Dokumentation' => $documentation] as $label => $target) {
             if (preg_match('~^/hook/[A-Za-z0-9_-]+$~D', $target)) $links .= '<a href="' . $escape($target) . '">' . $label . '</a>';
         }
-        $html = str_replace(['%%NONCE%%', '%%BOOT%%', '%%NAVIGATION%%'], [$escape($nonce), $boot, $links], (string)file_get_contents(__DIR__ . '/page.html'));
+        $html = str_replace(['%%NONCE%%', '%%BOOT%%', '%%NAVIGATION%%', '%%NATIVE_PANELS%%', '/* %%NATIVE_ADMIN%% */'], [$escape($nonce), $boot, $links, (string)file_get_contents(__DIR__ . '/native-panels.html'), (string)file_get_contents(__DIR__ . '/native-admin.js')], (string)file_get_contents(__DIR__ . '/page.html'));
         return ['status' => 200, 'headers' => $headers, 'body' => $html];
     }
 }

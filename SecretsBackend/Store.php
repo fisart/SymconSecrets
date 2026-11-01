@@ -1,10 +1,11 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/Codec.php';
+require_once __DIR__ . '/BackendStorage.php';
 require_once __DIR__ . '/AnchorClient.php';
 
 /** Separate encrypted vault. SQLite prepares durably; the external anchor decides; SQLite publishes. */
-final class SecretsBackendStore
+final class SecretsBackendStore implements SecretsBackendStorage
 {
     private const KINDS = ['vault', 'identity', 'policy', 'pairing', 'stream', 'operations', 'outbox'];
     private PDO $db;

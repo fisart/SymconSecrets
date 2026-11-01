@@ -18,8 +18,13 @@ final class SecretsFrontendConfiguration
 
     public static function decode(string $json): array
     {
-        if (strlen($json) > 65536) throw new InvalidArgumentException('Configuration exceeds 64 KiB.');
-        $value = json_decode($json, true, 12, JSON_THROW_ON_ERROR);
+        return self::decodeBounded($json, 65536, 12);
+    }
+    /** Server-selected bounds for encrypted native peer envelopes; browser requests stay at 64 KiB. */
+    public static function decodeBounded(string $json, int $limit, int $depth = 32): array
+    {
+        if ($limit < 1 || $limit > 13 * 1024 * 1024 || strlen($json) > $limit) throw new InvalidArgumentException('JSON exceeds its selected size limit.');
+        $value = json_decode($json, true, $depth, JSON_THROW_ON_ERROR);
         $offset = 0;
         self::scan($json, $offset);
         if (!is_array($value) || substr(ltrim($json), 0, 1) !== '{') throw new InvalidArgumentException('Expected a JSON object.');

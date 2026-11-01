@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/../Application.php';
+require_once __DIR__ . '/../Store.php';
 
 function secExpect(bool $ok, string $message): void { if (!$ok) throw new RuntimeException($message); }
 function secRejectReason(callable $callback, string $reason): void { try { $callback(); } catch (Throwable $exception) { secExpect(str_contains($exception->getMessage(), $reason), 'Wrong rejection: ' . $exception->getMessage()); return; } throw new RuntimeException('Expected rejection: ' . $reason); }

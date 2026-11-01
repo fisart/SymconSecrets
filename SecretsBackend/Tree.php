@@ -8,7 +8,11 @@ final class SecretsBackendTree
 {
     public static function parse(string $json): array
     {
-        SecretsFrontendConfiguration::decode('{"value":' . $json . '}'); // Syntax/duplicate-key/depth/size check.
+        return self::parseBounded($json,65536);
+    }
+    public static function parseBounded(string $json,int $limit): array
+    {
+        SecretsFrontendConfiguration::decodeBounded('{"value":' . $json . '}', $limit,12); // Server-selected aggregate bound; individual web edits stay at 64 KiB.
         return self::node(json_decode($json, false, 12, JSON_THROW_ON_ERROR));
     }
     private static function node($value): array

@@ -1,123 +1,76 @@
-# Development status and release gates
+# Native implementation and release gates
 
-## Current direction and independent audit of 154d575
+Date: 1 November 2026 (Europe/Rome).
 
-The user requires a Symcon-native replacement with standalone operation and
-optional two/three/larger sets, without added runtime services or extensions.
-[NATIVE_PROTOCOL.md](NATIVE_PROTOCOL.md) specifies the proposed persistence,
-recovery and synchronization contract. It is **not implemented**. The external
-Go/Python/SQLite components described below are retained development history,
-not prerequisites or permitted fallbacks for the replacement.
+The Symcon-native backend is implemented and locally exercised. This replaces
+the earlier settings-only/native-not-implemented checkpoint. Standalone is the
+default; two, three, five and larger explicitly paired sets use the same optional
+protocol. No external runtime service, database or added PHP extension is required.
+No production/migration acceptance is implied. Existing SecretsManager and all
+33 original repository blobs remain unchanged.
 
-The independent audit of `154d575` reproduced storage-path aliasing and a third
-archive restart blocking two surviving valid copies. Source corrections and
-regressions are recorded in [AUDIT_CORRECTIONS_154d575.md](AUDIT_CORRECTIONS_154d575.md);
-independent correction review is pending. Authorized plaintext requests remain
-possible at the current adapter, so actual TLS/listener isolation is a separate
-unverified deployment gate. The native storage/synchronization design gaps and
-standalone rollback limitation remain explicit. The wizard still ends at
-connection pending and does not initialize a functioning native vault.
+## Implemented
 
-## Earlier development architecture and evidence
+- Automatic instance/capability/path/capacity discovery; reviewed HTML setup with
+  defaults, selected native initialization and first passkey registration.
+- Complete encrypted snapshot journal and separate keys; immutable authenticated
+  publication marker; injected interruption recovery; runtime/session fencing;
+  exact operation outcomes and protected disclosure.
+- Masked hierarchy, fresh operation-bound WebAuthn changes/reveal, ordinary and
+  reviewed hardware credentials, authority-bound additional-key enrollment.
+- Bilateral signed/encrypted pairing, ordered immutable outbox, exact receipts,
+  lost-response deduplication, catch-up, revocation, ownership freeze/accept and
+  explicit forks. Replayed old acceptances cannot reactivate revoked pairings.
+- Scoped integration tokens with default read-only access, revision/sequence/UUID
+  writes and revocation.
+- Complete encrypted portable backup, separate recovery key, authenticated chunks,
+  reviewed local-copy/replace-values recovery preserving current authority,
+  data-key rotation and verified backup compaction.
+- OAuth exact intents, encrypted response capture, predecessor/policy validation,
+  unknown-outcome quarantine and bounded declared-idempotent retries.
+- HTML administration for those operations, cleared one-use outputs, lost-result
+  lookup and re-login after credential changes.
 
-This branch creates the two new modules and their first integrated development implementation. It is **not production-approved**, does not migrate the old vault and does not assert that v1.3's 92 acceptance tests or the 11 hardware-option checks have passed.
+## Local evidence
 
-The first implementation audit found A01–A07 defects on commit `c0e995d8f355a36c19349e2b56ad223184accf4f`. Corrections and targeted regression tests are now implemented; independent re-review is pending. See the [remediation evidence](AUDIT_REMEDIATION.md). Passing these targeted tests does not close the remaining release gates.
+The development PHP is 8.3. Native checks run with no PDO/SQLite and a 32 MiB memory
+limit using actual temporary encrypted files and real cryptographic WebAuthn test
+assertions (not physical keys). Native test groups cover:
 
-## Implemented and locally exercised
+| Group | Evidence |
+| --- | --- |
+| native-store.php | 40 persistence/fencing/idempotence/corruption/path checks |
+| native-lifecycle.php | Wizard, first/extra WebAuthn credentials, scoped machines, key rotation, backup authentication/compaction/value recovery, stale admission and restart fencing |
+| native-peers.php | 84 checks over 1/2/3/5 vaults, bilateral approval, lost replies, transfer, replay/forgery/revocation and aggregate trees larger than 64 KiB |
+| native-effects.php | 18 exact-intent/capture/unknown/retry/restart/revocation checks |
+| HTML DOM tests | Complete rendered native assets, setup/defaults, exact-origin transport, late-response cleanup, approval, one-use output and additional-key re-login |
+| Original-code check | All 33 original blobs unchanged; existing password regressions pass |
 
-- Typed JSON hierarchy and configuration validation, including duplicate-key rejection.
-- New encrypted SQLite core, separate keys and strict initialization refusal for existing/nonempty storage.
-- Signed external-anchor client/service, durable decisions, stable acquire retries and local Prepare/advance/Publish recovery.
-- New administrator registration/login, fresh bound changes and selected-record reveal; no old Portal/password session reuse.
-- One-use volatile-credential storage wizard, two-path review, fixed frontend/backend binding and disabled-on-import settings.
-- Exact-head final grant claims; isolated configured-root hardware verification; staged/anchored security configuration; structured encrypted audit context; UI generation cancellation; reload transition locks and request-time recovery scheduling.
-- Debug child variables, Portal additional-page registration, a pinned HTTPS browser origin and server-side host/Origin checks. Native/NAT/relay compatibility follows the existing working modules; TLS terminates at the configured public listener. Browser secure-context checks and an exact HTTPS CSP connection target gate credential/API use; PHP transport flags and native WebServer caller metadata are not required. This deployment boundary needs real endpoint verification.
+The workflow additionally exercises PHP 8.2/8.4/8.5 on Linux and the Windows
+file-sync profile. Read the actual commit's Actions results before calling these
+CI jobs passed. Their presence in YAML is not executed evidence. Historical
+prototype regressions remain separate from native qualification.
 
-Local tests cover interrupted prepare/publish, lost acquire acknowledgements, stale backups, superseded workers, altered signatures/nonces, real cryptographic WebAuthn assertions, masked listings, selected-record disclosure and replay refusal. PHP/Python tests use the actual message signatures across languages. DOM tests cover credential clearing and wizard requests. These are narrower implementation tests, not a substitute for the full acceptance suite.
+## Required before production/migration
 
-## Explicitly outstanding before migration
+1. Independent security audit of the exact native implementation, including the
+   changed guarantees and all new privileged routes.
+2. Actual Symcon installation/reload/timers with the supplied PHP, multiple real
+   hosts, mobile/desktop browsers and physical passkeys/hardware attestations.
+3. Actual public HTTPS, alternate/plaintext listener and proxy/relay isolation.
+   A configured origin/browser check is not transport-security evidence.
+4. Real filesystem/private Windows ACL, Docker persistence across container
+   replacement, power interruption and recovery. Exception injection against
+   temporary files is not physical power-loss or OS-process-death testing.
+5. The separately planned one-time old-vault migration and integration parity.
+   No old secret was read, changed, migrated or activated by this implementation.
 
-1. **Real Symcon/runtime verification:** actual module lifecycle, proxy/header behavior, two physical hardware keys, mobile/desktop browsers and attestation trust maintenance. Chromium could not be installed in the authoring environment; DOM tests do not establish visual/browser compatibility.
-2. **WAL deployment:** local development SQLite is 3.45.1, so storage tests use an explicit test-only DELETE journal. The production module refuses older WAL runtimes. Power-loss, filesystem/disk durability and the actual supported SQLite build still need the v1.3 tests.
-3. **Sync:** global writes prepare immutable per-peer outbox entries inside the encrypted core, but pairing setup, the complete signed wire protocol, authenticated receipts and automatic sending are not exposed/released. No source/recipient pairing is created by default.
-4. **OAuth/external effects:** no provider refresh endpoint is exposed. Provider-specific intent/quarantine/recovery behavior remains to be implemented and tested.
-5. **Vault backup/migration:** no automatic old-vault import, portable secret export/restore or GC is exposed. An old database that disagrees with the independent anchor remains locked. Consistent production backup, retention/GC and the tested one-time migration remain release gates.
-6. **Anchor operations:** independent key renewal/revocation/recovery tooling, cross-deployment sync-grant query permissions, bounded production service operation and physical host crash tests remain incomplete. Provision/read/acquire/advance/authorize/status for one deployment are implemented; do not infer a fully audited production witness from that.
-7. **Central integrations:** Dokumentation and backup registration packages are provided without changing their existing module files. Activation and native backup adapters require an explicit scope exception and parity tests.
-8. **Security acceptance:** review exact frontend/backend/anchor commits and actual deployment settings against the stable v1.3 concept plus hardware note. Record PASS/FAIL/NOT_RUN/N/A and unresolved findings. Do not treat this file as a security certificate.
+A consistent rollback of all trusted standalone files remains undetectable without
+an independent current reference. Cached disconnected copies do not learn remote
+revocation immediately. There is no automatic writer promotion. Recovery imports
+reviewed secret values and retains current authority; it does not restore an old
+instance's credentials/peer identity automatically.
 
-The local commissioning/enrollment methods are explicitly independent recovery operations. They are not public browser routes that issue their own authority. Normal web management always needs the new backend's administrator checks. No request is delegated to the old password module's unrestricted APIs.
-# DC-01 peer/quorum implementation checkpoint
-
-The accepted DC-01 v1.2 protocol is now pinned in `SecretsBackend/quorum` with Go
-and PHP codecs, real-etcd transaction/fencing/election primitives, durable
-admission/recovery journals and committed archive re-attestation/activation.
-See `SecretsBackend/quorum/README.md` for implemented behavior, component tests
-and explicit unfinished work. This does not activate a quorum runtime in Symcon.
-The complete Q01-Q48 scenarios and production qualification remain unexecuted.
-The existing V1 development implementation and earlier evidence below remain
-separate. Earlier A01-A07 fixes still need independent replacement-commit review.
-
-
-## Independent correction closure — 31 October 2026
-
-The [independent correction review](https://chatgpt.com/library?file_id=libfile_4b429795c00c8191865fa1e16b9793dd&account_id=personal)
-reviewed `79c6a0fe5186f687c6b030d0fb46b2ef13c7c67c` and closes FR-01
-(archive admission ordering) and FR-02 (operation-aware historical outcomes) for
-the tested component behavior. The reviewer independently reran 156 passing Go
-test/subtest events, 19 injected-I/O events and 20 regression commands, plus the
-additional rejection checks, and confirmed exact-commit CI success. No additional
-confirmed defect emerged in the focused review. The earlier scoped IR-01/IR-02
-closures and response/runtime binding corrections remain in place.
-
-Development may continue. The next checkpoint is the original-user contract and
-core reservation/READY/commit/abort lifecycle described in the quorum README.
-The original-user lifecycle and complete V2 integration are still unfinished;
-synthetic codec tests do not close them. All Q01-Q48 remain NOT_RUN end to end.
-No production or migration approval, merge or deployment follows from this review.
-
-## Internal human core lifecycle implementation
-
-The next component checkpoint adds `SecretsBackend/quorum/core`: an independent
-signed original-user record, human secret-change reservation/READY/commit/abort,
-actual archive candidate verification/receipts, atomic original outcome/audit/
-retention pins/outbox and cancellation tombstones. Tests include paused revocation
-races, competing terminal transitions and actual process death. See its README
-for the exact contract, limits and evidence. This new behavior requires review.
-
-No V2 management route is enabled. Authorization facts are provisioned in tests;
-the real WebAuthn/hardware/diff producer, original-user wire binding, PHP packer,
-key envelopes, authenticated dispatch and full runtime remain gates. Frozen
-v1.2 wire bytes and the existing password module remain unchanged. All Q01-Q48
-remain NOT_RUN end to end; no production or migration approval is implied.
-
-## HTML initial configuration assistant
-
-Routine initial settings now run through one HTML wizard: console authorization,
-instance discovery and defaults, storage recommendations, runtime checks, exact
-review, reciprocal pairing/preferences, optional Portal registration and a settings
-export. All entries have explicit defaults and recommendations can be restored.
-The bootstrap grant is settings-only, initial-only, expiring, failed-attempt-
-bounded, plan-bound, consumed before mutation and invalidated on reload.
-
-The fresh guided mode is V2-only and blocks V1 fallback. It ends at connection
-pending, creates no vault/keys/administrators and keeps the backend disabled.
-Actual V2 activation and the remaining full-system acceptance remain pending.
-This new commissioning flow needs review separately from the previous core
-lifecycle checkpoint. Existing password-module code remains unchanged.
-
-## Current HTML and V2 integration checkpoint
-
-The HTML interface is restyled with responsive navigation/cards, clearer wizard
-progress, mobile controls and collapsible advanced settings. The wizard now
-validates and saves a non-authoritative peer deployment draft with explicit
-defaults and missing-placement checks. Native SECF.Config.v2 exports preserve
-the draft; imports remain disabled and V2-only. Existing v1 settings still load.
-PHP V2 object/bundle/key-envelope and original-intent components are added with
-shared PHP/Go fixtures and rejection tests. See V2_INTEGRATION_CHECKPOINT.md.
-
-The complete outstanding-feature request is not finished. No V2 runtime,
-administrator enrollment, service installation, synchronization, backup/migration
-or production activation follows from these new components. The configuration
-wizard still ends at connection pending. All Q01-Q48 remain NOT_RUN end to end.
+Earlier audits and closed fixes remain in AUDIT_REMEDIATION.md and
+AUDIT_CORRECTIONS_154d575.md. Their Go/SQLite component results do not approve
+this new persistence or synchronization implementation.

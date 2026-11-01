@@ -77,7 +77,11 @@
   "actions": [
     {
       "type": "Label",
-      "caption": "Start here: 1. Enter your Symcon HTTPS address. 2. Generate a one-use setup code. 3. Open the wizard and paste the code. This assistant saves settings only. The Symcon-native backend is not implemented yet; no vault is activated."
+      "caption": "Native setup: use the HTML wizard to review settings, initialize the encrypted vault and register the first passkey. Standalone is the default; peers are optional."
+    },
+    {
+      "type": "Label",
+      "caption": "Start here: enter your Symcon HTTPS address, generate a one-use setup code and open the HTML wizard. It can create a new native encrypted vault and guide first administrator enrollment."
     },
     {
       "type": "ValidationTextBox",
@@ -207,6 +211,35 @@
       "type": "Button",
       "caption": "Clear Debug",
       "onClick": "SECF_ClearDebug($id);"
+    },
+    {
+      "type": "ExpansionPanel",
+      "caption": "Administrator enrollment / independent recovery",
+      "items": [
+        {
+          "type": "ValidationTextBox",
+          "name": "AdministratorLabel",
+          "caption": "Administrator label",
+          "value": "Administrator"
+        },
+        {
+          "type": "CheckBox",
+          "name": "AdministratorHardware",
+          "caption": "Use the reviewed hardware trust profile (default off)"
+        },
+        {
+          "type": "Button",
+          "caption": "Generate one-use administrator enrollment code",
+          "link": false,
+          "onClick": "echo SECF_BeginAdministratorEnrollment($id, $AdministratorLabel, $AdministratorHardware);"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "AdministratorEnrollmentCode",
+          "caption": "One-use enrollment code (shown only when generated)",
+          "value": ""
+        }
+      ]
     }
   ],
   "status": [
