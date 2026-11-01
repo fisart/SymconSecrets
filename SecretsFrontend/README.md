@@ -54,7 +54,8 @@ persisted or privately backed up.
 - **Secrets:** browse folders on the left and contents on the right. Choose
   **Show folder values** to show direct values beside their names, or select a
   secret and use the eye icon. Click a displayed text value to edit or delete
-  it. Changes and deletion require review and passkey approval. Hide values
+  it. The eye beside the entry field shows or masks the value being edited.
+  Changes and deletion require review and passkey approval. Hide values
   manually or wait 30 seconds. Hardware-protected reveal still requires a key.
   Lists and other typed values remain in the advanced editor. Local values are
   not synchronized and received shared trees are read-only. Each sign-in can
