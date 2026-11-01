@@ -133,6 +133,7 @@ trait SecretsBackendNativeBackend
     public function GetBootstrapRecoveryInfo(int $FrontendInstanceID): string
     {
         if($FrontendInstanceID!==$this->ReadPropertyInteger('FrontendInstanceID'))throw new RuntimeException('Wrong recovery frontend.');
+        if(!$this->nativeInitialized())throw new RuntimeException('Administrator recovery requires an initialized native vault. Use Open setup / administration to complete setup; an accepted interrupted setup must resume its original operation.');
         $store=$this->nativeStore();$current=$store->read();
         if(in_array(true,$current['state']['policy']['hardware'],true))throw new RuntimeException('Hardware policy is enforced. Independent hardware recovery must be separately qualified; ordinary passkey recovery is blocked.');
         return SecretsBackendCodec::json(['backend'=>$this->InstanceID,'vault'=>$store->identity()['deploymentId'],'owner'=>$current['state']['identity']['ownerId'],'head'=>$current['head'],

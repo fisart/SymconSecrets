@@ -205,7 +205,10 @@ class SecretsFrontend extends IPSModule
         $form=json_decode((string)file_get_contents(__DIR__.'/form.json'),true,32,JSON_THROW_ON_ERROR);
         $origin=$this->ReadPropertyString('AdminOrigin');$url=$origin!==''?$origin.$this->path():'';
         $requirements=$this->bootstrapStorageRequirements();
+        $recoveryAvailable=($this->bootstrapNative()['initialized']??false)===true;
         foreach($form['actions']as&$element){
+            if(($element['name']??'')==='OpenRecoveryBootstrap')$element['enabled']=$recoveryAvailable;
+            if(($element['name']??'')==='RecoveryAvailability')$element['visible']=!$recoveryAvailable;
             if(($element['name']??'')==='BootstrapJournalStorage'){$element['visible']=$requirements['confirmationRequired']&&!$this->ReadAttributeBoolean('BootstrapJournalConfirmed');$element['value']=$this->ReadAttributeBoolean('BootstrapJournalConfirmed');$element['caption']='I verified private access and persistence across container replacement for setup records: '.$requirements['data'].' and keys: '.$requirements['keys'];}
             if(($element['name']??'')==='SetupAddress'){$element['value']=$origin;$element['visible']=$origin==='';}
             if(($element['name']??'')==='WizardURL')$element['value']=$url;

@@ -16,6 +16,9 @@ No production/migration acceptance is implied. Existing SecretsManager and all
   mandatory first-administrator genesis. Optional backend creation handles UNKNOWN
   object results without repeating creation. See BOOTSTRAP_IMPLEMENTATION.md.
 - Automatic instance/capability/path/capacity discovery and reviewed HTML defaults.
+- Console administrator recovery is disabled until a native vault exists, with
+  initial-setup guidance. Local recovery also rejects uninitialized storage before
+  opening it; an existing unreadable vault cannot fall back to initialization.
 - Complete encrypted snapshot journal and separate keys; immutable authenticated
   publication marker; injected interruption recovery; runtime/session fencing;
   exact operation outcomes and protected disclosure.
@@ -42,7 +45,7 @@ assertions (not physical keys). Native test groups cover:
 
 | Group | Evidence |
 | --- | --- |
-| bootstrap-security.php | 77 console/candidate/PoP/resume/cancel/restart/reuse/recovery/object/I/O checks |
+| bootstrap-security.php | 83 console/candidate/PoP/resume/cancel/restart/reuse/recovery/object/I/O checks |
 | native-store.php | 52 persistence/fencing/idempotence/corruption/path checks |
 | native-lifecycle.php | Wizard, first/extra WebAuthn credentials, scoped machines, key rotation, backup authentication/compaction/value recovery, stale admission and restart fencing |
 | native-peers.php | 84 checks over 1/2/3/5 vaults, bilateral approval, lost replies, transfer, replay/forgery/revocation and aggregate trees larger than 64 KiB |

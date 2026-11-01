@@ -113,9 +113,15 @@
     },
     {
       "type": "Button",
+      "name": "OpenRecoveryBootstrap",
       "caption": "Recover administrator access",
       "link": true,
       "onClick": "echo SECF_OpenRecoveryBootstrap($id);"
+    },
+    {
+      "type": "Label",
+      "name": "RecoveryAvailability",
+      "caption": "Administrator recovery is available after vault initialization. Use Open setup / administration to complete initial setup."
     },
     {
       "type": "Button",

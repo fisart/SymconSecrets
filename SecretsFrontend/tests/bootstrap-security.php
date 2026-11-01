@@ -19,6 +19,14 @@ $gateway=static fn($front,$request,$data,$action='bootstrapProof')=>(new Reflect
 $no(fn()=>$front->BeginGuidedSetup($request['origin'],''),'Old setup-code method remained active.');
 $ok($gateway($front,$request,[],'bootstrapPrepare')['status']===403,'A public request opened a console intent.');
 $url=$front->OpenBootstrap($request['origin'],'',false,true);$ok($url===$request['origin'].'/hook/secrets_frontend_'.$front->InstanceID&&!str_contains($url,'?')&&!str_contains($url,'#'),'Setup link contains authority.');
+// A configured frontend/backend pair can still have no native storage (live console regression).
+$action=static function(SecretsFrontend $front,string $name):array{foreach(json_decode($front->GetConfigurationForm(),true)['actions']as$a)if(($a['name']??'')===$name)return $a;throw new RuntimeException('Missing form action '.$name);};
+$unboundProperties=$back->properties;$back->properties['FrontendInstanceID']=$front->InstanceID;$back->properties['AdminOrigin']=$request['origin'];
+$ok($action($front,'OpenRecoveryBootstrap')['enabled']===false&&$action($front,'RecoveryAvailability')['visible']===true,'Empty backend exposed administrator recovery in the console.');
+$beforeRecovery=[$back->attributes,$back->properties,$front->buffers];
+try{$front->OpenRecoveryBootstrap();throw new LogicException('Empty backend entered recovery.');}catch(RuntimeException $e){$ok(str_contains($e->getMessage(),'Use Open setup / administration'),'Empty backend reached nativeStore instead of explaining initial setup.');}
+$ok([$back->attributes,$back->properties,$front->buffers]===$beforeRecovery&&!is_dir($choice['vaultDirectory']),'Rejected recovery changed or initialized the empty backend.');
+$back->properties=$unboundProperties;
 $key=secKey();$ctx=secBootstrapCandidate($front,$request,$key);
 $view=json_decode($front->GetBootstrapConsoleView(),true)[0];$ctx['operation']=secBootstrapProof($front,$request,$ctx,'candidateStatus')['data']['operation'];
 $no(fn()=>secBootstrapProof($front,$request,$ctx,'planPreview',$choice),'Unapproved candidate discovered configuration.');
@@ -70,6 +78,10 @@ $no(fn()=>$back->InitializeNativeStorage($front->InstanceID,'old',true,true,'Old
 $no(fn()=>$back->BeginAdminEnrollment('Old code',false),'Local native enrollment still issued a code.');
 
 // Recovery adds exactly the console-approved key without changing secret values.
+$ok($action($front,'OpenRecoveryBootstrap')['enabled']===true&&$action($front,'RecoveryAvailability')['visible']===false,'Initialized backend did not enable administrator recovery.');
+$binding=$back->attributes['StorageBinding'];$back->attributes['StorageBinding']='';$lockedBefore=[$back->attributes,$front->buffers];
+$no(fn()=>$front->OpenRecoveryBootstrap(),'Broken existing vault was downgraded to initial setup.');
+$ok([$back->attributes,$front->buffers]===$lockedBefore,'Failed recovery reset an existing vault or its bootstrap intent.');$back->attributes['StorageBinding']=$binding;
 $before=$store->read()['state']['vault'];$replacement=secKey();$front->OpenRecoveryBootstrap();$ctx=secBootstrapCandidate($front,$request,$replacement);$views=json_decode($front->GetBootstrapConsoleView(),true);$view=end($views);$front->ApproveBootstrapCandidate($view['candidate'],$view['digest'],$view['proof']);secBootstrapProof($front,$request,$ctx,'candidateStatus');
 $recoveryChoice=array_replace($choice,['vaultDirectory'=>str_replace('/secrets-native-data/','//secrets-native-data///',$choice['vaultDirectory'])]);
 $plan=secBootstrapProof($front,$request,$ctx,'planPreview',$recoveryChoice)['data'];$o=json_decode(json_encode(secBootstrapProof($front,$request,$ctx,'applyOptions',['planDigest'=>$plan['planDigest']])['data']),true);
