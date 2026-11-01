@@ -185,7 +185,7 @@ body.dark .brandmark {background:#426b43}
 <label id="bsACLRow" class="checkline" hidden><input id="bsACL" type="checkbox"> I verified private Windows ACLs for these folders.</label><label id="bsPersistenceRow" class="checkline" hidden><input id="bsPersistence" type="checkbox"> I verified these folders persist across container replacement.</label>
 <button id="bsReview" class="primary">Review setup plan</button></div>
 <div class="card" id="bsPlan" hidden><h3>Step 5 of 5: Create vault</h3><p>Check the summary, then click Set up and sign in. Your device will ask you to confirm with your passkey.</p><dl class="setupReview" id="bsSummary"></dl><p>The approved administrator will be included in the first usable encrypted state. Standalone is the default.</p><button id="bsApply" class="primary">Set up and sign in</button><button id="bsEdit">Change settings</button></div>
-<div class="card" id="bsDone" hidden><h3 id="bsDoneTitle">Setup status</h3><p id="bsResult" aria-live="polite"></p><button id="bsLogin">Sign in with passkey</button></div>
+<div class="card" id="bsDone" hidden><h3 id="bsDoneTitle">Setup status</h3><p id="bsResult" aria-live="polite"></p><button id="bsSecrets" class="primary" type="button" hidden>Continue to Secrets</button><button id="bsLogin" hidden>Sign in with passkey</button></div>
 <button id="bsCancel" class="danger" hidden>Cancel unaccepted setup</button>
 </section>
 <section id="access" class="panel" hidden><h2>Access & hardware keys</h2><p class="muted">These administrator credentials belong to the new backend only.</p><div class="card"><h3>Enrolled credentials</h3><div id="credentials">Sign in to view administrator credentials.</div><button data-open="setup">Independent enrollment / recovery</button></div>

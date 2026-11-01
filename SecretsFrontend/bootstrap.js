@@ -1,7 +1,7 @@
 // Private keys exist only in this closure. No storage, URL, clipboard or cache.
 let bootstrapContext=null, bootstrapQueue=Promise.resolve(), bootstrapPoll=null;
 function bootstrapPause(){clearTimeout(bootstrapPoll);bootstrapPoll=null;}
-function bootstrapClear(){bootstrapPause();bootstrapContext=null;$('bsComparison').textContent='';$('bsCancel').hidden=true;}
+function bootstrapClear(){bootstrapPause();bootstrapContext=null;$('bsComparison').textContent='';$('bsCancel').hidden=true;$('bsSecrets').hidden=true;$('bsLogin').hidden=true;}
 const bootstrapHex=bytes=>Array.from(new Uint8Array(bytes),x=>x.toString(16).padStart(2,'0')).join('');
 async function bootstrapHash(value){return bootstrapHex(await crypto.subtle.digest('SHA-256',typeof value==='string'?new TextEncoder().encode(value):value));}
 function bootstrapCanonical(v){if(Array.isArray(v))return v.map(bootstrapCanonical);if(v&&typeof v==='object')return Object.fromEntries(Object.keys(v).sort().map(k=>[k,bootstrapCanonical(v[k])]));return v;}
@@ -55,10 +55,11 @@ run($('bsApply'),async ticket=>{
  const ctx=bootstrapContext;if(!ctx?.planDigest)throw Error('Review the current setup plan first.');const begin=await bootstrapRequest('applyOptions',{planDigest:ctx.planDigest},ticket);const cred=await ceremony('get',options(begin.options),ticket);
  $('bsCancel').hidden=true;let result;try{result=await bootstrapRequest('applyVerify',{planDigest:ctx.planDigest,credential:assertion(cred)},ticket);}catch(error){bootstrapShow('bsDone');$('bsResult').textContent='The setup response was lost. Check the accepted operation in the Symcon console. If the vault committed, use normal passkey sign-in. Do not start a second setup.';throw error;}
  bootstrapShow('bsDone');$('bsResult').textContent=result.status==='COMMITTED'?'Your vault contains the approved administrator.':result.message||'Setup is accepted. Resolve this operation in the console.';
- if(result.authenticated){csrf=result.csrf;await load(ticket);message('Vault created. You are signed in.');}else if(result.status==='COMMITTED')message('Vault created. Sign in with your passkey.');bootstrapContext=null;
+ if(result.authenticated){csrf=result.csrf;await load(ticket);$('bsDoneTitle').textContent='Setup complete';$('bsResult').textContent='Your vault is ready and you are signed in. Continue to Secrets to create a test entry.';$('bsSecrets').hidden=false;$('bsLogin').hidden=true;message('Setup complete. You are signed in.');}else if(result.status==='COMMITTED'){$('bsDoneTitle').textContent='Setup complete';$('bsResult').textContent='Your vault is ready. Sign in with your passkey to continue.';$('bsLogin').hidden=false;message('Vault created. Sign in with your passkey.');}bootstrapContext=null;
 });
 $('bsEdit').addEventListener('click',()=>{if(bootstrapContext)bootstrapContext.planDigest=null;bootstrapShow('bsConfiguration');});
 $('bsBackend').addEventListener('change',bootstrapPaths);
 run($('bsCancel'),async ticket=>{const status=await bootstrapRequest('cancel',{},ticket);if(status.status==='CANCELLED'){bootstrapClear();bootstrapShow('bsStart');message('Cancelled; no setup operation was authorized.');}else{bootstrapShow('bsDone');$('bsResult').textContent=status.message;$('bsCancel').hidden=true;}});
+$('bsSecrets').addEventListener('click',()=>tab('secrets'));
 run($('bsLogin'),async()=>{$('signin').click();});
 for(const id of ['bsBackend','bsPortal','bsDocs','bsTheme','bsVault','bsKeys','bsPortalLink','bsDebug','bsACL','bsPersistence'])$(id).addEventListener('change',()=>{if(bootstrapContext)bootstrapContext.planDigest=null;});
