@@ -1,4 +1,4 @@
-"""Development-only runner: supplied crypto, no PDO, bounded PHP memory."""
+"""Development-only runner: supplied crypto, no database drivers, bounded PHP memory."""
 import argparse
 import json
 from pathlib import Path
@@ -14,6 +14,8 @@ probe = json.loads(subprocess.check_output(command + ['-r', "echo json_encode(['
 for extension, present in probe.items():
     if not present:
         command += ['-d', 'extension=' + extension]
-subprocess.run(command + ['-r', "if(class_exists('PDO',false)||!function_exists('openssl_encrypt')||!function_exists('sodium_crypto_sign_keypair'))exit(1); echo 'PASS native test runtime: no PDO, supplied OpenSSL/sodium, 32 MiB limit'.PHP_EOL;"], check=True)
+# Windows PHP can compile PDO's core into the executable; it cannot be unloaded.
+# Prohibit every database driver, and record whether that inert core is present.
+subprocess.run(command + ['-r', "$pdo=class_exists('PDO',false); $drivers=$pdo?PDO::getAvailableDrivers():[]; echo json_encode(['pdoCore'=>$pdo,'databaseDrivers'=>$drivers,'openssl'=>function_exists('openssl_encrypt'),'sodium'=>function_exists('sodium_crypto_sign_keypair')]).PHP_EOL; if(extension_loaded('pdo_sqlite')||$drivers||!function_exists('openssl_encrypt')||!function_exists('sodium_crypto_sign_keypair'))exit(1); echo 'PASS native test runtime: no database drivers, supplied OpenSSL/sodium, 32 MiB limit'.PHP_EOL;"], check=True)
 for name in ['SecretsBackend/tests/native-store.php', 'SecretsFrontend/tests/native-lifecycle.php', 'SecretsBackend/tests/native-peers.php', 'SecretsBackend/tests/native-effects.php']:
     subprocess.run(command + [str(root / name)], cwd=root, check=True, timeout=90)
