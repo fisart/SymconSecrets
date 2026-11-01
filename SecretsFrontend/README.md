@@ -51,9 +51,13 @@ persisted or privately backed up.
 
 ## HTML administration
 
-- **Secrets:** global/local typed records, masked listing, reviewed edits and
-  exact-record reveal. Local values are never synchronized. Received shared
-  trees show source/freshness and stay read-only on subscribers.
+- **Secrets:** the Explorer-style browser shows folders on the left and their
+  contents on the right. Single-click to select, double-click a folder to open
+  it or a secret to show it after passkey approval. Use Back or Up to navigate.
+  Create folders and text secrets with the buttons; changes and deletes require
+  review and passkey approval. Existing lists and other typed values remain
+  available in the advanced editor. Local values are never synchronized;
+  received shared trees remain read-only.
 - **Peers:** create a short-lived invitation, approve its exact recipient on the
   issuing vault, inspect immutable pending deliveries and revoke connections.
   Every vault works standalone. One owner writes each shared tree. Optional
