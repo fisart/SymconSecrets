@@ -237,7 +237,7 @@ final class SecretsBackendApplication
         if ($this->settings['origin'] !== $this->primaryOrigin() && !in_array($action,['session','list','sessionReveal','sessionTimeout','prepare','approve','logout'],true)) throw new RuntimeException('Use the primary address for setup and integration management.');
         if ($action === 'connectCandidateReview') { self::exact($data,['candidate']); $c=$this->connectCandidate($data['candidate'],$current['state']); return ['data'=>['candidate'=>$data['candidate'],'digest'=>SecretsBootstrapVerifier::digest($c),'label'=>$c['entry']['label'],'origin'=>$c['origin'],'administrator'=>$c['entry']['administrator'],'rights'=>$c['rights'],'fingerprint'=>hash('sha256',$c['entry']['publicKey'])]]; }
         if ($action === 'connectDiscovery') { self::exact($data, []); return ['data'=>['permitted'=>true]]; }
-        if ($native instanceof SecretsBackendNativeOperations && in_array($action, ['nativeUploadBegin','nativeUploadChunk','nativeUploadFinish','nativeOperationStatus'], true)) return ['data' => $native->request($action, $data)];
+        if ($native instanceof SecretsBackendNativeOperations && in_array($action, ['legacySources','legacyPreview','nativeUploadBegin','nativeUploadChunk','nativeUploadFinish','nativeOperationStatus'], true)) return ['data' => $native->request($action, $data)];
         if (in_array($action,['nativeCandidateOptions','nativeCandidateSubmit'],true)) return ['data'=>$this->nativeCandidate($action,$data,$session,$current)];
         if ($action === 'logout') { self::exact($data, []); $this->store->delete($session['hash']); return ['data' => ['loggedOut' => true], 'cookie' => $this->cookieName() . '=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0']; }
         if ($action === 'sessionTimeout') {
@@ -304,9 +304,10 @@ final class SecretsBackendApplication
             $this->rejectionContext = $this->audit($operation['kind'], $approvalCredential, SecretsBackendCodec::json(array_intersect_key($operation, array_flip(['kind', 'scope', 'path', 'credentialId']))));
             $id = $approvalCredential; $operationId = $challenge['context']['operationId'];
             $digest = hash('sha256', SecretsBackendCodec::json(['operation' => $operation, 'session' => $session['hash'], 'credential' => $id, 'approval' => $data['challengeId']]));
-            $committed = $this->store->change($challenge['head'], $operationId, $digest, function (array $state) use ($operation, $id, $counter): array {
+            $commit = fn() => $this->store->change($challenge['head'], $operationId, $digest, function (array $state) use ($operation, $id, $counter): array {
                 $state = $this->apply($operation, $state); $state['identity']['credentials'][$id]['counter'] = $counter; $state['identity']['credentials'][$id]['tested'] = true; return $state;
             }, $this->audit($operation['kind'], $id, SecretsBackendCodec::json(array_intersect_key($operation, array_flip(['kind', 'scope', 'path', 'credentialId'])))));
+            $committed = $native instanceof SecretsBackendNativeOperations ? $native->commit($operation,$commit) : $commit();
             if ($operation['kind'] === 'nativeEnrollment') return ['data'=>['committed'=>true,'operationId'=>$operationId,'reloginRequired'=>true]];
             if ($operation['kind'] === 'reveal') {
                 $latest = $this->store->read();

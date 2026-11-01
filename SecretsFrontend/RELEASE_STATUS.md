@@ -112,3 +112,22 @@ not activation. Continue switches to the normal sign-in screen without reloading
 the still-pending enrollment page. The status endpoint discloses only activation
 state and creates no general session; expiry, cancellation and origin-generation
 changes reject the status proof.
+
+
+The legacy import wizard reads supported aes-128-gcm encrypted Vault variables
+and existing master.key files without executing legacy secret APIs. It previews
+masked metadata, merges global/local scopes under an explicit keep/replace
+conflict policy and saves source paths plus sanitized inactive replication
+proposals. A fresh administrator approval covers the immutable staged snapshot;
+the existing hardware policy is enforced. The old source is rechecked and its
+vault semaphore held through the native commit. A pre-import encrypted native
+backup and separate recovery key are returned, and the committed trees are
+verified against keyed expected digests. Legacy passkeys/system credentials do
+not become new authority. The old module and its files remain unchanged.
+
+Current native storage stays pinned. Suggested subfolders beneath the old key
+folder are saved as metadata, not used for relocation. Relocation of an already
+initialized vault is not implemented here. Old replication endpoints require
+new pairing. Source snapshots are bounded to the native memory budget (at most
+512 KiB plaintext); oversized or unsupported data fails before mutation. Static
+and simulated tests do not qualify a real production migration.
