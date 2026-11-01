@@ -11,7 +11,7 @@ final class SecretsBootstrapJournal
     private static array $held = [];
     public function __construct(private string $data,private string $keys,bool $create=false,private $fault=null)
     {
-        $pair = SecretsBackendNativePlatform::paths($data,$keys,'/unused-bootstrap-kernel');
+        $pair = SecretsBackendNativePlatform::paths($data,$keys,dirname($data).'/bootstrap-validation-kernel');
         $this->data=$pair['vaultDirectory']; $this->keys=$pair['keyDirectory'];
         if ($create) { SecretsBackendNativePlatform::makePrivate($this->data); SecretsBackendNativePlatform::makePrivate($this->keys); }
         else { foreach ([$this->data,$this->keys] as $p) if (!is_dir($p)) throw new RuntimeException('Bootstrap journal is unavailable; recovery is required.'); }
