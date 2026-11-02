@@ -22,6 +22,7 @@ parser.add_argument('--curl-extension')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[2]
 command = [args.php] + (['-n', '-d', 'extension=' + args.curl_extension] if args.curl_extension else [])
+command += ['-d', 'openssl.cafile=', '-d', 'openssl.capath=', '-d', 'curl.cainfo=']
 probe = subprocess.check_output(command + ['-r', "echo json_encode(['curl'=>function_exists('curl_init'),'openssl'=>function_exists('openssl_x509_read')]);"], text=True)
 if not all(json.loads(probe).values()):
     raise SystemExit('Real TLS fixture needs supplied PHP cURL and OpenSSL.')
@@ -69,9 +70,12 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
 
         def do_POST(self):
             counts.append(self.rfile.read(int(self.headers.get('Content-Length', '0'))))
+            response = b'{"received":true}'
             self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(response)))
             self.end_headers()
-            self.wfile.write(b'{"received":true}')
+            self.wfile.write(response)
 
     def run_server(*, san=True, expired=False, chain=True):
         leaf_key = key()
