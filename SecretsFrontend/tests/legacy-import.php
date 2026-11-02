@@ -53,6 +53,8 @@ try{
  SecretsBackendNativePlatform::paths($kernel.'/legacy-second/secrets-native-data-6002',$legacyParent.'/secrets-native-keys-6000',$kernel,false,['vaultDirectory'=>$kernel.'/legacy-second','keyDirectory'=>$legacyParent]);
  secReject(static fn()=>SecretsBackendNativePlatform::paths($kernel.'/webfront/secrets-native-data-6000',$kernel.'/webfront/secrets-native-keys-6000',$kernel,false,$kernel.'/webfront'),'Public imported storage accepted.');
  $GLOBALS['legacyDirectApproval']=true;
+ // Windows mandatory locks deny byte reads of an already-held lock file.
+ $lockPath=$pathsBefore['DataDirectory'].'/native.lock';$held=fopen($lockPath,'r+b');flock($held,LOCK_EX);try{secExpect(SecretsBackendNativePlatform::readPrivate($lockPath,0)==='','Empty lock validation attempted a byte read.');}finally{flock($held,LOCK_UN);fclose($held);}
  // Each path can be selected independently; the first move changes only keys.
  $preview=$invoke('legacyPreview',['source'=>6000,'policy'=>'keep','vaultLocation'=>'current','keyLocation'=>'imported','privateACLConfirmed'=>true,'persistenceConfirmed'=>true])['data'];
  secExpect($preview['review']['storage']['vaultDirectory']===$pathsBefore['DataDirectory']&&$preview['review']['storage']['keyDirectory']===$root.'/old/secrets-native-keys-6000','Independent key-folder choice was not reviewed.');

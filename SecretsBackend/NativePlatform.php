@@ -122,6 +122,9 @@ final class SecretsBackendNativePlatform
     {
         clearstatcache(true, $path);
         if (is_link($path) || !is_file($path) || (PHP_OS_FAMILY !== 'Windows' && (fileperms($path) & 0077) !== 0) || filesize($path) > $limit) throw new RuntimeException('Missing, oversized or unsafe private security file.');
+        // Empty lock files need metadata validation only. Windows mandatory locks
+        // deny even a one-byte read while our own worker holds the lock.
+        if($limit===0)return '';
         $bytes = file_get_contents($path, false, null, 0, $limit + 1);
         if (!is_string($bytes) || strlen($bytes) > $limit) throw new RuntimeException('Cannot read bounded private security storage.');
         return $bytes;
