@@ -277,25 +277,39 @@ timeout and stale/foreign popup replies cannot confer authority. The earlier
 Magic Connect transport handling and server-side TLS validation remain enforced.
 Deployment testing of actual popup/passkey behavior and remote TLS is outstanding.
 
-## Peer HTTPS trust-store correction
+## Peer HTTPS reuses the original manager's transport
 
-Outgoing peer HTTPS now selects a usable CA store explicitly, instead of relying
-on libcurl's build-time certificate paths in embedded Symcon PHP. Explicit cURL,
-PHP OpenSSL and environment trust settings take precedence and fail closed if
-unusable; a certificate failure never causes their replacement. Otherwise the
-resolver preserves native Windows/Apple trust, checks usable cURL/OpenSSL/system
-stores, and uses the checksum-pinned Mozilla CA Extract bundle only if no host
-store is available. Public roots are shipped with the module; no CA is downloaded
-or learned from the failing peer at runtime. A dedicated empty CA directory avoids
-implicit root expansion when selecting a file and avoids PHP/cURL's invalid-null
-CAPATH behavior. Certificate signatures, hostname matching, expiry, signed peer
-messages and exact pairing authority remain enforced. The source name is included
-in masked diagnostics; local CA paths and raw TLS errors remain private.
+Native peer delivery uses PHP HTTPS streams, the same transport as the retained
+SecretsManager's `httpsPostJsonStrict` / `httpsPostJsonPinned`. Strict mode uses
+PHP OpenSSL's default/configured trust with peer, hostname and certificate validity
+checks. A cURL-specific CA file no longer changes peer transport trust. There is
+no automatic retry through another trust store after failed authentication.
 
-Pure PHP checks run with no database drivers. Loopback HTTPS tests exercise a real
-root/intermediate/leaf chain with PHP cURL, configured CA files, hashed directories
-and environment trust, while rejecting wrong roots, hostnames, expiry and incomplete
-chains before POST. The supplied public-root bundle's exact SHA-256 and count are
-checked, including byte-preserving Windows checkout. Live host qualification is
-still necessary: this client correction does not repair an incomplete certificate
-chain served by a remote web server or bypass a deliberately restricted trust store.
+Applied active master instances are inspected for public outgoing `sync` settings
+only, matching the exact HTTPS hostname and port. Their strict/pinned policy is
+shown in the existing fresh pairing approval. Pinned mode requires the exact
+configured SHA-256 leaf fingerprint during TLS setup, before any HTTP data. This
+preserves the old manager's explicit certificate-pin semantics, including its
+independence from CA validation. It never learns a pin from an untrusted connection.
+Conflicting policies, malformed fingerprints and settings changed after review
+stop pairing. Legacy passwords, tokens, encryption keys and protocols are not
+reused. The sealed local transport policy is persisted for delivery and same-origin
+re-pairing after old-module deletion; wire descriptors remain unchanged. Existing
+pending connections without a stored pin use strict PHP streams; adopting a pin
+requires the ordinary fresh pairing approvals. Original SecretsManager files are
+unchanged.
+
+Response reads retain the 65,536-byte bound, a total deadline, HTTP-200 requirement
+and no redirects; the PHP wrapper decodes chunked responses, and truncated declared
+bodies are refused. Fixed diagnostic categories contain no raw errors or local
+paths. The old CA resolver and public-root assets remain covered as utilities;
+they are not selected by native peer delivery.
+
+Loopback HTTPS tests reproduce a failing cURL trust configuration while the original
+OpenSSL stream trust succeeds, exercise configured file/directory/environment trust,
+and reject untrusted chains, wrong names, expired certificates, missing intermediates
+and pin mismatches before POST. Exact pins succeed without CA trust. Tests also
+cover chunked replies, redirects, oversized and truncated responses. Approval tests
+cover exact pin display/sealing, configuration changes and continued delivery after
+old-module removal. Actual Symcon-to-Symcon delivery still requires deployment
+qualification; these local checks do not prove either user's live host configuration.

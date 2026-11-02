@@ -3,13 +3,14 @@ declare(strict_types=1);
 require_once __DIR__ . '/NativeStore.php';
 require_once __DIR__ . '/Tree.php';
 require_once __DIR__ . '/NativeTransfer.php';
+require_once __DIR__ . '/NativeLegacyHTTPS.php';
 require_once __DIR__ . '/../SecretsFrontend/Configuration.php';
 
 /** Public delivery diagnostics contain fixed categories and numeric codes only. */
 final class SecretsBackendNativePeerDeliveryFailure extends RuntimeException
 {
     public const PROBLEMS=['dns','connect','timeout','certificate','tls','http','response-size','invalid-reply','transport','unconfirmed'];
-    public const CERTIFICATE_REASONS=['issuer-untrusted','chain-unverified','hostname-mismatch','expired','not-yet-valid','self-signed','revoked','ca-store-unavailable','unknown'];
+    public const CERTIFICATE_REASONS=['issuer-untrusted','chain-unverified','hostname-mismatch','expired','not-yet-valid','self-signed','revoked','ca-store-unavailable','pin-mismatch','unknown'];
     public function __construct(public readonly string $problem, public readonly int $httpStatus=0, public readonly int $curlCode=0,
         public readonly int $tlsVerifyResult=-1, public readonly string $certificateReason='unknown', public readonly array $caTrust=[])
     { parent::__construct('Native peer delivery is unconfirmed.'); }
@@ -24,7 +25,7 @@ final class SecretsBackendNativePeerDeliveryFailure extends RuntimeException
     {
         $safe=['tlsVerifyResult'=>max(-1,(int)($data['tlsVerifyResult']??-1)),'certificateReason'=>in_array($data['certificateReason']??'',self::CERTIFICATE_REASONS,true)?$data['certificateReason']:'unknown','caTrust'=>[]];
         foreach(['fileSpecified','fileReadable','directorySpecified','directoryReadable']as$key)$safe['caTrust'][$key]=is_bool($data['caTrust'][$key]??null)?$data['caTrust'][$key]:null;
-        $source=$data['caTrust']['source']??'unavailable';$safe['caTrust']['source']=in_array($source,['curl-configured','openssl-configured','environment-configured','curl-default','openssl-default','system','bundled','native','unavailable'],true)?$source:'unavailable';
+        $source=$data['caTrust']['source']??'unavailable';$safe['caTrust']['source']=in_array($source,['curl-configured','openssl-configured','environment-configured','curl-default','openssl-default','system','bundled','native','certificate-pinned','unavailable'],true)?$source:'unavailable';
         return $safe;
     }
 }
@@ -154,6 +155,9 @@ final class SecretsBackendNativePeer
                     $s['native']['invites'][$payload['invitationId']]['usedBy']=$m['sender'];unset($s['native']['invites'][$payload['invitationId']]['secret']);
                     $s=self::retireRevocation($s,$m['sender']);
                     $row=self::peerRecord($pair,$pair['b'],'Peer '.substr($m['sender'],0,8),'PENDING_APPROVAL');$row+=['requestDigest'=>$digest,'requestId'=>$m['id'],'invitationId'=>$payload['invitationId'],'expires'=>$payload['expires']];
+                    // Preserve only an already approved local TLS policy for this exact HTTPS authority.
+                    $previous=$s['pairing']['peers'][$m['sender']]??null;
+                    if(isset($previous['httpsPolicy'])&&SecretsBackendNativeLegacyHTTPS::origin($previous['descriptor']['endpoint'])===SecretsBackendNativeLegacyHTTPS::origin($row['descriptor']['endpoint']))$row['httpsPolicy']=$previous['httpsPolicy'];
                     $s['pairing']['peers'][$m['sender']]=$row;return $s;
                 },['action'=>'peer-request','actor'=>$m['sender'],'target'=>$pair['id']]);
             }
@@ -222,7 +226,7 @@ final class SecretsBackendNativePeer
     {
         $target=$peer['descriptor'];$m=$this->envelope($target,$kind,$peer['pairingId'],$peer['epoch'],$id,$sequence,$payload);$bytes=SecretsBackendCodec::json($m);
         if($this->transport===null)throw new SecretsBackendNativePeerDeliveryFailure('transport');
-        $response=($this->transport)($target,$bytes);
+        $response=($this->transport)($target,$bytes,$peer['httpsPolicy']??['mode'=>'strict']);
         try{$reply=SecretsFrontendConfiguration::decodeBounded($response,65536,32);self::exact($reply,['format','kind','sender','receiver','pairingId','epoch','id','sequence','payload','signature']);
         if($reply['format']!=='SECB.Peer.1'||$reply['kind']!=='REPLY'||$reply['sender']!==$target['vaultId']||$reply['receiver']!==$this->descriptor()['vaultId']||$reply['pairingId']!==$peer['pairingId']||$reply['epoch']!==$peer['epoch']||$reply['id']!==$id||$reply['sequence']!==$sequence)throw new RuntimeException('Peer reply was misbound.');
         self::verify($reply,$target['signKey']);$body=SecretsFrontendConfiguration::decode($this->store->openPeer($reply['payload']));

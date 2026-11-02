@@ -30,10 +30,14 @@ Every vault retains its own administrator authentication and exact approvals.
    Global revision, with no pending sharing messages. Approval alone is insufficient.
    The wizard reports a blocked connection rather than asking you to approve a
    request that never arrived. HTTPS/certificate errors still need correcting;
-   browser coordination does not bypass server-side TLS verification. The module
-   finds the Symcon host’s CA store automatically and supplies bundled public
-   roots if no host store is available. Explicit custom CA settings remain in
-   force; a server must still supply its intermediate certificate chain.
+   browser coordination does not bypass server-side TLS verification. Peer delivery uses the same PHP-stream HTTPS transport as the old password
+   manager. Normal certificate validation uses PHP OpenSSL's trust configuration.
+   If an applied old manager has an outgoing sync connection to the same HTTPS
+   hostname and port, the pairing approval shows its strict or pinned setting.
+   A pinned connection shows the exact certificate SHA-256 fingerprint. Confirm
+   it in the normal passkey approval; no extra setup form is needed. The approved
+   setting is saved in the new vault and survives removal of the old module.
+   Conflicting old settings stop pairing with an explanation.
 6. **Ready.** The wizard confirms the exchange. Select **Open my shared secrets**
    to create a harmless test entry in **Global · owned**, or **Open received secrets**
    to inspect the other platform's read-only section. Local secrets, administrators
@@ -54,7 +58,7 @@ flow cannot be used. The original bilateral protocol remains available:
 1. **Prepare.** Complete the Setup assistant on both platforms. Open both HTML
    administration pages in separate tabs and sign in. Both HTTPS addresses must
    be reachable from the other platform with valid certificates. The supplied PHP
-   needs cURL for remote delivery; the wizard reports when it is unavailable.
+   needs PHP HTTPS streams and OpenSSL for remote delivery; the wizard reports when it is unavailable.
    On the first platform select **Create an invitation here**. On the second
    select **I have an invitation**.
 2. **Invitation.** On the first platform select **2 · Create one-use invitation**

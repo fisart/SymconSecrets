@@ -70,10 +70,18 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
 
         def do_POST(self):
             counts.append(self.rfile.read(int(self.headers.get('Content-Length', '0'))))
-            response = b'{"received":true}'
-            self.send_response(200)
+            mode = getattr(self.server, 'reply_mode', 'normal')
+            response = b'{"received":true}' if mode != 'oversize' else b'x' * 65537
+            self.send_response(302 if mode == 'redirect' else 200)
+            if mode == 'redirect':
+                self.send_header('Location', '/hook/secrets_peer_12345')
+            if mode == 'chunked':
+                self.send_header('Transfer-Encoding', 'chunked')
+                self.end_headers()
+                self.wfile.write(b'8\r\n{"receiv\r\n9\r\ned":true}\r\n0\r\n\r\n')
+                return
             self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(response)))
+            self.send_header('Content-Length', str(len(response) + (10 if mode == 'truncated' else 0)))
             self.end_headers()
             self.wfile.write(response)
 
@@ -91,6 +99,7 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
         context.load_cert_chain(chain_path, key_path)
         server.socket = context.wrap_socket(server.socket, server_side=True)
         threading.Thread(target=server.serve_forever, daemon=True).start()
+        server.fingerprint = leaf.fingerprint(hashes.SHA256()).hex()
         return server, 'https://127.0.0.1:' + str(server.server_port) + '/hook/secrets_peer_12345'
 
     def request(url, settings=(), mode='', environment=None):
@@ -109,7 +118,7 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
         fixed = request(url, ['openssl.cafile=' + str(ca_path)])
         assert fixed['ok'] and fixed['body'] == '{"received":true}', fixed
         explicit = request(url, ['curl.cainfo=' + str(ca_path)])
-        assert explicit['ok'], explicit
+        assert not explicit['ok'], explicit  # PHP streams use OpenSSL trust, never cURL's separate file.
         inherited = request(url, environment={**env, 'SSL_CERT_FILE': str(ca_path)})
         assert inherited['ok'], inherited
         directory = folder / 'hashed'
@@ -120,10 +129,28 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
         assert directory_result['ok'], directory_result
         before = len(counts)
         wrong = request(url, ['curl.cainfo=' + str(other_path), 'openssl.cafile=' + str(ca_path)])
-        assert not wrong['ok'] and wrong['curlCode'] == 60, wrong
-        missing = request(url, ['curl.cainfo=' + str(folder / 'missing.pem')])
-        assert not missing['ok'] and missing['reason'] == 'ca-store-unavailable', missing
+        assert wrong['ok'], wrong  # Same split as reported deployment: cURL file must not override working OpenSSL trust.
+        before = len(counts)
+        missing = request(url, ['openssl.cafile=' + str(folder / 'missing.pem')])
+        assert not missing['ok'], missing
+        unrelated = request(url, ['openssl.cafile=' + str(other_path)])
+        assert not unrelated['ok'] and unrelated['problem'] == 'certificate', unrelated
         assert len(counts) == before, 'A request was sent after failed certificate verification.'
+        pinned = request(url, mode='pin:' + server.fingerprint)
+        assert pinned['ok'], pinned
+        before = len(counts)
+        mismatch = request(url, mode='pin:' + '0' * 64)
+        assert not mismatch['ok'] and mismatch['problem'] == 'certificate', mismatch
+        assert len(counts) == before, 'Fingerprint mismatch sent HTTP data before authentication.'
+        server.reply_mode = 'chunked'
+        chunked = request(url, ['openssl.cafile=' + str(ca_path)])
+        assert chunked['ok'] and chunked['body'] == '{"received":true}', chunked
+        for mode, problem in [('redirect', 'http'), ('oversize', 'response-size'), ('truncated', 'unconfirmed')]:
+            server.reply_mode = mode
+            before = len(counts)
+            result = request(url, ['openssl.cafile=' + str(ca_path)])
+            assert not result['ok'] and result['problem'] == problem, result
+            assert len(counts) == before + 1, 'HTTP redirect was followed.'
     finally:
         server.shutdown()
         server.server_close()
@@ -133,10 +160,10 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
         try:
             before = len(counts)
             refused = request(url, ['openssl.cafile=' + str(ca_path)])
-            assert not refused['ok'] and refused['curlCode'] == 60, refused
+            assert not refused['ok'] and refused['problem'] == 'certificate', refused
             assert len(counts) == before, 'A failed TLS identity/chain reached the application.'
         finally:
             server.shutdown()
             server.server_close()
-    assert counts == [b'TLS-REQUEST-CANARY'] * 4, counts
-print('PASS real HTTPS: reproduced unknown-issuer failure, recovered through PHP/env trust, accepted valid chains, rejected wrong roots/hostname/expiry/incomplete chain before POST, no trust-policy bypass')
+    assert counts == [b'TLS-REQUEST-CANARY'] * 9, counts
+print('PASS real HTTPS: reused original PHP streams; explicit approved pin succeeds and mismatch sends no HTTP; separate cURL CA file cannot override OpenSSL;  reproduced unknown-issuer failure, recovered through PHP/env trust, accepted valid chains, rejected wrong roots/hostname/expiry/incomplete chain before POST, no trust-policy bypass')

@@ -1,40 +1,26 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/NativePeer.php';
-require_once __DIR__ . '/NativeTrust.php';
+require_once __DIR__ . '/NativeLegacyHTTPS.php';
 
 trait SecretsBackendNativeRuntime
 {
     private function nativePeer(?SecretsBackendNativeStore $store=null): SecretsBackendNativePeer
     {
         return new SecretsBackendNativePeer($store??$this->nativeStore(),$this->ReadPropertyString('AdminOrigin').'/hook/secrets_peer_'.$this->InstanceID,
-            function(array $target,string $bytes):string{
+            function(array $target,string $bytes,array $policy=['mode'=>'strict']):string{
                 $id=(int)$target['backend'];
                 if(function_exists('SECB_GetNativePublicDescriptor')&&function_exists('SECB_ReceiveNativePeer')&&IPS_InstanceExists($id)
                     &&strtoupper(IPS_GetInstance($id)['ModuleInfo']['ModuleID']??'')==='{52165EDD-B2C0-40EC-8A59-42A97319B6E2}'){
                     try{$local=json_decode(SECB_GetNativePublicDescriptor($id),true);}catch(Throwable $ignored){$local=null;}
                     if(is_array($local)&&SecretsBackendNativePeer::authority($local)===SecretsBackendNativePeer::authority($target))return SECB_ReceiveNativePeer($id,$bytes);
                 }
-                return self::nativeHTTPS($target['endpoint'],$bytes);
+                return self::nativeHTTPS($target['endpoint'],$bytes,$policy);
             });
     }
-    public static function nativeHTTPS(string $endpoint,string $bytes): string
+    public static function nativeHTTPS(string $endpoint,string $bytes,array $policy=['mode'=>'strict']): string
     {
-        SecretsBackendNativePeer::endpoint($endpoint);
-        if(!function_exists('curl_init'))throw new SecretsBackendNativePeerDeliveryFailure('transport');
-        $h=curl_init($endpoint);$response='';$tooLarge=false;
-        try{
-            curl_setopt_array($h,[CURLOPT_POST=>true,CURLOPT_POSTFIELDS=>$bytes,CURLOPT_HTTPHEADER=>['Content-Type: application/json','Accept: application/json'],
-                CURLOPT_FOLLOWLOCATION=>false,CURLOPT_CONNECTTIMEOUT_MS=>1500,CURLOPT_TIMEOUT_MS=>4500,CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2,
-                CURLOPT_WRITEFUNCTION=>static function($handle,string $chunk)use(&$response,&$tooLarge):int{if(strlen($response)+strlen($chunk)>65536){$tooLarge=true;return 0;}$response.=$chunk;return strlen($chunk);}]);
-            if(defined('CURLOPT_PROTOCOLS_STR'))curl_setopt($h,CURLOPT_PROTOCOLS_STR,'https');elseif(defined('CURLOPT_PROTOCOLS'))curl_setopt($h,CURLOPT_PROTOCOLS,CURLPROTO_HTTPS);
-            $trust=SecretsBackendNativeTrust::apply($h);
-            $ok=curl_exec($h);$code=(int)curl_errno($h);$http=(int)curl_getinfo($h,CURLINFO_RESPONSE_CODE);
-            if($ok===false||$http!==200){
-                throw SecretsBackendNativePeerDeliveryFailure::transport($code,$http,$tooLarge,(int)curl_getinfo($h,CURLINFO_SSL_VERIFYRESULT),curl_error($h),$trust);
-            }
-            return $response;
-        }finally{curl_close($h);}
+        return SecretsBackendNativeLegacyHTTPS::post($endpoint,$bytes,$policy);
     }
     public function GetNativePublicDescriptor(): string
     {
