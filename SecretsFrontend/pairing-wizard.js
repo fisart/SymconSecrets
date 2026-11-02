@@ -11,6 +11,7 @@ function peerFeedback(text){const node=$('peerActionFeedback');node.textContent=
 async function peerReview(operation,text,ticket=generation){peerFeedback('Opening the confirmation window…');try{await review(operation,text,ticket);peerFeedback('Confirmation window open. Select Confirm with passkey, or Cancel.');}catch(error){if(ticket===generation&&error.name!=='AbortError')peerFeedback(error.message);throw error;}}
 function peerCertificateHelp(d){
  const reason={
+  'ca-store-unavailable':'This Symcon client’s configured CA trust store is unavailable or is not a usable CA file/hashed directory. Check its explicit PHP/cURL trust setting; the module will not bypass it.',
   'issuer-untrusted':'Symcon could not build a trusted certificate chain. The site certificate can be valid; check the CA trust store used by this Symcon PHP client and whether the server supplies its intermediate certificates.',
   'chain-unverified':'Symcon could not verify the supplied chain. Check the intermediate certificates sent by the server and the CA trust store used by this Symcon PHP client.',
   'hostname-mismatch':'The certificate served to Symcon does not match the requested hostname. Check DNS, proxy routing and the certificate served for this hostname.',

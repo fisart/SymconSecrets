@@ -276,3 +276,26 @@ bidirectional exchange evidence still gates Ready. Cancellation, page exit,
 timeout and stale/foreign popup replies cannot confer authority. The earlier
 Magic Connect transport handling and server-side TLS validation remain enforced.
 Deployment testing of actual popup/passkey behavior and remote TLS is outstanding.
+
+## Peer HTTPS trust-store correction
+
+Outgoing peer HTTPS now selects a usable CA store explicitly, instead of relying
+on libcurl's build-time certificate paths in embedded Symcon PHP. Explicit cURL,
+PHP OpenSSL and environment trust settings take precedence and fail closed if
+unusable; a certificate failure never causes their replacement. Otherwise the
+resolver preserves native Windows/Apple trust, checks usable cURL/OpenSSL/system
+stores, and uses the checksum-pinned Mozilla CA Extract bundle only if no host
+store is available. Public roots are shipped with the module; no CA is downloaded
+or learned from the failing peer at runtime. A dedicated empty CA directory avoids
+implicit root expansion when selecting a file and avoids PHP/cURL's invalid-null
+CAPATH behavior. Certificate signatures, hostname matching, expiry, signed peer
+messages and exact pairing authority remain enforced. The source name is included
+in masked diagnostics; local CA paths and raw TLS errors remain private.
+
+Pure PHP checks run with no database drivers. Loopback HTTPS tests exercise a real
+root/intermediate/leaf chain with PHP cURL, configured CA files, hashed directories
+and environment trust, while rejecting wrong roots, hostnames, expiry and incomplete
+chains before POST. The supplied public-root bundle's exact SHA-256 and count are
+checked, including byte-preserving Windows checkout. Live host qualification is
+still necessary: this client correction does not repair an incomplete certificate
+chain served by a remote web server or bypass a deliberately restricted trust store.

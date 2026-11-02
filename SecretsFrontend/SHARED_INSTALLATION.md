@@ -30,7 +30,10 @@ Every vault retains its own administrator authentication and exact approvals.
    Global revision, with no pending sharing messages. Approval alone is insufficient.
    The wizard reports a blocked connection rather than asking you to approve a
    request that never arrived. HTTPS/certificate errors still need correcting;
-   browser coordination does not bypass server-side TLS verification.
+   browser coordination does not bypass server-side TLS verification. The module
+   finds the Symcon host’s CA store automatically and supplies bundled public
+   roots if no host store is available. Explicit custom CA settings remain in
+   force; a server must still supply its intermediate certificate chain.
 6. **Ready.** The wizard confirms the exchange. Select **Open my shared secrets**
    to create a harmless test entry in **Global · owned**, or **Open received secrets**
    to inspect the other platform's read-only section. Local secrets, administrators

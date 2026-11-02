@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/NativePeer.php';
+require_once __DIR__ . '/NativeTrust.php';
 
 trait SecretsBackendNativeRuntime
 {
@@ -27,12 +28,9 @@ trait SecretsBackendNativeRuntime
                 CURLOPT_FOLLOWLOCATION=>false,CURLOPT_CONNECTTIMEOUT_MS=>1500,CURLOPT_TIMEOUT_MS=>4500,CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2,
                 CURLOPT_WRITEFUNCTION=>static function($handle,string $chunk)use(&$response,&$tooLarge):int{if(strlen($response)+strlen($chunk)>65536){$tooLarge=true;return 0;}$response.=$chunk;return strlen($chunk);}]);
             if(defined('CURLOPT_PROTOCOLS_STR'))curl_setopt($h,CURLOPT_PROTOCOLS_STR,'https');elseif(defined('CURLOPT_PROTOCOLS'))curl_setopt($h,CURLOPT_PROTOCOLS,CURLPROTO_HTTPS);
+            $trust=SecretsBackendNativeTrust::apply($h);
             $ok=curl_exec($h);$code=(int)curl_errno($h);$http=(int)curl_getinfo($h,CURLINFO_RESPONSE_CODE);
             if($ok===false||$http!==200){
-                $file=trim((string)ini_get('curl.cainfo'));$directory='';
-                if($file===''&&defined('CURLINFO_CAINFO'))$file=(string)(curl_getinfo($h,constant('CURLINFO_CAINFO'))?:'');
-                if(defined('CURLINFO_CAPATH'))$directory=(string)(curl_getinfo($h,constant('CURLINFO_CAPATH'))?:'');
-                $trust=['fileSpecified'=>$file!=='','fileReadable'=>$file!==''?is_readable($file):null,'directorySpecified'=>$directory!=='','directoryReadable'=>$directory!==''?is_dir($directory)&&is_readable($directory):null];
                 throw SecretsBackendNativePeerDeliveryFailure::transport($code,$http,$tooLarge,(int)curl_getinfo($h,CURLINFO_SSL_VERIFYRESULT),curl_error($h),$trust);
             }
             return $response;

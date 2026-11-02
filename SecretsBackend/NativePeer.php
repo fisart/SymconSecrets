@@ -9,7 +9,7 @@ require_once __DIR__ . '/../SecretsFrontend/Configuration.php';
 final class SecretsBackendNativePeerDeliveryFailure extends RuntimeException
 {
     public const PROBLEMS=['dns','connect','timeout','certificate','tls','http','response-size','invalid-reply','transport','unconfirmed'];
-    public const CERTIFICATE_REASONS=['issuer-untrusted','chain-unverified','hostname-mismatch','expired','not-yet-valid','self-signed','revoked','unknown'];
+    public const CERTIFICATE_REASONS=['issuer-untrusted','chain-unverified','hostname-mismatch','expired','not-yet-valid','self-signed','revoked','ca-store-unavailable','unknown'];
     public function __construct(public readonly string $problem, public readonly int $httpStatus=0, public readonly int $curlCode=0,
         public readonly int $tlsVerifyResult=-1, public readonly string $certificateReason='unknown', public readonly array $caTrust=[])
     { parent::__construct('Native peer delivery is unconfirmed.'); }
@@ -24,6 +24,7 @@ final class SecretsBackendNativePeerDeliveryFailure extends RuntimeException
     {
         $safe=['tlsVerifyResult'=>max(-1,(int)($data['tlsVerifyResult']??-1)),'certificateReason'=>in_array($data['certificateReason']??'',self::CERTIFICATE_REASONS,true)?$data['certificateReason']:'unknown','caTrust'=>[]];
         foreach(['fileSpecified','fileReadable','directorySpecified','directoryReadable']as$key)$safe['caTrust'][$key]=is_bool($data['caTrust'][$key]??null)?$data['caTrust'][$key]:null;
+        $source=$data['caTrust']['source']??'unavailable';$safe['caTrust']['source']=in_array($source,['curl-configured','openssl-configured','environment-configured','curl-default','openssl-default','system','bundled','native','unavailable'],true)?$source:'unavailable';
         return $safe;
     }
 }
