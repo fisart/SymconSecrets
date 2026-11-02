@@ -162,3 +162,22 @@ removes the controls; detached controls cannot copy old values and late clipboar
 completion cannot restore cleared UI. Clipboard contents are not automatically
 cleared. Browser tests cover exact whitespace/Unicode, copy without network calls,
 manual fallback, hardware reveal gating, read-only values, expiry and late replies.
+
+## Console setup address validation
+
+Step 1 previews and validates the trusted HTTPS address before enabling **Open
+setup**. Missing schemes, insecure addresses, invalid ports and credentials clear
+the preview, disable the action and display an HTTPS example below the field. The
+console action revalidates independently of that preview. It outputs either the
+exact validated wizard URL or a fixed plain error message, while the form displays
+the reason; PHP exceptions and traces are not returned as links. Recovery uses
+the same console boundary. Core setup/recovery APIs retain their strict failure
+behavior and authorization checks. Rejected address input does not change applied
+configuration, acknowledge storage or cancel an existing setup intent.
+
+The buttons use Symcon's documented automatic URL/dialog dispatch with the
+`link` override omitted, so success still opens the browser in one click:
+https://www.symcon.de/en/service/documentation/developer-area/sdk-tools/sdk-php/configuration-forms/button/
+Tests execute the actual form action strings against the native setup fixture,
+including bare hostnames, invalid ports, embedded credentials, pending edits,
+existing setup state and exact custom-port/instance URLs.

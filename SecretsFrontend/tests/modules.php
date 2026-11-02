@@ -81,7 +81,7 @@ $form = json_decode($hookInstance->GetConfigurationForm(), true, 32, JSON_THROW_
 $fields = []; $collectFields = static function(array $items) use (&$collectFields, &$fields): void { foreach ($items as $item) { if (isset($item['name'])) $fields[$item['name']] = $item; if (isset($item['items'])) $collectFields($item['items']); } };
 $collectFields($form['actions']);
 secExpect(!isset($fields['GenerateSetupCode'],$fields['SetupAccessCode'],$fields['AdministratorEnrollmentCode']),'Manual-code setup fields remain.');
-secExpect($fields['OpenBootstrap']['type']==='Button'&&$fields['OpenBootstrap']['link']===true&&str_contains($fields['OpenBootstrap']['onClick'],'SECF_OpenBootstrap'),'Console setup does not use a supported link action.');
+secExpect($fields['OpenBootstrap']['type']==='Button'&&!array_key_exists('link',$fields['OpenBootstrap'])&&str_contains($fields['OpenBootstrap']['onClick'],'SECF_OpenBootstrapFromConsole'),'Console setup does not use a supported link action.');
 secExpect($fields['WizardURL']['value']===$expectedWizard,'Complete URL lost port or instance binding.');
 secExpect(!array_key_exists('WizardURL',$hookInstance->properties),'Display-only URL became a stored property.');
 $hookInstance->properties['Enabled'] = false;
@@ -96,14 +96,15 @@ $unconfigured = new SecretsFrontend(54321); $unconfigured->Create();
 $beforePreview = [$unconfigured->properties, $unconfigured->attributes];
 $unconfigured->PreviewWizardURL('https://test.hermitage.ap-fischer.de:46910/console/');
 $autoURL = 'https://test.hermitage.ap-fischer.de:46910/hook/secrets_frontend_54321';
-secExpect($unconfigured->form['WizardURL']['value'] === $autoURL,'Address preview did not fill the exact URL.');
+secExpect($unconfigured->form['WizardURL']['value'] === $autoURL&&$unconfigured->form['OpenBootstrap']['enabled'],'Address preview did not enable the exact URL.');
 secExpect($beforePreview === [$unconfigured->properties, $unconfigured->attributes], 'Previewing a URL altered instance configuration or setup authority.');
 secExpect($unconfigured->GetSetupWizardURL('https://test.hermitage.ap-fischer.de:46910/') === $autoURL, 'Open/copy action did not use the entered address and actual instance ID.');
 $previewForm = json_decode($unconfigured->GetConfigurationForm(), true, 32, JSON_THROW_ON_ERROR); $collectFields($previewForm['actions']);
 secExpect($fields['SetupAddress']['onChange'] === 'SECF_PreviewWizardURL($id, $SetupAddress);', 'The address field lacks its automatic URL update event or copy action.');
-foreach (['', 'http://test.hermitage.ap-fischer.de:46910', 'https://user:password@example.test', 'javascript:alert(1)'] as $invalidAddress) {
+foreach (['', 'heartbeat.ap-fischer.de', 'https://host.example:99999', 'http://test.hermitage.ap-fischer.de:46910', 'https://user:password@example.test', 'javascript:alert(1)'] as $invalidAddress) {
     $unconfigured->PreviewWizardURL($invalidAddress);
-    secExpect($unconfigured->form['WizardURL']['value'] === '', 'Invalid or cleared address retained a stale form URL.');
+    secExpect($unconfigured->form['WizardURL']['value'] === ''&&!$unconfigured->form['OpenBootstrap']['enabled'], 'Invalid or cleared address retained an enabled/stale form URL.');
+    secExpect(str_contains($unconfigured->form['SetupAddressStatus']['caption'],'https://'),'Invalid address has no correction example.');
 }
 require __DIR__ . '/http-symcon.php';
 echo "PASS address-field change automatically generates the complete wizard URL without setup, stored changes, manual instance IDs or scripts\n";

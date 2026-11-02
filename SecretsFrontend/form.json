@@ -87,6 +87,11 @@
       "onChange": "SECF_PreviewWizardURL($id, $SetupAddress);"
     },
     {
+      "type": "Label",
+      "name": "SetupAddressStatus",
+      "caption": "Include https:// at the start and the public port if required, for example https://secrets.example.com:46910. You can paste the full Symcon console address."
+    },
+    {
       "type": "CheckBox",
       "name": "BootstrapJournalStorage",
       "caption": "Setup records use private persistent storage",
@@ -96,8 +101,8 @@
       "type": "Button",
       "name": "OpenBootstrap",
       "caption": "Step 1: Open setup",
-      "link": true,
-      "onClick": "echo SECF_OpenBootstrap($id, $SetupAddress, \"\", false, $BootstrapJournalStorage);"
+      "onClick": "echo SECF_OpenBootstrapFromConsole($id, $SetupAddress, $BootstrapJournalStorage);",
+      "enabled": false
     },
     {
       "type": "ValidationTextBox",
@@ -115,8 +120,7 @@
       "type": "Button",
       "name": "OpenRecoveryBootstrap",
       "caption": "Recover administrator access",
-      "link": true,
-      "onClick": "echo SECF_OpenRecoveryBootstrap($id);"
+      "onClick": "echo SECF_OpenBootstrapFromConsole($id, \"\", false, true);"
     },
     {
       "type": "Label",

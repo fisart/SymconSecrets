@@ -67,12 +67,38 @@ class SecretsFrontend extends IPSModule
     {
         return SecretsFrontendCommissioning::address($Address) . $this->path();
     }
+    private const SETUP_ADDRESS_HELP='Include https:// at the start and the public port if required, for example https://secrets.example.com:46910. You can paste the full Symcon console address.';
+    private function setupAddressPreview(string $address): array
+    {
+        try{return ['url'=>$this->GetSetupWizardURL($address),'message'=>'Address ready. Select Step 1: Open setup.'];}
+        catch(Throwable $error){return ['url'=>'','message'=>self::SETUP_ADDRESS_HELP];}
+    }
     public function PreviewWizardURL(string $Address): void
     {
-        try { $url = $this->GetSetupWizardURL($Address); }
-        catch (InvalidArgumentException $exception) { $url = ''; }
-        $this->UpdateFormField('WizardURL', 'value', $url);
-
+        $preview=$this->setupAddressPreview($Address);
+        $this->UpdateFormField('WizardURL','value',$preview['url']);
+        $this->UpdateFormField('OpenBootstrap','enabled',$preview['url']!=='');
+        $this->UpdateFormField('SetupAddressStatus','caption',$preview['message']);
+    }
+    /** Console boundary: output is either a validated URL or a plain dialog message. */
+    public function OpenBootstrapFromConsole(string $Address='',bool $JournalStorageConfirmed=false,bool $Recovery=false): string
+    {
+        $address=trim($Address)!==''?$Address:$this->ReadPropertyString('AdminOrigin');
+        $preview=$this->setupAddressPreview($address);
+        if($preview['url']===''){
+            $this->PreviewWizardURL($address);
+            return 'Step 1: Correct the trusted Symcon address. Include the HTTPS prefix and any required public port. See the example below the address field.';
+        }
+        try{
+            $url=$this->OpenBootstrap($address,'',$Recovery,$JournalStorageConfirmed);
+            $this->UpdateFormField('WizardURL','value',$url);
+            $this->UpdateFormField('SetupAddressStatus','caption','Setup opened. Continue in the browser.');
+            return $url;
+        }catch(Throwable $error){
+            $this->UpdateFormField('SetupAddressStatus','caption','Setup could not be opened: '.$error->getMessage());
+            // No URL-like content here: automatic button dispatch must show a dialog.
+            return 'Setup could not be opened. Review the message below the trusted address, correct the problem and try again.';
+        }
     }
     private function updateWizardLinks(): void
     {
@@ -207,14 +233,16 @@ class SecretsFrontend extends IPSModule
     public function GetConfigurationForm(): string
     {
         $form=json_decode((string)file_get_contents(__DIR__.'/form.json'),true,32,JSON_THROW_ON_ERROR);
-        $origin=$this->ReadPropertyString('AdminOrigin');$url=$origin!==''?$origin.$this->path():'';
+        $origin=$this->ReadPropertyString('AdminOrigin');$preview=$this->setupAddressPreview($origin);$url=$preview['url'];
         $requirements=$this->bootstrapStorageRequirements();
         $recoveryAvailable=($this->bootstrapNative()['initialized']??false)===true;
         foreach($form['actions']as&$element){
             if(($element['name']??'')==='OpenRecoveryBootstrap')$element['enabled']=$recoveryAvailable;
             if(($element['name']??'')==='RecoveryAvailability')$element['visible']=!$recoveryAvailable;
             if(($element['name']??'')==='BootstrapJournalStorage'){$element['visible']=$requirements['confirmationRequired']&&!$this->ReadAttributeBoolean('BootstrapJournalConfirmed');$element['value']=$this->ReadAttributeBoolean('BootstrapJournalConfirmed');$element['caption']='I verified private access and persistence across container replacement for setup records: '.$requirements['data'].' and keys: '.$requirements['keys'];}
-            if(($element['name']??'')==='SetupAddress'){$element['value']=$origin;$element['visible']=$origin==='';}
+            if(($element['name']??'')==='SetupAddress'){$element['value']=$origin;$element['visible']=$url==='';}
+            if(($element['name']??'')==='OpenBootstrap')$element['enabled']=$url!=='';
+            if(($element['name']??'')==='SetupAddressStatus')$element['caption']=$preview['message'];
             if(($element['name']??'')==='WizardURL')$element['value']=$url;
         }unset($element);
         try{$views=json_decode($this->GetBootstrapConsoleView(),true);foreach($views as$v){
