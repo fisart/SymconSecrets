@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/NativeIssuers.php';
 
 /** Reuses SecretsManager's PHP-stream strict/pinned transport, without its legacy protocol or credentials. */
 final class SecretsBackendNativeLegacyHTTPS
@@ -61,6 +62,10 @@ final class SecretsBackendNativeLegacyHTTPS
         // Pinned mode authenticates the exact previously approved leaf certificate, as in SecretsManager.
         $ssl=['verify_peer'=>!$pinned,'verify_peer_name'=>!$pinned,'allow_self_signed'=>$pinned,'SNI_enabled'=>true,'peer_name'=>$host];
         if($pinned)$ssl['peer_fingerprint']=['sha256'=>$policy['fingerprint']];
+        return SecretsBackendNativeIssuers::run($ssl,static fn(array $options):string=>self::send($endpoint,$bytes,$policy,$options));
+    }
+    private static function send(string $endpoint,string $bytes,array $policy,array $ssl): string
+    {
         $context=stream_context_create(['ssl'=>$ssl,'http'=>['method'=>'POST','header'=>"Content-Type: application/json\r\nAccept: application/json\r\nConnection: close\r\n",'content'=>$bytes,'timeout'=>4.5,'ignore_errors'=>true,'follow_location'=>0,'max_redirects'=>0,'protocol_version'=>1.1]]);
         $warning='';$stream=false;$deadline=microtime(true)+4.5;
         set_error_handler(static function(int $severity,string $message)use(&$warning):bool{$warning=substr($message,0,2048).' '.$warning;$warning=substr($warning,0,4096);return true;});

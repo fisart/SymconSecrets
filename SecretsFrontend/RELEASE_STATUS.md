@@ -329,3 +329,17 @@ and failed authenticated probes, observed leaf/intermediate fingerprints, issuer
 signature availability, CA counts, absence of local paths and zero HTTP requests.
 The reported live failure remains unresolved until evidence from the sending Symcon
 host is available; changing from cURL to streams did not establish its root cause.
+
+## Module-local completion of the reported YE2 chain
+
+Strict peer HTTPS can complete the reported missing Let’s Encrypt YE2 chain using
+checksum-pinned public issuer certificates shipped with the module. Every candidate
+issuer must validate against a snapshot of the existing configured OpenSSL CA file
+before inclusion in a temporary request-local CA copy. No new root is introduced,
+no global or server certificate setting changes, and no network download occurs.
+Temporary files are deleted after the request. TLS hostname, validity and signature
+validation remains enabled before HTTP. Explicit certificate-pin mode is unaffected.
+Incomplete-chain loopback tests now succeed with the corresponding trusted issuer;
+wrong roots, hostname and expiry still fail before HTTP. Supplied production issuers
+validate to the exact Mozilla bundle fingerprint in the deployment report. Live
+successful delivery is still to be confirmed after the module update.

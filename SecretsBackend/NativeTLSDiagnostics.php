@@ -29,7 +29,8 @@ final class SecretsBackendNativeTLSDiagnostics
             for($i=0;$i<32&&openssl_error_string()!==false;++$i){}
             set_error_handler(static function(int $n,string $text)use(&$warnings):bool{$warnings=substr($warnings.' '.$text,0,8192);return true;});
             try{
-                $socket=stream_socket_client('tls://'.$host.':'.$port,$errno,$errstr,2.5,STREAM_CLIENT_CONNECT,$context);
+                if($verified)$socket=SecretsBackendNativeIssuers::run($ssl,static function(array $options)use(&$context,&$out,$host,$port){$out['issuerCompletionUsed']=isset($options['cafile']);$context=stream_context_create(['ssl'=>$options]);return stream_socket_client('tls://'.$host.':'.$port,$errno,$errstr,2.5,STREAM_CLIENT_CONNECT,$context);});
+                else $socket=stream_socket_client('tls://'.$host.':'.$port,$errno,$errstr,2.5,STREAM_CLIENT_CONNECT,$context);
                 $options=stream_context_get_options($context)['ssl'];$errors='';for($i=0;$i<16&&($error=openssl_error_string())!==false;++$i)$errors.=' '.$error;
                 $evidence=self::errors($warnings.' '.$errors);
                 if($verified){$out['authenticatedHandshake']=['ok'=>is_resource($socket),'errors'=>$evidence];if(is_resource($socket))$out['connectedAddress']=stream_socket_get_name($socket,true);}

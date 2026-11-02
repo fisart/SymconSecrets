@@ -153,3 +153,10 @@ old-manager route modes. It excludes local filesystem paths and old credentials.
 Observed certificates are untrusted evidence. Issuer-signature matching is not full
 certificate-path validation; implicit stores and CA directories are not enumerated.
 Different handshakes can reach different servers behind a load balancer.
+
+For the reported Let’s Encrypt YE2 missing-chain case, updating the Secrets module
+on the sending platform supplies the missing public issuer chain locally. Select
+**Try delivery now** afterwards. Symcon certificate settings do not need editing.
+The module uses only issuers validated by the existing configured CA roots and keeps
+normal server certificate verification enabled. Automatic certificate renewal to
+other issuers may require updated issuer material if the server still omits its chain.

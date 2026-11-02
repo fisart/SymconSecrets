@@ -172,6 +172,8 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
         server.shutdown()
         server.server_close()
 
+    issuer_path = folder / 'issuer.pem'
+    issuer_path.write_bytes(intermediate.public_bytes(serialization.Encoding.PEM))
     for options in [dict(san=False), dict(expired=True), dict(chain=False)]:
         server, url = run_server(**options)
         try:
@@ -179,8 +181,19 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
             refused = request(url, ['openssl.cafile=' + str(ca_path)])
             assert not refused['ok'] and refused['problem'] == 'certificate', refused
             assert len(counts) == before, 'A failed TLS identity/chain reached the application.'
+            completed = request(url, ['openssl.cafile=' + str(ca_path)], mode='issuers:' + str(issuer_path))
+            if options == dict(chain=False):
+                assert completed['ok'], completed
+                assert len(counts) == before + 1, counts
+                before = len(counts)
+            else:
+                assert not completed['ok'], completed
+                assert len(counts) == before, 'Issuer completion bypassed name or date validation.'
+            untrusted = request(url, ['openssl.cafile=' + str(other_path)], mode='issuers:' + str(issuer_path))
+            assert not untrusted['ok'], untrusted
+            assert len(counts) == before, 'A supplied intermediate became a new trust anchor.'
         finally:
             server.shutdown()
             server.server_close()
-    assert counts == [b'TLS-REQUEST-CANARY'] * 9, counts
+    assert counts == [b'TLS-REQUEST-CANARY'] * 10, counts
 print('PASS real HTTPS: reused original PHP streams; explicit approved pin succeeds and mismatch sends no HTTP; separate cURL CA file cannot override OpenSSL;  reproduced unknown-issuer failure, recovered through PHP/env trust, accepted valid chains, rejected wrong roots/hostname/expiry/incomplete chain before POST, no trust-policy bypass')
