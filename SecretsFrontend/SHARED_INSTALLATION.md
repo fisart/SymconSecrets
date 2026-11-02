@@ -136,3 +136,20 @@ browser tests for both roles, exact invitation/code binding, fresh approvals,
 current-pairing receipts, stale/replaced pairs, delayed replies, inactive windows,
 manual continuation and read-only received navigation. Actual remote TLS/network
 and deployment qualification remains part of installation testing.
+
+## Detailed certificate debugging
+
+If delivery is blocked by a certificate error, select **Try delivery now** on the
+sending platform. After the attempt, **Connection details for support** includes a
+version-4 report with `connectionDebug`. Use **Copy connection details**. No new
+invitation or approval is required. The diagnostic expires after ten minutes.
+
+The explicit retry performs two bounded TLS-only handshakes: one checks the saved
+transport policy; the other observes the public certificates without authenticating
+them. Neither probe sends HTTP or vault data, adopts a certificate, or changes trust.
+The report includes the connected addresses, SNI hostname, OpenSSL codes, certificate
+subjects/issuers/SANs/dates/fingerprints, bounded configured-CA inspection, and public
+old-manager route modes. It excludes local filesystem paths and old credentials.
+Observed certificates are untrusted evidence. Issuer-signature matching is not full
+certificate-path validation; implicit stores and CA directories are not enumerated.
+Different handshakes can reach different servers behind a load balancer.

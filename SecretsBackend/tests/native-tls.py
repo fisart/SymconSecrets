@@ -113,6 +113,23 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
 
     server, url = run_server()
     try:
+        before = len(counts)
+        debug = request(url, ['openssl.cafile=' + str(other_path)], mode='diagnose')
+        assert not debug['authenticatedHandshake']['ok'], debug
+        assert debug['certificateObservation']['handshakeSucceeded'], debug
+        assert debug['certificateObservation']['authenticated'] is False, debug
+        chain = debug['certificateObservation']['certificates']
+        assert len(chain) == 2 and chain[0]['sha256'] == server.fingerprint, debug
+        assert chain[0]['issuerSignatureFoundInPresentedChainOrConfiguredFile'], debug
+        assert not chain[1]['issuerSignatureFoundInPresentedChainOrConfiguredFile'], debug
+        assert debug['configuredCA']['certificateCount'] == 1, debug
+        assert debug['authenticatedHandshake']['errors']['opensslCodes'], debug
+        assert str(folder) not in json.dumps(debug), 'Local paths leaked into support report.'
+        assert len(counts) == before, 'TLS diagnostics sent an HTTP request.'
+        valid_debug = request(url, ['openssl.cafile=' + str(ca_path)], mode='diagnose')
+        assert valid_debug['authenticatedHandshake']['ok'], valid_debug
+        assert valid_debug['certificateObservation']['certificates'][1]['issuerSignatureFoundInPresentedChainOrConfiguredFile'], valid_debug
+        assert len(counts) == before, 'Successful TLS diagnostics sent HTTP.'
         old = request(url, mode='baseline')
         assert not old['ok'] and old['curlCode'] == 60, old
         fixed = request(url, ['openssl.cafile=' + str(ca_path)])

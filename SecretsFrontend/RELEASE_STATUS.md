@@ -313,3 +313,19 @@ cover chunked replies, redirects, oversized and truncated responses. Approval te
 cover exact pin display/sealing, configuration changes and continued delivery after
 old-module removal. Actual Symcon-to-Symcon delivery still requires deployment
 qualification; these local checks do not prove either user's live host configuration.
+
+## Deployment TLS diagnostic evidence
+
+An explicit, authenticated, CSRF-protected, rate-limited **Try delivery now** that
+still encounters a certificate failure now attaches a ten-minute diagnostic to the
+exact pairing. Background retries never perform diagnostic observation. TLS-only
+probes send no application data; an unauthenticated certificate observation is
+clearly labelled and is never promoted to trust. Fixed OpenSSL codes/reasons,
+certificate metadata, connected addresses, bounded CA-file fingerprint/count and
+public old-manager route modes distinguish deployment conditions without exposing
+vault material, credentials or local paths. The version-4 copy report retains this
+evidence across automatic status refreshes. Real loopback tests verify successful
+and failed authenticated probes, observed leaf/intermediate fingerprints, issuer
+signature availability, CA counts, absence of local paths and zero HTTP requests.
+The reported live failure remains unresolved until evidence from the sending Symcon
+host is available; changing from cURL to streams did not establish its root cause.

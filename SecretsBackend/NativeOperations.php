@@ -7,6 +7,7 @@ require_once __DIR__ . '/NativeEffects.php';
 require_once __DIR__ . '/BackupOriginPolicy.php';
 require_once __DIR__ . '/LegacyImport.php';
 require_once __DIR__ . '/NativeLegacyHTTPS.php';
+require_once __DIR__ . '/NativeTLSDiagnostics.php';
 
 /** All web mutations below enter through the existing fresh, exact WebAuthn approval. */
 final class SecretsBackendNativeOperations
@@ -271,6 +272,11 @@ final class SecretsBackendNativeOperations
             if(!is_array($p)||$p['state']==='REVOKED'||$p['pairingId']!==$data['pairingId'])throw new RuntimeException('This connection changed or was removed. Check progress first.');
             $this->store->rate('peer-manual-retry:'.$p['id'],6);
             $result=$this->peer->dispatch(1,$p['id'],true,$p['pairingId']);
+            $progress=$this->pairingStatus($this->store->read()['state']);
+            foreach($progress['peers']as$peer)if($peer['id']===$p['id']&&($peer['delivery']['problem']??'')==='certificate'){
+                $debug=SecretsBackendNativeTLSDiagnostics::inspect($p['descriptor']['endpoint'],$p['httpsPolicy']??['mode'=>'strict']);
+                $key='peer-tls-debug:'.$p['pairingId'];try{$this->store->replace($key,'peer-tls-debug',$debug,time()+600);}catch(Throwable $ignored){$this->store->put($key,'peer-tls-debug',$debug,time()+600);}
+            }
             return $this->pairingStatus($this->store->read()['state'])+['deliveryAttempted'=>$result!==[]];
         }
         if($action==='legacySources'){SecretsBackendNativePeer::exact($data,[]);return ['sources'=>SecretsBackendLegacyImport::sources()];}
@@ -369,6 +375,7 @@ final class SecretsBackendNativeOperations
         $received=[];foreach($state['native']['received']as$id=>$r)$received[]=['id'=>$id,'owner'=>$r['owner'],'revision'=>$r['revision'],'pairingId'=>$r['pairingId']??null,'at'=>$r['at']];
         $delivery=$this->peer->deliveryStatus($state);
         $peers=array_values(array_map(static fn($p)=>$p+['comparison'=>SecretsBackendNativePeer::comparison($p['pair']),'delivery'=>$delivery[$p['id']]??null],$state['pairing']['peers']));
+        foreach($peers as&$peer){try{$peer['connectionDebug']=$this->store->get('peer-tls-debug:'.$peer['pairingId'],'peer-tls-debug');}catch(Throwable $ignored){}}unset($peer);
         $sent=[];foreach($state['native']['deliveryReceipts']as$id=>$receipt)$sent[]=['peerId'=>$id]+array_intersect_key($receipt,array_flip(['pairingId','requestKind','status','treeId','revision']));
         return ['serverTime'=>time(),'peers'=>$peers,'pairingReceived'=>$received,'pairingSent'=>$sent,'globalTreeId'=>$state['native']['globalTreeId'],'globalRevision'=>$state['stream']['globalRevision'],'remoteHttpsAvailable'=>SecretsBackendNativeLegacyHTTPS::available(),'remoteHttpsTransport'=>'php-streams','globalWritable'=>$state['native']['globalWritable'],
             'outbox'=>array_values(array_map(static fn($j)=>array_intersect_key($j,array_flip(['id','receiverId','kind','sequence','status'])),$state['outbox']['jobs']))];
