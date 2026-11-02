@@ -160,3 +160,11 @@ on the sending platform supplies the missing public issuer chain locally. Select
 The module uses only issuers validated by the existing configured CA roots and keeps
 normal server certificate verification enabled. Automatic certificate renewal to
 other issuers may require updated issuer material if the server still omits its chain.
+
+**Pairing approved** means permission was granted, not that the network connection
+works. **Pairing approved · delivery blocked** requires attention to Connection
+check. **Ready · sharing verified** appears only after the current connection has
+received the other Global section and delivery of its current Global section was
+acknowledged. An approved pairing should be retried rather than recreated merely
+because delivery failed. Saved diagnostics have their own capture time; the support
+report identifies when they predate the latest delivery attempt.

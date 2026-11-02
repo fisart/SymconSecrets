@@ -343,3 +343,17 @@ Incomplete-chain loopback tests now succeed with the corresponding trusted issue
 wrong roots, hostname and expiry still fail before HTTP. Supplied production issuers
 validate to the exact Mozilla bundle fingerprint in the deployment report. Live
 successful delivery is still to be confirmed after the module update.
+
+## Pairing approval and delivery status
+
+`ACTIVE` is an authorization state, not a successful network connection. Wizard,
+connection list and coordinator now show **Pairing approved · delivery blocked**
+when the recorded outgoing delivery fails, or **Pairing approved · waiting for data
+exchange** until the existing current-pair/current-revision receipt checks pass.
+Only that same shared readiness predicate permits **Ready · sharing verified**.
+Step 5 explicitly says data exchange is blocked when appropriate. The obsolete
+cURL requirement is removed. Version-5 support reports include those sharing checks,
+a backend transport implementation marker, and whether saved diagnostic evidence
+predates the latest delivery attempt. Tests exercise ACTIVE with a failed acceptance,
+stale receipts, pending jobs and subsequent verified completion in both manual and
+coordinated UI flows. This status correction does not itself repair delivery.

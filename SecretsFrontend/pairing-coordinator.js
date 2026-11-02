@@ -55,7 +55,7 @@ async function pairCoordinatorPump(){const c=pairCoordinator;if(!c||c.busy||c.wa
     }
     if(c.stage==='sharing'){
      if(p&&!peerWizardState.role)peerWizardResume(p.id);
-     pairCoordinatorStatus(peerWizardStep===6?'Complete. Both platforms exchanged their Global sections. Local secrets remain private.':'Both approvals are complete. Checking the shared data automatically.');
+     pairCoordinatorStatus(peerWizardStep===6?'Complete. Both platforms exchanged their Global sections. Local secrets remain private.':peerDeliveryBlocked(p)?'Pairing approved · delivery blocked. The connection is not ready. Use Connection check below.':'Pairing approved. Waiting for verified data exchange before this connection is Ready.');
      if(peerWizardStep===6){pairCoordinatorSend('FINISHED');clearTimeout(pairCoordinatorTimer);pairCoordinator=null;$('peerCoordinatorCancel').hidden=true;$('peerCoordinatorAgain').hidden=false;$('peerCoordinatorRetry').hidden=true;renderPeerConnections();return;}
     }
    }else{
