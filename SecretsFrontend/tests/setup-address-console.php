@@ -1,7 +1,8 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/BootstrapFixture.php';
-function SECF_OpenBootstrapFromConsole(int $id,string $address='',bool $confirmed=false,bool $recovery=false): string { return $GLOBALS['instances'][$id]->OpenBootstrapFromConsole($address,$confirmed,$recovery); }
+// Symcon generates wrappers with every method argument required, including PHP defaults.
+function SECF_OpenBootstrapFromConsole(int $id,string $address,bool $confirmed,bool $recovery): string { return $GLOBALS['instances'][$id]->OpenBootstrapFromConsole($address,$confirmed,$recovery); }
 $GLOBALS['moduleIDs']=[6600=>SecretsBackend::FRONTEND,6601=>'{52165EDD-B2C0-40EC-8A59-42A97319B6E2}',700=>'{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}'];
 $hooks=new IPSModule(700);$hooks->properties['Hooks']='[]';$front=new SecretsFrontend(6600);$front->Create();$back=new SecretsBackend(6601);$back->Create();$front->properties['BackendInstanceID']=6601;
 $form=json_decode($front->GetConfigurationForm(),true,32,JSON_THROW_ON_ERROR);$fields=[];foreach($form['actions']as$field)if(isset($field['name']))$fields[$field['name']]=$field;

@@ -101,7 +101,7 @@
       "type": "Button",
       "name": "OpenBootstrap",
       "caption": "Step 1: Open setup",
-      "onClick": "echo SECF_OpenBootstrapFromConsole($id, $SetupAddress, $BootstrapJournalStorage);",
+      "onClick": "echo SECF_OpenBootstrapFromConsole($id, $SetupAddress, $BootstrapJournalStorage, false);",
       "enabled": false
     },
     {

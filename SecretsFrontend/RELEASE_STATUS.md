@@ -181,3 +181,9 @@ https://www.symcon.de/en/service/documentation/developer-area/sdk-tools/sdk-php/
 Tests execute the actual form action strings against the native setup fixture,
 including bare hostnames, invalid ports, embedded credentials, pending edits,
 existing setup state and exact custom-port/instance URLs.
+
+Console setup calls explicitly supply the recovery flag even for first-time setup.
+Symcon's generated wrapper requires every parameter despite PHP method defaults.
+The console regression wrapper therefore has no optional parameters, and a
+dependency-free form audit checks all frontend/backend callback argument counts
+against the public module methods plus their instance ID.
