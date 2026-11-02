@@ -13,13 +13,36 @@ trait SecretsBackendNativeBackend
         $binding = json_decode($this->ReadAttributeString('StorageBinding'), true);
         if (!is_array($binding) || ($binding['kind'] ?? '') !== 'native' || ($binding['backend'] ?? 0) !== $this->InstanceID
             || ($binding['uuid'] ?? '') !== $this->ReadAttributeString('NativeVaultUUID')) throw new RuntimeException('Native storage binding is incomplete; resume initialization in the wizard.');
-        $paths = SecretsBackendNativePlatform::paths($binding['paths']['vault'], $binding['paths']['keys'], IPS_GetKernelDir());
+        $paths = SecretsBackendNativePlatform::paths($binding['paths']['vault'], $binding['paths']['keys'], IPS_GetKernelDir(),false,$binding['legacyParent']??null);
         if ($paths['vaultDirectory'] !== $binding['paths']['vault'] || $paths['keyDirectory'] !== $binding['paths']['keys']) throw new RuntimeException('Native storage path binding changed.');
         $store = new SecretsBackendNativeStore($paths['vaultDirectory'], $paths['keyDirectory'], $this->GetBuffer('Runtime'),
             fn() => $this->GetBuffer('Runtime'));
         $id = $store->identity();
         if ($id['deploymentId'] !== $binding['uuid'] || $id['binding']['backend'] !== $this->InstanceID
             || $id['binding']['frontend'] !== $this->ReadPropertyInteger('FrontendInstanceID') || $id['binding']['origin'] !== $this->ReadPropertyString('AdminOrigin')) throw new RuntimeException('Native vault identity or instance binding changed.');
+        $physical=$store->storagePaths();$handoff=$store->storageHandoff();$move=$handoff['move'];
+        if(is_array($move)&&$physical===$move['to']){
+            $approved=$handoff['profile']['settings'];$configuration=$this->configuration();
+            $beforeRoots=$approved['HardwareRootsDirectory'];
+            if($beforeRoots!==''&&SecretsBackendNativePlatform::contains($move['to']['keyDirectory'],$beforeRoots))$beforeRoots=$move['from']['keyDirectory'].substr($beforeRoots,strlen($move['to']['keyDirectory']));
+            $changes=['DataDirectory'=>[$move['from']['vaultDirectory'],$physical['vaultDirectory']],'KeyDirectory'=>[$move['from']['keyDirectory'],$physical['keyDirectory']],'HardwareRootsDirectory'=>[$beforeRoots,$approved['HardwareRootsDirectory']]];
+            $expected=$configuration;
+            foreach($changes as $name=>$allowed){if(!in_array($configuration[$name],$allowed,true))throw new RuntimeException('Storage handoff configuration differs from the approved move.');$expected[$name]=$approved[$name];}
+            if(!SecretsBackendSecurityConfiguration::sameFoundation($approved,$expected))throw new RuntimeException('Unrelated foundation changes cannot accompany a storage move.');
+            if($binding['paths']!==['vault'=>$physical['vaultDirectory'],'keys'=>$physical['keyDirectory']]){
+                $binding['paths']=['vault'=>$physical['vaultDirectory'],'keys'=>$physical['keyDirectory']];$binding['legacyParent']=$move['legacyParent'];$this->WriteAttributeString('StorageBinding',SecretsBackendCodec::json($binding));
+            }
+            if($configuration!==$expected&&$this->GetBuffer('ApplyingNativeSettings')!=='1'){
+                // Only the already-approved physical path handoff can preserve this runtime.
+                // Any other configuration change takes the ordinary invalidation path.
+                $pending=json_decode(IPS_GetConfiguration($this->InstanceID),true,32,JSON_THROW_ON_ERROR);
+                foreach($configuration as $name=>$value)if(!isset($changes[$name])&&array_key_exists($name,$pending)&&$pending[$name]!==$value)throw new RuntimeException('Apply or discard other pending backend changes before completing the storage handoff.');
+                foreach($changes as $name=>$allowed)IPS_SetProperty($this->InstanceID,$name,$expected[$name]);
+                $this->SetBuffer('ApprovedStorageHandoff',SecretsBackendSecurityConfiguration::digest($expected));
+                IPS_ApplyChanges($this->InstanceID);
+                if($this->configuration()!==$expected)throw new RuntimeException('The approved storage configuration handoff needs recovery.');
+            }
+        }
         return $store;
     }
     private function nativeProfile(): array { return SecretsBackendSecurityConfiguration::nativeProfile($this->configuration(), $this->frontendSecurity()); }
@@ -75,7 +98,7 @@ trait SecretsBackendNativeBackend
         $result = ['nativeMode' => $this->ReadAttributeBoolean('GuidedV2Only'), 'initialized' => $this->nativeInitialized(), 'ready' => false,
             'platform' => SecretsBackendNativePlatform::capabilities(), 'backend' => $this->InstanceID];
         if ($result['initialized']) {
-            try { $store = $this->nativeStore(); $meta = $store->metadata(); $result += $meta; $result['ready'] = $this->ReadPropertyBoolean('Enabled');
+            try { $store = $this->nativeStore(); $meta = $store->metadata(); $result += $meta;$result['storage']=$store->storagePaths(); $result['ready'] = $this->ReadPropertyBoolean('Enabled');
                 $result['backupOrigin']=$store->read()['state']['policy']['backupOrigin']??null;
                 $result['enrollmentNeeded'] = count($store->read()['state']['identity']['credentials']) === 0;
             } catch (Throwable $e) { $result['message'] = $e->getMessage(); }

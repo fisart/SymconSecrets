@@ -8,7 +8,7 @@ function GetValueString(int $id): string { if($id!==6001)throw new RuntimeExcept
 function legacyCipher($value,string $key): string {$iv=random_bytes(12);$tag='';$cipher=openssl_encrypt(json_encode($value,JSON_THROW_ON_ERROR|JSON_PRESERVE_ZERO_FRACTION),'aes-128-gcm',hex2bin($key),0,$iv,$tag);return json_encode(['cipher'=>'aes-128-gcm','iv'=>bin2hex($iv),'tag'=>bin2hex($tag),'data'=>$cipher],JSON_THROW_ON_ERROR);}
 $GLOBALS['moduleIDs']=[5300=>SecretsBackend::FRONTEND,5301=>'{52165EDD-B2C0-40EC-8A59-42A97319B6E2}',700=>'{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}',6000=>SecretsBackendLegacyImport::MODULE];
 $hooks=new IPSModule(700);$hooks->properties['Hooks']='[]';$front=new SecretsFrontend(5300);$front->Create();$back=new SecretsBackend(5301);$back->Create();$old=new IPSModule(6000);$old->status=102;
-$root=str_replace('\\','/',sys_get_temp_dir()).'/sec-legacy-import-'.bin2hex(random_bytes(8));mkdir($root,0700);mkdir($root.'/old',0700);$keyHex=bin2hex(random_bytes(16));file_put_contents($root.'/old/master.key',$keyHex);file_put_contents($root.'/old/system.vault','SYSTEM-SECRET-CANARY');
+$root=str_replace('\\','/',sys_get_temp_dir()).'/sec-legacy-import-'.bin2hex(random_bytes(8));mkdir($root,0700);$root=SecretsBackendNativePlatform::directory($root);mkdir($root.'/old',0700);$keyHex=bin2hex(random_bytes(16));file_put_contents($root.'/old/master.key',$keyHex);file_put_contents($root.'/old/system.vault','SYSTEM-SECRET-CANARY');
 $old->properties=['Name'=>'Old PasswordSafe','OperationMode'=>1,'KeyFolderPath'=>$root.'/old','SlaveURLs'=>json_encode([['Server'=>'Other vault','Url'=>'https://peer.example/hook/secrets_123?pass=QUERY-CANARY','TlsMode'=>'strict']])];
 $source=(object)['ASK'=>(object)['Password'=>'IMPORT-VALUE-CANARY','Enabled'=>false,'Zero'=>0,'Number'=>1.0,'NumericObject'=>(object)['0'=>'string-key'],'EmptyObject'=>new stdClass(),'EmptyList'=>[],'Null'=>null], 'Existing'=>'OLD-VALUE', '__LOCAL__'=>(object)['LocalOnly'=>(object)['Token'=>'LOCAL-VALUE-CANARY']], '__AUTH__'=>(object)['Passkey'=>'DO-NOT-IMPORT-AUTH-CANARY']];
 $GLOBALS['legacyCipher']=legacyCipher($source,$keyHex);$GLOBALS['legacyReadCount']=0;$before=$GLOBALS['legacyCipher'];$beforeConfig=IPS_GetConfiguration(6000);$beforeKey=file_get_contents($root.'/old/master.key');
@@ -35,6 +35,53 @@ try{
  $old->status=104;$readCount=$GLOBALS['legacyReadCount'];secReject(static fn()=>$invoke('legacyPreview',['source'=>6000,'policy'=>'keep']),'Inactive source was read.');secExpect($GLOBALS['legacyReadCount']===$readCount,'Inactive source bytes were read.');$old->status=102;
  $preview=$invoke('legacyPreview',['source'=>6000,'policy'=>'keep'])['data'];$approved(['kind'=>'save','scope'=>'local','path'=>['Destination-change'],'revision'=>$invoke('session')['data']['revision'],'mode'=>'create','json'=>'"LATE-DESTINATION"']);secReject(static fn()=>$approved(['kind'=>'nativeLegacyImport','candidate'=>$preview['candidate'],'digest'=>$preview['digest']]),'Destination change did not invalidate import review.');
  $keyCopy=$beforeKey;unlink($root.'/old/master.key');secReject(static fn()=>$invoke('legacyPreview',['source'=>6000,'policy'=>'keep']),'Missing legacy key was accepted.');secExpect(!file_exists($root.'/old/master.key'),'A missing legacy key was generated.');file_put_contents($root.'/old/master.key',$keyCopy);
- $back->ApplyChanges();secExpect($back->Recover(),'Restart after import failed.');secExpect(SecretsBackendTree::value(((new ReflectionMethod(SecretsBackend::class,'nativeStore'))->invoke($back))->read()['state']['vault']['global'])->ASK->Password==='IMPORT-VALUE-CANARY','Restart lost imported secrets.');
- echo "PASS legacy import: real encrypted source, typed scopes, masked preview, conflicts, source-change rejection, preserved old files, pre-import backup, current authority and restart\n";
+ // Trust roots stored inside the key folder follow a key-only move without changing their fingerprints.
+ $store=(new ReflectionMethod(SecretsBackend::class,'nativeStore'))->invoke($back);$hardwareVersion='hw-'.SecretsBackendCodec::uuid();$hardwareRoot=$store->installHardwareRoots($hardwareVersion,['root-0.pem'=>'REVIEWED-ROOT-FIXTURE']);$current=$store->read();
+ $store->change($current['head'],SecretsBackendCodec::uuid(),hash('sha256','relocation-root-fixture'),static function(array $s)use($hardwareRoot):array{$s['policy']['management']['settings']['HardwareRootsDirectory']=$hardwareRoot;$s['policy']['management']['files']['HardwareRoots']=['root-0.pem'=>hash('sha256','REVIEWED-ROOT-FIXTURE')];return $s;});$back->properties['HardwareRootsDirectory']=$hardwareRoot;
+ $kernel=SecretsBackendNativePlatform::directory(IPS_GetKernelDir());$legacyParent=$kernel.'/legacy-private';
+ SecretsBackendNativePlatform::paths($legacyParent.'/secrets-native-data-6000',$legacyParent.'/secrets-native-keys-6000',$kernel,false,$legacyParent);
+ SecretsBackendNativePlatform::paths($kernel.'/legacy-second/secrets-native-data-6002',$legacyParent.'/secrets-native-keys-6000',$kernel,false,['vaultDirectory'=>$kernel.'/legacy-second','keyDirectory'=>$legacyParent]);
+ secReject(static fn()=>SecretsBackendNativePlatform::paths($kernel.'/webfront/secrets-native-data-6000',$kernel.'/webfront/secrets-native-keys-6000',$kernel,false,$kernel.'/webfront'),'Public imported storage accepted.');
+ // Each path can be selected independently; the first move changes only keys.
+ $preview=$invoke('legacyPreview',['source'=>6000,'policy'=>'keep','vaultLocation'=>'current','keyLocation'=>'imported','privateACLConfirmed'=>true,'persistenceConfirmed'=>true])['data'];
+ secExpect($preview['review']['storage']['vaultDirectory']===$pathsBefore['DataDirectory']&&$preview['review']['storage']['keyDirectory']===$root.'/old/secrets-native-keys-6000','Independent key-folder choice was not reviewed.');
+ $result=$approved(['kind'=>'nativeLegacyImport','candidate'=>$preview['candidate'],'digest'=>$preview['digest']]);$invoke('session');
+ secExpect($back->properties['DataDirectory']===$pathsBefore['DataDirectory']&&$back->properties['KeyDirectory']===$root.'/old/secrets-native-keys-6000','Key-only move did not update the console configuration.');
+ secExpect($back->properties['HardwareRootsDirectory']===$root.'/old/secrets-native-keys-6000/'.$hardwareVersion,'Approved hardware roots did not follow the key folder.');
+ secExpect($store->storagePaths()['keyDirectory']===$root.'/old/secrets-native-keys-6000','Existing store handle continued using the old key folder.');
+ $preview=$invoke('legacyPreview',['source'=>6000,'policy'=>'keep','vaultLocation'=>'imported','keyLocation'=>'current','privateACLConfirmed'=>true,'persistenceConfirmed'=>true])['data'];
+ $selected=$preview['review']['storage'];secExpect($selected['keyDirectory']===$root.'/old/secrets-native-keys-6000','Vault-only choice changed the current key folder.');
+ // A destination populated after preview is rejected before committing the import.
+ mkdir($selected['vaultDirectory'],0700);file_put_contents($selected['vaultDirectory'].'/unrelated','KEEP');
+ secReject(static fn()=>$approved(['kind'=>'nativeLegacyImport','candidate'=>$preview['candidate'],'digest'=>$preview['digest']]),'Populated storage destination accepted.');
+ secExpect(file_get_contents($selected['vaultDirectory'].'/unrelated')==='KEEP','Existing destination file was replaced.');unlink($selected['vaultDirectory'].'/unrelated');rmdir($selected['vaultDirectory']);
+ $preview=$invoke('legacyPreview',['source'=>6000,'policy'=>'keep','vaultLocation'=>'imported','keyLocation'=>'current','privateACLConfirmed'=>true,'persistenceConfirmed'=>true])['data'];
+ $result=$approved(['kind'=>'nativeLegacyImport','candidate'=>$preview['candidate'],'digest'=>$preview['digest']]);$invoke('session');
+ secExpect($back->properties['DataDirectory']===$root.'/old/secrets-native-data-6000'&&$back->properties['KeyDirectory']===$root.'/old/secrets-native-keys-6000','Vault-only move failed to preserve selected key location.');
+ secExpect($GLOBALS['legacyCipher']===$before&&IPS_GetConfiguration(6000)===$beforeConfig&&file_get_contents($root.'/old/master.key')===$beforeKey&&file_get_contents($root.'/old/system.vault')==='SYSTEM-SECRET-CANARY','Storage choices modified legacy data or keys.');
+ // Simulate a process stopping after the authenticated intent and during copying.
+ $store=(new ReflectionMethod(SecretsBackend::class,'nativeStore'))->invoke($back);$from=$store->storagePaths();
+ $extraKey=SecretsBackendCodec::uuid();$store->prepareDataKey($extraKey);$runtime=(new ReflectionProperty(SecretsBackendNativeStore::class,'runtime'))->getValue($store);
+ $copyKey=file_get_contents($from['keyDirectory'].'/data-'.$extraKey.'.key');
+ $store->installHardwareRoots('hw-'.SecretsBackendCodec::uuid(),['root-0.pem'=>'TEST-ROOT-MATERIAL']);
+ $effectId=hash('sha256','relocation-completion');$effectDigest=hash('sha256','relocation-request');$current=$store->read();$store->change($current['head'],SecretsBackendCodec::uuid(),hash('sha256','retain-relocation-capture'),static function(array $s)use($effectId,$effectDigest):array{$s['native']['effects'][$effectId]=['state'=>'ABANDONED','requestDigest'=>$effectDigest];return $s;});$store->captureEffect($effectId,$effectDigest,['status'=>'saved-before-move']);
+ foreach(['after_marker','relocation_after_intent','relocation_copy','relocation_before_receipt'] as $index=>$point){
+     $from=$store->storagePaths();$to=['vaultDirectory'=>$root.'/moved-data-'.$index,'keyDirectory'=>$root.'/moved-keys-'.$index];$current=$store->read();$once=true;
+     $fault=new SecretsBackendNativeStore($from['vaultDirectory'],$from['keyDirectory'],$runtime,null,static function(string $p)use($point,&$once):void{if($once&&$p===$point){$once=false;throw new RuntimeException('Injected move interruption');}});
+     secReject(static fn()=>$fault->change($current['head'],SecretsBackendCodec::uuid(),hash('sha256',$point),static function(array $s)use($from,$to):array{
+         $s['native']['storageMove']=['id'=>SecretsBackendCodec::uuid(),'from'=>$from,'to'=>$to,'kernel'=>IPS_GetKernelDir(),'legacyParent'=>null];
+         $s['policy']['management']['settings']['DataDirectory']=$to['vaultDirectory'];$s['policy']['management']['settings']['KeyDirectory']=$to['keyDirectory'];$s['policy']['management']['settings']['HardwareRootsDirectory']=$to['keyDirectory'].substr($s['policy']['management']['settings']['HardwareRootsDirectory'],strlen($from['keyDirectory']));return $s;
+     }),'Injected storage interruption did not stop the worker.');
+     secExpect($store->storagePaths()===$to,'Storage did not resume the exact interrupted move.');
+     secExpect(file_get_contents($to['keyDirectory'].'/data-'.$extraKey.'.key')===$copyKey,'Retired data key was lost in the move.');
+     secExpect($store->readCapturedEffect($effectId,$effectDigest)['status']==='saved-before-move','Captured provider result was lost in the move.');
+     $invoke('session'); // Also repairs the durable backend binding after a lost reply.
+ }
+ $current=$store->read();$store->change($current['head'],SecretsBackendCodec::uuid(),hash('sha256','after-relocation'),static function(array $s):array{$s['native']['relocationTest']='new-location-only';return $s;});
+ $original=new SecretsBackendNativeStore($pathsBefore['DataDirectory'],$pathsBefore['KeyDirectory'],$runtime);
+ secExpect($original->read()['state']['native']['relocationTest']==='new-location-only','A stale source handle revived an old state after relocation.');
+ // Simulate a restart with the last durable binding/configuration handoff unacknowledged.
+ $lastMove=$store->read()['state']['native']['storageMove'];$binding=json_decode($back->attributes['StorageBinding'],true);$binding['paths']=['vault'=>$lastMove['from']['vaultDirectory'],'keys'=>$lastMove['from']['keyDirectory']];$back->attributes['StorageBinding']=SecretsBackendCodec::json($binding);$back->properties['DataDirectory']=$lastMove['from']['vaultDirectory'];$back->properties['KeyDirectory']=$lastMove['from']['keyDirectory'];$back->properties['HardwareRootsDirectory']=$lastMove['from']['keyDirectory'].'/'.$hardwareVersion;
+ $back->ApplyChanges();secExpect($back->Recover(),'Restart after import failed: '.($back->values['Status']??''));secExpect(SecretsBackendTree::value(((new ReflectionMethod(SecretsBackend::class,'nativeStore'))->invoke($back))->read()['state']['vault']['global'])->ASK->Password==='IMPORT-VALUE-CANARY','Restart lost imported secrets.');
+ echo "PASS legacy import: real encrypted source, typed scopes, masked preview, conflicts, source-change rejection, preserved old files, pre-import backup, independent storage choices, interrupted moves, stale-worker routing, current authority and restart\n";
 }finally{$remove=static function($p)use(&$remove){if(is_dir($p)&&!is_link($p)){foreach(scandir($p)as$n)if($n!=='.'&&$n!=='..')$remove($p.'/'.$n);rmdir($p);}elseif(file_exists($p)||is_link($p))unlink($p);};if(is_dir($root))$remove($root);}

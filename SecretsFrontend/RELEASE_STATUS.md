@@ -125,9 +125,13 @@ backup and separate recovery key are returned, and the committed trees are
 verified against keyed expected digests. Legacy passkeys/system credentials do
 not become new authority. The old module and its files remain unchanged.
 
-Current native storage stays pinned. Suggested subfolders beneath the old key
-folder are saved as metadata, not used for relocation. Relocation of an already
-initialized vault is not implemented here. Old replication endpoints require
+Vault and key locations can independently keep the current folder or use separate
+subfolders beneath the imported legacy key folder. Exact selected paths are
+approved with the import. An authenticated, locked, crash-resumable handoff copies
+and verifies encrypted state, all keys and auxiliary material, fences retained old
+copies, and updates the pinned profile, binding and console paths. Occupied or
+unsafe destinations fail closed; storage/ACL confirmations apply. See
+`LEGACY_IMPORT.md` for protocol, bounds and deployment limitations. Old replication endpoints require
 new pairing. Source snapshots are bounded to the native memory budget (at most
 512 KiB plaintext); oversized or unsupported data fails before mutation. Static
 and simulated tests do not qualify a real production migration.

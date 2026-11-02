@@ -42,7 +42,11 @@ class SecretsBackend extends IPSModule
         $lock = 'SECB.Runtime.' . $this->InstanceID;
         if (!IPS_SemaphoreEnter($lock, 500)) throw new RuntimeException('Runtime transition is busy; repeat apply after recovery.');
         try {
-        parent::ApplyChanges(); $this->SetBuffer('Runtime', SecretsBackendCodec::b64(random_bytes(32))); $this->SetBuffer('Setup', '');
+        parent::ApplyChanges();
+        $approvedHandoff=$this->GetBuffer('ApprovedStorageHandoff');$this->SetBuffer('ApprovedStorageHandoff','');
+        if($approvedHandoff!==''&&hash_equals($approvedHandoff,SecretsBackendSecurityConfiguration::digest($this->configuration())))return;
+        $this->SetBuffer('ApplyingNativeSettings','1');
+        $this->SetBuffer('Runtime', SecretsBackendCodec::b64(random_bytes(32))); $this->SetBuffer('Setup', '');
         $this->SetBuffer('RecoveryDelay', '1000');
         if ($this->ReadAttributeBoolean('GuidedV2Only') && ($this->ReadAttributeString('StorageBinding') === '' || ((json_decode($this->ReadAttributeString('StorageBinding'), true)['kind'] ?? '') === 'native'))) { $this->SetValue('DebugEnabled', $this->ReadPropertyBoolean('DebugEnabled')); $this->nativeApply(); return; }
         if ($this->ReadAttributeString('StorageBinding') !== '') {
@@ -58,7 +62,7 @@ class SecretsBackend extends IPSModule
         $this->SetTimerInterval('Recovery', $this->ReadPropertyBoolean('Enabled') && IPS_GetKernelRunlevel() === 10103 ? 100 : 0);
         $this->SetStatus($this->ReadPropertyBoolean('Enabled') ? 200 : 104);
         $this->SetValue('Status', $this->ReadPropertyBoolean('Enabled') ? 'Recovery check pending.' : 'Disabled. Storage wizard can be authorized from this console.');
-        } finally { IPS_SemaphoreLeave($lock); }
+        } finally { $this->SetBuffer('ApplyingNativeSettings','');IPS_SemaphoreLeave($lock); }
     }
     public function MessageSink($TimeStamp, $SenderID, $Message, $Data): void
     {
@@ -169,6 +173,11 @@ class SecretsBackend extends IPSModule
     }
     public function Recover(): bool
     {
+        // Finish an already-authorized path/property handoff before taking the
+        // lifecycle semaphore: IPS_ApplyChanges needs that same semaphore.
+        if($this->ReadAttributeBoolean('GuidedV2Only')&&$this->nativeInitialized()&&$this->ReadPropertyBoolean('Enabled')){
+            try{$this->nativeStore();}catch(Throwable $e){$this->SetStatus(200);$this->SetValue('Status','Native vault locked: '.$e->getMessage());return false;}
+        }
         $lock = 'SECB.Runtime.' . $this->InstanceID;
         if (!IPS_SemaphoreEnter($lock, 100)) return false;
         try {

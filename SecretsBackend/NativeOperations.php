@@ -122,7 +122,18 @@ final class SecretsBackendNativeOperations
                 if(SecretsBackendNativeStore::canonical($s['vault'][$scope])!==SecretsBackendNativeStore::canonical($plan['trees'][$scope]))throw new RuntimeException('Imported tree verification failed.');
             }
             if($changed)$s['vault']['revision']=SecretsBackendCodec::increment($s['vault']['revision']);
-            $source=$c['source']['source'];$s['native']['legacyImports'][(string)$source['id']]=['source'=>$source,'summary'=>$plan['summary'],'at'=>gmdate('c'),'revision'=>$s['vault']['revision'],'excluded'=>$c['source']['excluded'],'storageAction'=>'keep-current','connectionsActive'=>false];
+            $storage=$c['storage'];$settings=&$s['policy']['management']['settings'];
+            $checked=$this->store->reviewStorageMove($storage['to'],IPS_GetKernelDir(),$storage['legacyParent']);
+            if($checked['from']!==$storage['from']||$checked['to']!==$storage['to'])throw new RuntimeException('Storage locations changed after review.');
+            if($storage['from']!==$storage['to']){
+                $s['native']['storageMove']=$storage;
+                $settings['DataDirectory']=$storage['to']['vaultDirectory'];$settings['KeyDirectory']=$storage['to']['keyDirectory'];
+                $roots=$settings['HardwareRootsDirectory'];
+                if($roots!==''&&SecretsBackendNativePlatform::contains($storage['from']['keyDirectory'],$roots))$settings['HardwareRootsDirectory']=$storage['to']['keyDirectory'].substr($roots,strlen($storage['from']['keyDirectory']));
+                $s['policy']['version']=SecretsBackendCodec::increment($s['policy']['version']);
+            }
+            unset($settings);
+            $source=$c['source']['source'];$s['native']['legacyImports'][(string)$source['id']]=['source'=>$source,'summary'=>$plan['summary'],'at'=>gmdate('c'),'revision'=>$s['vault']['revision'],'excluded'=>$c['source']['excluded'],'storageAction'=>$storage['from']===$storage['to']?'keep-current':'use-selected','storage'=>$storage['to'],'connectionsActive'=>false];
         }elseif($kind==='nativeConnectStage'){
             SecretsBackendBackupOriginPolicy::stage($s,$op['origin']);$s['policy']['backupOrigin']=$op['policy'];
         }elseif($kind==='nativeConnectRevoke'){
@@ -280,18 +291,33 @@ final class SecretsBackendNativeOperations
     {
         $plan=SecretsBackendLegacyImport::plan($state,$c['source'],$c['policy'],$this->legacyLimit());
         if(!$state['native']['globalWritable']&&SecretsBackendNativeStore::canonical($plan['trees']['global'])!==SecretsBackendNativeStore::canonical($state['vault']['global']))throw new RuntimeException('Import global secrets at the vault that owns this tree.');
-        $profile=$state['policy']['management']['settings'];
         return ['source'=>$c['source']['source'],'excluded'=>$c['source']['excluded'],'summary'=>$plan['summary'],'conflictPolicy'=>$c['policy'],
-            'storage'=>['action'=>'keep-current','vaultDirectory'=>$profile['DataDirectory'],'keyDirectory'=>$profile['KeyDirectory']],
+            'storage'=>['action'=>$c['storage']['from']===$c['storage']['to']?'keep-current':'use-selected','choices'=>$c['storage']['choices'],'current'=>$c['storage']['from']]+$c['storage']['to'],
             'activeRecipients'=>count(array_filter($state['pairing']['peers'],static fn($peer)=>$peer['active'])),'connections'=>'Imported as inactive proposals; new pairing is required. Global imports follow existing active new-vault sharing.','authority'=>'Retain current administrators, keys, grants and peer trust.'];
     }
     private function legacyPreview(array $data): array
     {
-        SecretsBackendNativePeer::exact($data,['source','policy']);if(!is_int($data['source'])||!is_string($data['policy']))throw new RuntimeException('Select the old vault and conflict policy.');
+        $data+=['vaultLocation'=>'current','keyLocation'=>'current','privateACLConfirmed'=>false,'persistenceConfirmed'=>false];
+        SecretsBackendNativePeer::exact($data,['source','policy','vaultLocation','keyLocation','privateACLConfirmed','persistenceConfirmed']);if(!is_int($data['source'])||!is_string($data['policy']))throw new RuntimeException('Select the old vault and conflict policy.');
         $current=$this->store->read();$source=SecretsBackendLegacyImport::read($data['source'],$this->legacyLimit());
         $plan=SecretsBackendLegacyImport::plan($current['state'],$source,$data['policy'],$this->legacyLimit());
+        foreach(['vaultLocation','keyLocation'] as $choice)if(!in_array($data[$choice],['current','imported'],true))throw new RuntimeException('Choose current or imported locations.');
+        foreach(['privateACLConfirmed','persistenceConfirmed'] as $confirmation)if(!is_bool($data[$confirmation]))throw new RuntimeException('Invalid storage confirmation.');
+        if(IPS_HasChanges((int)$this->store->identity()['binding']['backend']))throw new RuntimeException('Apply or discard pending backend console edits before importing.');
+        $from=$this->store->storagePaths();$target=['vaultDirectory'=>$data['vaultLocation']==='current'?$from['vaultDirectory']:$source['source']['suggestedVaultDirectory'],'keyDirectory'=>$data['keyLocation']==='current'?$from['keyDirectory']:$source['source']['suggestedKeyDirectory']];
+        $parents=$current['state']['native']['storageMove']['legacyParent']??null;
+        if(!is_array($parents))$parents=['vaultDirectory'=>$parents,'keyDirectory'=>$parents];
+        if($data['vaultLocation']==='imported')$parents['vaultDirectory']=$source['source']['legacyKeyFolder'];
+        if($data['keyLocation']==='imported')$parents['keyDirectory']=$source['source']['legacyKeyFolder'];
+        $checked=$this->store->reviewStorageMove($target,IPS_GetKernelDir(),$parents);
+        if($checked['to']!==$from){
+            if(PHP_OS_FAMILY==='Windows'&&!$data['privateACLConfirmed'])throw new RuntimeException('Confirm private Windows folder permissions before using imported locations.');
+            $persistence=SecretsBackendNativePlatform::persistence($checked['to']['vaultDirectory'],$checked['to']['keyDirectory'],IPS_GetKernelDir());
+            if(($persistence['vault']['confirmationRequired']||$persistence['keys']['confirmationRequired'])&&!$data['persistenceConfirmed'])throw new RuntimeException('Confirm that the imported locations survive a container restart.');
+        }
+        $storage=$checked+['id'=>SecretsBackendCodec::uuid(),'kernel'=>IPS_GetKernelDir(),'legacyParent'=>$parents,'choices'=>['vault'=>$data['vaultLocation'],'keys'=>$data['keyLocation']]];
         $expected=$this->store->opaque('legacy-result:'.SecretsBackendNativeStore::canonical($plan['trees']));
-        $c=['session'=>$this->session,'head'=>$current['head'],'source'=>$source,'policy'=>$data['policy'],'expected'=>$expected,'expires'=>time()+300];$review=$this->legacyReview($c,$current['state']);
+        $c=['session'=>$this->session,'head'=>$current['head'],'source'=>$source,'policy'=>$data['policy'],'storage'=>$storage,'expected'=>$expected,'expires'=>time()+300];$review=$this->legacyReview($c,$current['state']);
         $id=SecretsBackendCodec::b64(random_bytes(32));$digest=$this->store->opaque('legacy-import:'.SecretsBackendNativeStore::canonical($c));$this->store->put($id,'legacy-import',$c,$c['expires']);
         return ['candidate'=>$id,'digest'=>$digest,'review'=>$review];
     }
@@ -301,7 +327,7 @@ final class SecretsBackendNativeOperations
         $actual=array_intersect_key($validated['state']['vault'],array_flip(['global','local']));
         if(!hash_equals($c['expected'],$this->store->opaque('legacy-result:'.SecretsBackendNativeStore::canonical($actual))))throw new RuntimeException('Import committed but verification needs review. Do not repeat blindly.');
         $this->store->delete($op['candidate']);
-        return ['legacyImported'=>true,'verified'=>true,'summary'=>$op['review']['summary'],'backup'=>$op['backup'],'recoveryKey'=>$op['backupKey']];
+        return ['legacyImported'=>true,'verified'=>true,'summary'=>$op['review']['summary'],'storage'=>$c['storage']['to'],'backup'=>$op['backup'],'recoveryKey'=>$op['backupKey']];
     }
     /** Keep the old vault read lock until the destination's durable commit finishes. */
     public function commit(array $op,callable $commit): array
@@ -318,7 +344,7 @@ final class SecretsBackendNativeOperations
         $received=[];foreach($state['native']['received']as$id=>$r)if(!isset($state['native']['trees'][$id]))$received[]=['id'=>$id,'owner'=>$r['owner'],'revision'=>$r['revision'],'at'=>$r['at'],'entries'=>SecretsBackendTree::listing($r['node'])];
         $owned=[];foreach($state['native']['trees']as$id=>$r)$owned[]=['id'=>$id,'owner'=>$r['owner'],'epoch'=>$r['epoch'],'revision'=>$r['revision'],'frozen'=>$r['frozen'],'entries'=>SecretsBackendTree::listing($r['node'])];
         $machines=[];foreach($state['native']['machines']as$m){unset($m['hash']);$machines[]=$m;}
-        return ['legacyImports'=>array_values($state['native']['legacyImports']??[]),'backupOrigin'=>$state['policy']['backupOrigin']??null,'primaryOrigin'=>$state['policy']['origin'],'info'=>$this->store->metadata(),'peerEndpoint'=>$this->peer->descriptor()['endpoint'],'peerDescriptor'=>$this->peer->descriptor(),
+        return ['legacyImports'=>array_values($state['native']['legacyImports']??[]),'backupOrigin'=>$state['policy']['backupOrigin']??null,'primaryOrigin'=>$state['policy']['origin'],'info'=>$this->store->metadata(),'storage'=>$this->store->storagePaths(),'peerEndpoint'=>$this->peer->descriptor()['endpoint'],'peerDescriptor'=>$this->peer->descriptor(),
             'globalTreeId'=>$state['native']['globalTreeId'],'globalWritable'=>$state['native']['globalWritable'],'ownedTrees'=>$owned,'transfers'=>array_map(static fn($t)=>array_diff_key($t,['node'=>true]),$state['native']['transfers']),
             'peers'=>array_values($state['pairing']['peers']),'received'=>$received,'machines'=>$machines,'queuedJobs'=>count($state['outbox']['jobs']),
             'providers'=>array_values(array_map(static fn($p)=>SecretsBackendNativeEffects::targetWritable($state,$p)?$p:array_replace($p,['status'=>'OWNER_CHANGED']),$state['native']['providers'])),'effects'=>array_map(static fn($e)=>array_intersect_key($e,array_flip(['id','providerId','state','reason','createdAt','httpStatus','attempts'])),$state['native']['effects']),

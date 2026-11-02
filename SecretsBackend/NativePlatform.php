@@ -48,14 +48,21 @@ final class SecretsBackendNativePlatform
         if ($resolved === false) throw new RuntimeException('Cannot resolve the storage ancestor.');
         return self::normalize(rtrim(str_replace('\\', '/', $resolved), '/') . ($suffix ? '/' . implode('/', $suffix) : '') ?: '/');
     }
-    public static function paths(string $vault, string $keys, string $kernel, bool $empty = false): array
+    public static function paths(string $vault, string $keys, string $kernel, bool $empty = false, string|array|null $legacyParent = null): array
     {
         $kernel = self::normalize(str_replace('\\', '/', realpath($kernel) ?: $kernel));
         $out = ['vaultDirectory' => self::directory($vault), 'keyDirectory' => self::directory($keys)];
         foreach ($out as $name => $path) {
             if ($path === '/' || preg_match('~^[A-Za-z]:/?$~', $path)) throw new RuntimeException('Do not use a filesystem root.');
             $reserved = $kernel . ($name === 'vaultDirectory' ? '/secrets-native-data/' : '/secrets-native-keys/');
-            if (self::contains($kernel, $path) && !self::contains(rtrim($reserved, '/'), $path)) throw new RuntimeException('Choose folders outside the Symcon installation or its dedicated native storage folders.');
+            $legacyAllowed=false;
+            $legacyFolder=is_array($legacyParent)?($legacyParent[$name]??null):$legacyParent;
+            if($legacyFolder!==null){
+                $parent=self::directory($legacyFolder);$relative=substr($path,strlen(rtrim($parent,'/'))+1);
+                $legacyAllowed=dirname($path)===$parent&&preg_match('/^secrets-native-(?:data|keys)-[0-9]+$/D',$relative)===1&&$parent!==$kernel;
+                foreach(['webfront','user','modules','scripts','templates'] as $public)if(self::contains($kernel.'/'.$public,$path))$legacyAllowed=false;
+            }
+            if (self::contains($kernel, $path) && !self::contains(rtrim($reserved, '/'), $path) && !$legacyAllowed) throw new RuntimeException('Choose folders outside the Symcon installation or its dedicated native storage folders.');
             if ($empty && is_dir($path)) { $list = scandir($path); if ($list === false || count($list) !== 2) throw new RuntimeException('Choose new or empty storage folders; existing vaults are never adopted.'); }
         }
         if (self::contains($out['vaultDirectory'], $out['keyDirectory']) || self::contains($out['keyDirectory'], $out['vaultDirectory'])) throw new RuntimeException('Vault and key folders must be separate and must not contain each other.');

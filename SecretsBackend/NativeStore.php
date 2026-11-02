@@ -4,6 +4,7 @@ require_once __DIR__ . '/BackendStorage.php';
 require_once __DIR__ . '/NativePlatform.php';
 require_once __DIR__ . '/Codec.php';
 require_once __DIR__ . '/BootstrapVerifier.php';
+require_once __DIR__ . '/NativeRelocation.php';
 
 /** One encrypted complete-state journal, implemented solely with supplied PHP. */
 final class SecretsBackendNativeStore implements SecretsBackendStorage
@@ -214,14 +215,49 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
     private function locked(callable $callback, bool $allowEmpty = false)
     {
         if ($this->depth > 0) return $callback();
-        $path = $this->directory . '/native.lock';
-        SecretsBackendNativePlatform::readPrivate($path, 0);
-        $h = fopen($path, 'r+b'); if ($h === false || !flock($h, LOCK_EX)) throw new RuntimeException('Native storage is busy.');
+        $locks=[];
+        $route=function()use(&$locks,$allowEmpty):void{
+            for($hop=0;$hop<16;$hop++){
+                if(!isset($locks[$this->directory])){
+                    $path=$this->directory.'/native.lock';SecretsBackendNativePlatform::readPrivate($path,0);
+                    $h=fopen($path,'r+b');if($h===false||!flock($h,LOCK_EX))throw new RuntimeException('Native storage is busy.');$locks[$this->directory]=$h;
+                }
+                $paths=$this->physicalPaths();$sign=fn(string $bytes):string=>$this->opaque($bytes);
+                $redirect=SecretsBackendNativeRelocation::read($paths,$this->identity['deploymentId'],$sign);
+                if($redirect===null){
+                    $this->load($allowEmpty);$move=$this->frame['state']['native']['storageMove']??null;
+                    if(is_array($move)&&$move['from']===$paths&&$move['to']!==$paths){
+                        $this->assertRuntimeSource();$redirect=SecretsBackendNativeRelocation::prepare($move,$this->identity['deploymentId'],$sign);$this->trip('relocation_after_intent');
+                    }else return;
+                }
+                $target=SecretsBackendNativeRelocation::resume($redirect,$sign,fn(string $point)=>$this->trip($point));
+                $key=SecretsBackendNativePlatform::readPrivate($target['keyDirectory'].'/master.key',32);
+                if(!hash_equals($this->key,$key))throw new RuntimeException('Relocated master key differs from the vault identity.');
+                $this->directory=$target['vaultDirectory'];$this->keyDirectory=$target['keyDirectory'];
+            }
+            throw new RuntimeException('Storage handoff chain exceeds its bound.');
+        };
         try {
-            $this->depth = 1; $this->dirty = false; $this->ordinaryChange = false; $this->load($allowEmpty);
-            $result = $callback(); if ($this->dirty) $this->save(); return $result;
-        } finally { $this->depth = 0; $this->frame = null; $this->dirty = false; flock($h, LOCK_UN); fclose($h); }
+            $this->depth=1;$this->dirty=false;$this->ordinaryChange=false;$route();
+            $result=$callback();if($this->dirty)$this->save();$route();return $result;
+        } finally { $this->depth=0;$this->frame=null;$this->dirty=false;foreach(array_reverse($locks)as$h){flock($h,LOCK_UN);fclose($h);} }
     }
+    private function physicalPaths(): array { return ['vaultDirectory'=>$this->directory,'keyDirectory'=>$this->keyDirectory]; }
+    public function storageHandoff(): array { return $this->locked(fn():array=>['move'=>$this->frame['state']['native']['storageMove']??null,'profile'=>$this->frame['state']['policy']['management']]); }
+    public function storagePaths(): array { return $this->locked(fn():array=>$this->physicalPaths()); }
+    public function reviewStorageMove(array $target,string $kernel,string|array|null $legacyParent=null): array
+    {
+        return $this->locked(function()use($target,$kernel,$legacyParent):array{
+            $this->active();$from=$this->physicalPaths();$to=SecretsBackendNativeRelocation::validate($from,$target,$kernel,true,$legacyParent);
+            if($from!==$to){
+                foreach($from as $kind=>$root)if($root!==$to[$kind])SecretsBackendNativeRelocation::inventory($root);
+                foreach($this->frame['ephemeral'] as $entry)if($entry['kind']==='upload'&&$entry['expires']>=time())throw new RuntimeException('Finish or expire the active backup upload before moving storage.');
+                foreach($this->frame['state']['native']['effects'] as $effect)if(!in_array($effect['state'],['COMPLETE','ERROR','ABANDONED'],true))throw new RuntimeException('Resolve pending OAuth refresh results before moving storage.');
+            }
+            return ['from'=>$from,'to'=>$to];
+        });
+    }
+
     private function assertRuntimeSource(): void
     {
         if ($this->currentRuntime !== null && !hash_equals((string)($this->currentRuntime)(), $this->runtime)) throw new RuntimeException('This native worker was superseded by a settings change or restart.');
@@ -362,25 +398,31 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
     public function operationStatus(string $id): array { return $this->locked(function()use($id):array{$this->active();$o=$this->frame['state']['operations']['outcomes'][$id]??null;return $o===null?['operationId'=>$id,'result'=>'UNKNOWN']:['operationId'=>$id,'result'=>'COMMITTED','head'=>$this->frame['outcomeHeads'][$id]];}); }
     public function captureEffect(string $id,string $requestDigest,array $result): void
     {
+        $this->locked(function()use($id,$requestDigest,$result):void{
         if(!preg_match('/^[a-f0-9]{64}$/D',$id)||!preg_match('/^[a-f0-9]{64}$/D',$requestDigest))throw new RuntimeException('Invalid effect capture identity.');
         $plain=SecretsBackendCodec::json($result);if(strlen($plain)>131072)throw new RuntimeException('Effect response exceeds capture bound.');
         $path=$this->directory.'/completion-'.$id.'.json';if(is_file($path)){if(self::canonical($this->readCapturedEffect($id,$requestDigest))!==self::canonical($result))throw new RuntimeException('Conflicting captured provider response.');return;}
         $iv=random_bytes(12);$tag='';$context='SECB.Native.Effect:'.$this->identity['deploymentId'].':'.$id.':'.$requestDigest;
         $cipher=openssl_encrypt($plain,'aes-256-gcm',$this->key,OPENSSL_RAW_DATA,$iv,$tag,$context,16);if(!is_string($cipher))throw new RuntimeException('Provider response capture encryption failed.');
         self::publishFile($path,SecretsBackendCodec::json(['requestDigest'=>$requestDigest,'iv'=>SecretsBackendCodec::b64($iv),'tag'=>SecretsBackendCodec::b64($tag),'data'=>SecretsBackendCodec::b64($cipher)]));
+        });
     }
     public function readCapturedEffect(string $id,string $requestDigest): ?array
     {
+        return $this->locked(function()use($id,$requestDigest): ?array{
         if(!preg_match('/^[a-f0-9]{64}$/D',$id)||!preg_match('/^[a-f0-9]{64}$/D',$requestDigest))throw new RuntimeException('Invalid effect capture reference.');$path=$this->directory.'/completion-'.$id.'.json';if(!is_file($path))return null;
         $b=json_decode(SecretsBackendNativePlatform::readPrivate($path,196608),true,8,JSON_THROW_ON_ERROR);if(($b['requestDigest']??'')!==$requestDigest)throw new RuntimeException('Captured provider predecessor changed.');
         $plain=openssl_decrypt(SecretsBackendCodec::unb64($b['data']),'aes-256-gcm',$this->key,OPENSSL_RAW_DATA,SecretsBackendCodec::unb64($b['iv'],12),SecretsBackendCodec::unb64($b['tag'],16),'SECB.Native.Effect:'.$this->identity['deploymentId'].':'.$id.':'.$requestDigest);
         if(!is_string($plain))throw new RuntimeException('Captured provider response authentication failed.');return json_decode($plain,true,32,JSON_THROW_ON_ERROR);
+        });
     }
     public function prepareDataKey(string $id): void
     {
+        $this->locked(function()use($id):void{
         if(!preg_match('/^[a-f0-9-]{36}$/D',$id))throw new RuntimeException('Invalid encryption key generation.');
         if(count(glob($this->keyDirectory.'/data-*.key')?:[])>=32)throw new RuntimeException('Verify a complete backup and compact retired encryption keys before rotating again.');
         $path=$this->keyDirectory.'/data-'.$id.'.key';if(is_file($path))throw new RuntimeException('Encryption key generation already exists.');self::publishFile($path,random_bytes(32));
+        });
     }
     public function compactKeys(): void
     {
@@ -389,11 +431,13 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
     }
     public function installHardwareRoots(string $version,array $roots): string
     {
+        return $this->locked(function()use($version,$roots): string{
         if(!preg_match('/^hw-[a-f0-9-]{36}$/D',$version))throw new RuntimeException('Invalid native hardware generation.');
         $path=$this->keyDirectory.'/'.$version;SecretsBackendNativePlatform::makePrivate($path);
         foreach($roots as$name=>$pem){if(!preg_match('/^root-[0-9]{1,2}\.pem$/D',$name))throw new RuntimeException('Invalid hardware certificate name.');$file=$path.'/'.$name;
             if(is_file($file)){if(!hash_equals(hash('sha256',SecretsBackendNativePlatform::readPrivate($file,65536)),hash('sha256',$pem)))throw new RuntimeException('Existing hardware root generation changed.');}else self::publishFile($file,$pem);}
         return $path;
+        });
     }
     public function verifyOwnBackup(array $material,array $current): void
     {
@@ -401,7 +445,7 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
         $before=$material['state'];$after=$current;foreach($before['identity']['credentials']as&$c)unset($c['counter'],$c['tested']);unset($c);foreach($after['identity']['credentials']as&$c)unset($c['counter'],$c['tested']);unset($c);
         if(self::stateDigest($before)!==self::stateDigest($after))throw new RuntimeException('The backup predates current secrets or permissions. Create and verify a current backup first.');
     }
-    public function stagingDirectory(): string { $path=$this->directory.'/uploads';SecretsBackendNativePlatform::makePrivate($path);return $path; }
+    public function stagingDirectory(): string { return $this->locked(function():string{$path=$this->directory.'/uploads';SecretsBackendNativePlatform::makePrivate($path);return $path;}); }
     /** Called only after an administrator's exact export approval. Never used in settings exports. */
     public function backupMaterial(?array $validated = null): array
     {
