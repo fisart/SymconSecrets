@@ -284,8 +284,8 @@ final class SecretsBackendApplication
         if ($action === 'prepare') {
             self::exact($data, ['operation']); $operation = $this->operation($data['operation'], $current['state']);
             $this->rejectionContext = $this->audit($operation['kind'], $session['credential'], SecretsBackendCodec::json(array_intersect_key($operation, array_flip(['kind', 'scope', 'path', 'credentialId']))));
-            if ($this->settings['origin'] !== $this->primaryOrigin() && !in_array($operation['kind'],['save','delete','reveal','nativeReveal','nativeBackup'],true)) throw new RuntimeException('Use the primary address for administrator changes.');
-            $class = str_starts_with($operation['kind'], 'native') && $native instanceof SecretsBackendNativeOperations ? SecretsBackendNativeOperations::actionClass($operation['kind']) : (in_array($operation['kind'], ['save', 'delete'], true) ? 'write' : ($operation['kind'] === 'reveal' ? 'reveal' : 'identity'));
+            if ($this->settings['origin'] !== $this->primaryOrigin() && !in_array($operation['kind'],['save','delete','rename','reveal','nativeReveal','nativeBackup'],true)) throw new RuntimeException('Use the primary address for administrator changes.');
+            $class = str_starts_with($operation['kind'], 'native') && $native instanceof SecretsBackendNativeOperations ? SecretsBackendNativeOperations::actionClass($operation['kind']) : (in_array($operation['kind'], ['save', 'delete', 'rename'], true) ? 'write' : ($operation['kind'] === 'reveal' ? 'reveal' : 'identity'));
             $hardware = $class === 'identity' ? in_array(true, $current['state']['policy']['hardware'], true) : $current['state']['policy']['hardware'][$class];
             if ($operation['kind'] === 'policy' && in_array(true, $operation['hardware'], true)) $hardware = true;
             $eligible = array_filter($current['state']['identity']['credentials'], static fn($credential) => $credential['administrator'] === $session['administrator']);
@@ -339,11 +339,12 @@ final class SecretsBackendApplication
     {
         $kind = $operation['kind'] ?? '';
         if (is_string($kind) && str_starts_with($kind, 'native') && ($this->settings['nativeOps'] ?? null) instanceof SecretsBackendNativeOperations) return $this->settings['nativeOps']->normalize($operation, $state, $stored);
-        if (in_array($kind, ['save', 'delete', 'reveal'], true)) {
-            self::exact($operation, $kind === 'save' ? ['kind', 'scope', 'path', 'revision', 'mode', 'json'] : ['kind', 'scope', 'path', 'revision']);
+        if (in_array($kind, ['save', 'delete', 'rename', 'reveal'], true)) {
+            self::exact($operation, $kind === 'save' ? ['kind', 'scope', 'path', 'revision', 'mode', 'json'] : ($kind==='rename'?['kind','scope','path','revision','newName']:['kind', 'scope', 'path', 'revision']));
             if (!in_array($operation['scope'], ['global', 'local'], true) || !is_array($operation['path']) || (!$operation['path'] && $kind !== 'reveal') || !is_string($operation['revision']) || $operation['revision'] !== $state['vault']['revision']) throw new RuntimeException('Invalid scope or stale revision.');
             SecretsBackendTree::path($operation['path']);
             if ($kind === 'save') { if (!is_string($operation['json']) || !in_array($operation['mode'], ['create', 'replace'], true)) throw new InvalidArgumentException('Invalid save.'); SecretsBackendTree::parse($operation['json']); }
+            elseif($kind==='rename'){if(!is_string($operation['newName']))throw new InvalidArgumentException('Enter a folder name.');$copy=$state['vault'][$operation['scope']];SecretsBackendTree::rename($copy,$operation['path'],$operation['newName']);}
             else SecretsBackendTree::at($state['vault'][$operation['scope']], $operation['path']);
         } elseif ($kind === 'revoke') {
             self::exact($operation, ['kind', 'credentialId']);
@@ -373,9 +374,10 @@ final class SecretsBackendApplication
     private function apply(array $operation, array $state): array
     {
         if (str_starts_with($operation['kind'], 'native') && ($this->settings['nativeOps'] ?? null) instanceof SecretsBackendNativeOperations) return $this->settings['nativeOps']->apply($operation, $state);
-        if (in_array($operation['kind'], ['save', 'delete'], true)) {
+        if (in_array($operation['kind'], ['save', 'delete', 'rename'], true)) {
             if ($operation['scope'] === 'global' && isset($state['native']) && !$state['native']['globalWritable']) throw new RuntimeException('This global tree is frozen or owned by a different vault.');
-            SecretsBackendTree::edit($state['vault'][$operation['scope']], $operation['path'], $operation['kind'] === 'save' ? SecretsBackendTree::parse($operation['json']) : null, $operation['kind'] === 'save' ? $operation['mode'] : 'delete');
+            if($operation['kind']==='rename')SecretsBackendTree::rename($state['vault'][$operation['scope']],$operation['path'],$operation['newName']);
+            else SecretsBackendTree::edit($state['vault'][$operation['scope']], $operation['path'], $operation['kind'] === 'save' ? SecretsBackendTree::parse($operation['json']) : null, $operation['kind'] === 'save' ? $operation['mode'] : 'delete');
             $state['vault']['revision'] = SecretsBackendCodec::increment($state['vault']['revision']);
             if ($operation['scope'] === 'global') {
                 $state['stream']['globalRevision'] = SecretsBackendCodec::increment($state['stream']['globalRevision']);

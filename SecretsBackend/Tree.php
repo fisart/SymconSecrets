@@ -75,6 +75,22 @@ final class SecretsBackendTree
             else $root['items'][$i] = $value;
         }
     }
+    /** Rename an object entry in place; keep its entire typed subtree and sibling order. */
+    public static function rename(array &$root,array $path,string $newName): void
+    {
+        self::path($path);self::name($newName);
+        if(!$path||!is_string($path[count($path)-1]))throw new InvalidArgumentException('Choose a named folder; roots and list positions cannot be renamed.');
+        $part=array_shift($path);$i=self::index($root,$part);
+        if($i<0)throw new InvalidArgumentException('Folder changed; reload the tree.');
+        if($path){
+            if($root['type']==='object')self::rename($root['entries'][$i]['node'],$path,$newName);
+            else self::rename($root['items'][$i],$path,$newName);
+            return;
+        }
+        if($root['type']!=='object'||!in_array($root['entries'][$i]['node']['type'],['object','array'],true))throw new InvalidArgumentException('Choose a named folder to rename.');
+        if(self::index($root,$newName)>=0)throw new InvalidArgumentException('That name already exists in this folder.');
+        $root['entries'][$i]['key']=$newName;
+    }
     public static function listing(array $root, array $path = []): array
     {
         $rows = [['path' => $path, 'type' => $root['type'], 'children' => $root['type'] === 'object' ? count($root['entries']) : ($root['type'] === 'array' ? count($root['items']) : 0)]];

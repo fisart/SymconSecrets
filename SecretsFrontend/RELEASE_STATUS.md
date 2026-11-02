@@ -135,3 +135,16 @@ unsafe destinations fail closed; storage/ACL confirmations apply. See
 new pairing. Source snapshots are bounded to the native memory budget (at most
 512 KiB plaintext); oversized or unsupported data fails before mutation. Static
 and simulated tests do not qualify a real production migration.
+
+## Folder editing
+
+Opening a folder keeps that folder selected, including when it has no children.
+The existing pencil becomes **Rename folder** and the bin deletes the selected
+folder with the usual exact approval; folders can also be selected from their
+parent's contents. Rename is one atomic tree mutation, preserving the complete
+typed subtree without sending its values to the browser. Name collisions, root
+renames and list-position renames are rejected. Global/local and owned shared
+trees retain their existing revision, hardware-write, ownership and replication
+rules; received and frozen trees stay read-only. After a confirmed rename the
+breadcrumb/history follows the new name, and deleting the open folder returns to
+its parent. Cancellation leaves navigation unchanged.

@@ -14,7 +14,7 @@ final class SecretsBackendNativeOperations
     private ?array $legacyCommitSource=null;
     public function __construct(private SecretsBackendNativeStore $store,private SecretsBackendNativePeer $peer,private $hardwareApplied=null){}
     public function bindSession(string $hash): void { $this->session=$hash; }
-    public static function actionClass(string $kind): string { return match($kind){'nativeBackup'=>'export','nativeReveal'=>'reveal','nativeRestore','nativeSharedSave','nativeSharedDelete'=>'write',default=>'identity'}; }
+    public static function actionClass(string $kind): string { return match($kind){'nativeBackup'=>'export','nativeReveal'=>'reveal','nativeRestore','nativeSharedSave','nativeSharedDelete','nativeSharedRename'=>'write',default=>'identity'}; }
     public function uploads(): SecretsBackendNativeUploads { if($this->session==='')throw new RuntimeException('Administrator session required.');return new SecretsBackendNativeUploads($this->store,$this->session); }
     public static function machineTarget(array $state,string $scope): array
     {
@@ -96,11 +96,11 @@ final class SecretsBackendNativeOperations
                 SecretsBackendNativePeer::exact($op,['kind','transferId']);$t=$state['native']['transfers'][$op['transferId']]??null;
                 if(!is_array($t)||$t['direction']!=='incoming'||$t['state']!=='PENDING_APPROVAL')throw new RuntimeException('Select a pending transfer offered to this vault.');
                 $op['certificateDigest']=SecretsBackendNativePeer::digest($t['certificate']);$op['acceptance']=$this->peer->acceptance($t['certificate']);break;
-            case 'nativeSharedSave':case 'nativeSharedDelete':
-                SecretsBackendNativePeer::exact($op,$kind==='nativeSharedSave'?['kind','treeId','path','revision','mode','json']:['kind','treeId','path','revision']);
+            case 'nativeSharedSave':case 'nativeSharedDelete':case 'nativeSharedRename':
+                SecretsBackendNativePeer::exact($op,$kind==='nativeSharedSave'?['kind','treeId','path','revision','mode','json']:($kind==='nativeSharedRename'?['kind','treeId','path','revision','newName']:['kind','treeId','path','revision']));
                 $tree=$state['native']['trees'][$op['treeId']]??null;
                 if(!is_array($tree)||$tree['owner']!==$state['native']['vaultId']||$tree['frozen']||$tree['revision']!==$op['revision']||!is_array($op['path'])||!$op['path'])throw new RuntimeException('This tree is frozen, stale or owned by another vault.');
-                SecretsBackendTree::path($op['path']);if($kind==='nativeSharedSave'){if(!in_array($op['mode'],['create','replace'],true)||!is_string($op['json']))throw new RuntimeException('Invalid owned-tree edit.');SecretsBackendTree::parse($op['json']);}else SecretsBackendTree::at($tree['node'],$op['path']);break;
+                SecretsBackendTree::path($op['path']);if($kind==='nativeSharedSave'){if(!in_array($op['mode'],['create','replace'],true)||!is_string($op['json']))throw new RuntimeException('Invalid owned-tree edit.');SecretsBackendTree::parse($op['json']);}elseif($kind==='nativeSharedRename'){if(!is_string($op['newName']))throw new RuntimeException('Enter a folder name.');$copy=$tree['node'];SecretsBackendTree::rename($copy,$op['path'],$op['newName']);}else SecretsBackendTree::at($tree['node'],$op['path']);break;
             case 'nativeFork':SecretsBackendNativePeer::exact($op,['kind','treeId']);if($op['treeId']!==$state['native']['globalTreeId']||$state['native']['globalWritable'])throw new RuntimeException('Fork only the selected frozen global lineage.');$op['newTreeId']=SecretsBackendCodec::uuid();break;
             default:throw new RuntimeException('Unknown native management operation.');
         }
@@ -210,9 +210,10 @@ final class SecretsBackendNativeOperations
             $subscribers=[];foreach($cert['recipients']as$r)$subscribers[$r['recipient']['vaultId']]=['descriptor'=>$r['recipient'],'subscriptionId'=>$r['subscriptionId'],'sequence'=>'0','nodeDigest'=>$cert['nodeDigest']];
             $s['native']['trees'][$cert['treeId']]=['owner'=>$s['native']['vaultId'],'epoch'=>$cert['newEpoch'],'revision'=>$cert['revision'],'node'=>$t['node'],'frozen'=>false,'certificate'=>$cert,'acceptance'=>$op['acceptance'],'subscribers'=>$subscribers];
             $s['native']['transfers'][$op['transferId']]['state']='ACCEPTED';$s['vault']['revision']=SecretsBackendCodec::increment($s['vault']['revision']);$s=SecretsBackendNativePeer::queueOwned($s,$cert['treeId']);
-        }elseif(in_array($kind,['nativeSharedSave','nativeSharedDelete'],true)){
+        }elseif(in_array($kind,['nativeSharedSave','nativeSharedDelete','nativeSharedRename'],true)){
             $tree=$s['native']['trees'][$op['treeId']]??null;if(!is_array($tree)||$tree['frozen']||$tree['owner']!==$s['native']['vaultId']||$tree['revision']!==$op['revision'])throw new RuntimeException('Owned tree changed before commit.');
-            SecretsBackendTree::edit($s['native']['trees'][$op['treeId']]['node'],$op['path'],$kind==='nativeSharedSave'?SecretsBackendTree::parse($op['json']):null,$kind==='nativeSharedSave'?$op['mode']:'delete');
+            if($kind==='nativeSharedRename')SecretsBackendTree::rename($s['native']['trees'][$op['treeId']]['node'],$op['path'],$op['newName']);
+            else SecretsBackendTree::edit($s['native']['trees'][$op['treeId']]['node'],$op['path'],$kind==='nativeSharedSave'?SecretsBackendTree::parse($op['json']):null,$kind==='nativeSharedSave'?$op['mode']:'delete');
             $s['native']['trees'][$op['treeId']]['revision']=SecretsBackendCodec::increment($tree['revision']);$s['vault']['revision']=SecretsBackendCodec::increment($s['vault']['revision']);$s=SecretsBackendNativePeer::queueOwned($s,$op['treeId']);
         }elseif($kind==='nativeFork'){
             if($s['native']['globalTreeId']!==$op['treeId']||$s['native']['globalWritable'])throw new RuntimeException('Frozen lineage changed.');
@@ -268,7 +269,7 @@ final class SecretsBackendNativeOperations
         if($op['kind']==='nativeConnectRevoke')$out+=['origin'=>$op['origin'],'generation'=>$op['generation'],'effect'=>'Invalidate backup sessions, challenges and pending enrollment.'];
         if($op['kind']==='nativeConnectActivate'){$c=$op['candidateRecord'];$out+=['origin'=>$c['origin'],'rpId'=>parse_url($c['origin'],PHP_URL_HOST),'administrator'=>$c['entry']['administrator'],'userHandle'=>$c['entry']['userHandle'],'credential'=>$c['entry']['id'],'fingerprint'=>hash('sha256',$c['entry']['publicKey']),'browserKey'=>$c['keyDigest'],'rights'=>$c['rights'],'candidateDigest'=>$op['digest'],'effect'=>'Activate exactly this tested backup credential.'];}
 
-        foreach(['label','hardware','probe','name','scope','path','write','peerId','mode','sourceVault','sourceAt','backupDigest','treeId','transferId','newTreeId']as$key)if(isset($op[$key]))$out[$key]=$op[$key];
+        foreach(['label','hardware','probe','name','newName','scope','path','write','peerId','mode','sourceVault','sourceAt','backupDigest','treeId','transferId','newTreeId']as$key)if(isset($op[$key]))$out[$key]=$op[$key];
         if(isset($op['pair']))$out+=['peerURL'=>$op['pair']['a']['endpoint'],'peerVault'=>$op['pair']['a']['vaultId'],'peerFingerprint'=>hash('sha256',$op['pair']['a']['signKey']),'pairingDigest'=>SecretsBackendNativePeer::digest($op['pair'])];
         if($op['kind']==='nativeHardwareProfile')$out+=['trustVersion'=>$op['version'],'certificateFingerprints'=>$op['hashes'],'allowedAAGUIDs'=>$op['aaguids'],'effect'=>'Existing verified hardware credentials must be re-enrolled and tested against this new trust generation. Hardware-only policy remains enforced.'];
         if(isset($op['certificate']))$out+=['ownershipCertificate'=>SecretsBackendNativePeer::digest($op['certificate']),'newOwner'=>$op['certificate']['newOwner'],'recipients'=>count($op['certificate']['recipients']),'effect'=>'Freeze this writer permanently within the current lineage; the new owner must explicitly accept.'];
