@@ -16,7 +16,17 @@ $request=['origin'=>'https://secrets.example.test','cookie'=>'','csrf'=>'','remo
 $invoke=static function(string $action,array $data=[])use($front,&$request):array{$r=(new ReflectionMethod(SecretsFrontend::class,'gateway'))->invoke($front,['action'=>$action,'data'=>$data]+$request);if($r['status']!==200)throw new RuntimeException($action.': '.json_encode($r));return json_decode(json_encode($r),true);};
 try{
  $key=secKey();$login=secBootstrapInitialize($front,$request,$key,['backend'=>5301,'portal'=>0,'documentation'=>0,'theme'=>'system','vaultDirectory'=>$root.'/data','keyDirectory'=>$root.'/keys','addPortalLink'=>false,'debugEnabled'=>false,'privateACLConfirmed'=>true,'persistenceConfirmed'=>true]);$request['cookie']=explode(';',$login['cookie'])[0];$request['csrf']=$login['data']['csrf'];$counter=1;
- $approved=static function(array $op)use($invoke,$key,&$counter):array{$p=$invoke('prepare',['operation'=>$op])['data'];return $invoke('approve',['challengeId'=>$p['challengeId'],'credential'=>secAssertion($key,$p['options']['challenge'],++$counter)])['data'];};
+ $approved=static function(array $op)use($invoke,$key,&$counter,$back,&$request):array{
+     $p=$invoke('prepare',['operation'=>$op])['data'];$data=['challengeId'=>$p['challengeId'],'credential'=>secAssertion($key,$p['options']['challenge'],++$counter)];
+     // Keep backend exceptions visible in storage fault tests; the earlier imports
+     // exercise the full gateway, including its deliberately masked error replies.
+     if($GLOBALS['legacyDirectApproval']??false){
+         $app=(new ReflectionMethod(SecretsBackend::class,'nativeApplication'))->invoke($back);
+         set_error_handler(static function(int $severity,string $message,string $file,int $line):bool{if(!(error_reporting()&$severity))return false;throw new ErrorException($message,0,$severity,$file,$line);});
+         try{return $app->handle('approve',$data,$request)['data'];}finally{restore_error_handler();}
+     }
+     return $invoke('approve',$data)['data'];
+ };
  $approved(['kind'=>'save','scope'=>'global','path'=>['Existing'],'revision'=>'0','mode'=>'create','json'=>'"CURRENT-VALUE"']);
  $pathsBefore=((new ReflectionMethod(SecretsBackend::class,'nativeStore'))->invoke($back))->read()['state']['policy']['management']['settings'];
  $sources=$invoke('legacySources')['data'];secExpect($sources['sources'][0]['id']===6000,'Old vault discovery failed.');
@@ -42,6 +52,7 @@ try{
  SecretsBackendNativePlatform::paths($legacyParent.'/secrets-native-data-6000',$legacyParent.'/secrets-native-keys-6000',$kernel,false,$legacyParent);
  SecretsBackendNativePlatform::paths($kernel.'/legacy-second/secrets-native-data-6002',$legacyParent.'/secrets-native-keys-6000',$kernel,false,['vaultDirectory'=>$kernel.'/legacy-second','keyDirectory'=>$legacyParent]);
  secReject(static fn()=>SecretsBackendNativePlatform::paths($kernel.'/webfront/secrets-native-data-6000',$kernel.'/webfront/secrets-native-keys-6000',$kernel,false,$kernel.'/webfront'),'Public imported storage accepted.');
+ $GLOBALS['legacyDirectApproval']=true;
  // Each path can be selected independently; the first move changes only keys.
  $preview=$invoke('legacyPreview',['source'=>6000,'policy'=>'keep','vaultLocation'=>'current','keyLocation'=>'imported','privateACLConfirmed'=>true,'persistenceConfirmed'=>true])['data'];
  secExpect($preview['review']['storage']['vaultDirectory']===$pathsBefore['DataDirectory']&&$preview['review']['storage']['keyDirectory']===$root.'/old/secrets-native-keys-6000','Independent key-folder choice was not reviewed.');
