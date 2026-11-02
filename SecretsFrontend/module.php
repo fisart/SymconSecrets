@@ -245,12 +245,16 @@ class SecretsFrontend extends IPSModule
             if(($element['name']??'')==='SetupAddressStatus')$element['caption']=$preview['message'];
             if(($element['name']??'')==='WizardURL')$element['value']=$url;
         }unset($element);
+        $approvals=[];
         try{$views=json_decode($this->GetBootstrapConsoleView(),true);foreach($views as$v){
             $literal=static fn(string $text)=>var_export($text,true);
             $payload='SECF_ApproveBootstrapCandidate($id, '.$literal($v['candidate']).', '.$literal($v['digest']).', '.$literal($v['proof']).');';
-            $form['actions'][]=['type'=>'Button','caption'=>'Step 3: Approve '.$v['comparison'],'confirm'=>'Compare all four groups with the browser: '.$v['comparison'].' · '.$v['purpose'].' · frontend '.$v['frontend'].' · '.$v['origin'].'. Approve exactly this request?','onClick'=>$payload];
-            $form['actions'][]=['type'=>'Button','caption'=>'Reject '.$v['comparison'],'onClick'=>'SECF_RejectBootstrapCandidate($id, '.$literal($v['candidate']).', '.$literal($v['digest']).');'];
+            $approvals[]=['type'=>'Button','caption'=>'Step 3: Approve '.$v['comparison'],'confirm'=>'Compare all four groups with the browser: '.$v['comparison'].' · '.$v['purpose'].' · frontend '.$v['frontend'].' · '.$v['origin'].'. Approve exactly this request?','onClick'=>$payload];
+            $approvals[]=['type'=>'Button','caption'=>'Reject '.$v['comparison'],'onClick'=>'SECF_RejectBootstrapCandidate($id, '.$literal($v['candidate']).', '.$literal($v['digest']).');'];
         }}catch(Throwable $ignored){}
+        foreach($form['actions']as$index=>$element){
+            if(($element['name']??'')==='RefreshCandidates'){array_splice($form['actions'],$index+1,0,$approvals);break;}
+        }
         try{$j=$this->bootstrapJournal();$j->locked(function()use($j,&$form):void{foreach($j->decisions()as$d){
             if($d['status']!=='ACCEPTED'||$d['frontend']!==$this->InstanceID||$d['plan']['backend']!==0||$j->read('creating-'.$d['operation'])===null||$j->read('created-'.$d['operation'])!==null)continue;
             $field='ResolveBackend'.str_replace('-','',$d['operation']);
