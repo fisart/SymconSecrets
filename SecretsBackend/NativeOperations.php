@@ -55,7 +55,7 @@ final class SecretsBackendNativeOperations
             case 'nativeInvite':SecretsBackendNativePeer::exact($op,['kind']);$op['invitation']=$this->peer->invitation();break;
             case 'nativePair':SecretsBackendNativePeer::exact($op,['kind','invitation','name']);$op=$this->peer->pairOperation($op['invitation'],$op['name']);break;
             case 'nativeAcceptPair':SecretsBackendNativePeer::exact($op,['kind','peerId']);$p=$state['pairing']['peers'][$op['peerId']]??null;if(!is_array($p)||$p['state']!=='PENDING_APPROVAL')throw new RuntimeException('Select the exact pending pairing request.');$op['pairDigest']=SecretsBackendNativePeer::digest($p['pair']);$op['peerReview']=['peerURL'=>$p['descriptor']['endpoint'],'peerVault'=>$p['id'],'comparison'=>SecretsBackendNativePeer::comparison($p['pair'])];break;
-            case 'nativeRevokePeer':SecretsBackendNativePeer::exact($op,['kind','peerId']);if(!isset($state['pairing']['peers'][$op['peerId']]))throw new RuntimeException('Unknown peer.');break;
+            case 'nativeRevokePeer':SecretsBackendNativePeer::exact($op,['kind','peerId']);$p=$state['pairing']['peers'][$op['peerId']]??null;if(!is_array($p))throw new RuntimeException('Unknown peer.');$op['peerReview']=['peerURL'=>$p['descriptor']['endpoint'],'peerVault'=>$p['id'],'comparison'=>SecretsBackendNativePeer::comparison($p['pair'])];break;
             case 'nativeRotateKey':SecretsBackendNativePeer::exact($op,['kind']);$op['keyId']=SecretsBackendCodec::uuid();break;
             case 'nativeBackup':SecretsBackendNativePeer::exact($op,['kind']);$op['recoveryKey']=SecretsBackendCodec::b64(random_bytes(32));break;
             case 'nativeRestore':

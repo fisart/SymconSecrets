@@ -78,11 +78,20 @@ trait SecretsBackendNativeRuntime
         }finally{IPS_SemaphoreLeave($lock);}
     }
     // Symcon generates an untyped HookInstance override, so this signature stays untyped.
+    private function nativePairingPage(): string
+    {
+        if(!$this->ReadPropertyBoolean('Enabled')||!$this->nativeInitialized())throw new RuntimeException('Native peer receiver is disabled.');
+        $this->nativeApplication();$id=$this->ReadPropertyInteger('FrontendInstanceID');if($id<=0)throw new RuntimeException('No paired frontend.');
+        return $this->ReadPropertyString('AdminOrigin').'/hook/secrets_frontend_'.$id;
+    }
     protected function ProcessHookData()
     {
         header('Content-Type: application/json; charset=utf-8');header('Cache-Control: no-store');header('X-Content-Type-Options: nosniff');
         try{
             $path='/hook/secrets_peer_'.$this->InstanceID;$uri=(string)($_SERVER['REQUEST_URI']??$path);
+            if(in_array($_SERVER['REQUEST_METHOD']??'', ['GET','HEAD'],true)&&parse_url($uri,PHP_URL_PATH)===$path&&($_SERVER['QUERY_STRING']??'')===''){
+                header('Location: '.$this->nativePairingPage());http_response_code(303);return;
+            }
             if(($_SERVER['REQUEST_METHOD']??'GET')!=='POST'||parse_url($uri,PHP_URL_PATH)!==$path||($_SERVER['QUERY_STRING']??'')!=='')throw new RuntimeException('Only the fixed native POST endpoint is supported.');
             $types=[];foreach(['CONTENT_TYPE','HTTP_CONTENT_TYPE']as$key){$value=trim((string)($_SERVER[$key]??''));if($value!=='')$types[strtolower(trim(explode(';',$value,2)[0]))]=true;}
             if(count($types)!==1||!isset($types['application/json']))throw new RuntimeException('Native JSON envelope required.');

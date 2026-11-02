@@ -1,40 +1,40 @@
 'use strict';
 const assert=require('node:assert/strict');
 const {webcrypto}=require('node:crypto');
-const {TextEncoder}=require('node:util');
+const {TextEncoder,TextDecoder}=require('node:util');
 const {JSDOM,VirtualConsole}=require('jsdom');
 const tick=()=>new Promise(r=>setImmediate(r));
 const a='11111111-1111-4111-8111-111111111111',b='22222222-2222-4222-8222-222222222222',pair='33333333-3333-4333-8333-333333333333',ta='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',tb='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const code='AAAAA BBBBB CCCCC DDDDD',invite='SECBPAIR1.ONE-USE-INVITATION-SECRET';
-const descriptor=first=>({vaultId:first?a:b,treeId:first?ta:tb,backend:first?'201':'202',endpoint:(first?'https://first.example':'https://second.example')+'/hook/secrets_peer_'+(first?'201':'202')});
+const descriptor=first=>({vaultId:first?a:b,treeId:first?ta:tb,backend:first?'201':'202',signKey:(first?'A':'B').repeat(43),boxKey:(first?'C':'D').repeat(43),endpoint:(first?'https://first.example':'https://second.example')+'/hook/secrets_peer_'+(first?'201':'202')});
 const peer=(first,state='PENDING_APPROVAL',extra={})=>({id:first?b:a,name:first?'Second platform':'First platform',pairingId:pair,pair:{a:descriptor(true),b:descriptor(false)},descriptor:descriptor(!first),state,active:state==='ACTIVE',comparison:code,invitationId:'invitation-1',expires:String(Math.floor(Date.now()/1000)+900),lastSync:null,...extra});
 const clone=x=>JSON.parse(JSON.stringify(x));
-async function fixture(first){const calls=[],errors=[],timers=[],clipboard=[];let next={},deferred=null,failStatus=false;
+async function fixture(first,config={}){const calls=[],errors=[],timers=[],clipboard=[];let next={},deferred=null,failStatus=false,signedIn=!config.signedOut;
  const own=descriptor(first),origin=new URL(own.endpoint).origin,path='/hook/secrets_frontend_'+(first?'101':'102');
  const n={serverTime:Math.floor(Date.now()/1000),info:{vaultId:own.vaultId,usedBytes:4096,capacityBytes:524288,directorySync:true},primaryOrigin:origin,peerDescriptor:own,peerEndpoint:own.endpoint,globalTreeId:own.treeId,globalRevision:'0',globalWritable:true,peers:[],received:[],pairingReceived:[],pairingSent:[],outbox:[],queuedJobs:0,ownedTrees:[],transfers:{},machines:[],hardwareProfile:{version:'none',fingerprints:{},aaguids:[]},providers:[],effects:{}};
  const data={csrf:'csrf',revision:'0',idleLimit:900,hardware:{write:false,identity:false,export:false,reveal:false},global:[{path:[],type:'object',children:0}],local:[{path:[],type:'object',children:0}],credentials:[{id:'key',label:'Key',active:true,hardware:false}],native:n};
  const source=require('./page-source.cjs')().replaceAll('%%NONCE%%','test').replace('%%BOOT%%',JSON.stringify({origin,path,theme:'system',guidedV2Only:true})).replace('%%NAVIGATION%%','');
  const v=new VirtualConsole();v.on('jsdomError',e=>errors.push(e));
- const dom=new JSDOM(source,{url:origin+path,runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:v,beforeParse(w){
-  Object.defineProperty(w,'crypto',{value:webcrypto});w.TextEncoder=TextEncoder;Object.defineProperty(w,'isSecureContext',{value:true});
+ const dom=new JSDOM(source,{url:config.url||origin+path,runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:v,beforeParse(w){
+  w.focus=()=>{};Object.defineProperty(w,'crypto',{value:webcrypto});w.TextEncoder=TextEncoder;w.TextDecoder=TextDecoder;w.PublicKeyCredential=function(){};Object.defineProperty(w,'isSecureContext',{value:true});
   const timeout=w.setTimeout.bind(w),clear=w.clearTimeout.bind(w);w.setTimeout=(fn,ms,...args)=>{if(ms===5000){const timer={id:100000+timers.length,fn,cancelled:false};timers.push(timer);return timer.id;}return timeout(fn,ms,...args)};w.clearTimeout=id=>{const timer=timers.find(t=>t.id===id);if(timer)timer.cancelled=true;else clear(id)};
   w.HTMLDialogElement.prototype.showModal=function(){this.open=true};w.HTMLDialogElement.prototype.close=function(){this.open=false};
   Object.defineProperty(w.navigator,'clipboard',{value:{writeText:async value=>clipboard.push(value)}});
   Object.defineProperty(w.navigator,'credentials',{value:{get:async()=>({type:'public-key',rawId:new Uint8Array([1]).buffer,response:{clientDataJSON:new Uint8Array([1]).buffer,authenticatorData:new Uint8Array([1]).buffer,signature:new Uint8Array([1]).buffer,userHandle:null}})}});
   w.fetch=async(url,options)=>{const r=JSON.parse(options.body);calls.push(r);let result={};
-   if(r.action==='status')result={ready:true};if(r.action==='session')result=data;
-   if(['nativePairingStatus','nativeRetryPeerDelivery'].includes(r.action)){if(failStatus)return {ok:false,json:async()=>({error:'Request refused.'})};if(deferred){const wait=deferred;deferred=null;result=await wait;}else result={deliveryAttempted:r.action==='nativeRetryPeerDelivery',serverTime:n.serverTime,peers:n.peers,pairingReceived:n.pairingReceived,pairingSent:n.pairingSent,outbox:n.outbox,globalWritable:n.globalWritable,globalRevision:n.globalRevision,globalTreeId:n.globalTreeId};}
+   if(r.action==='status')result={ready:true};if(r.action==='authOptions')result={challengeId:'login',options:{challenge:'AQ',allowCredentials:[]}};if(r.action==='authVerify'){signedIn=true;result={csrf:'csrf'};}if(r.action==='session'){if(!signedIn)return {ok:false,json:async()=>({error:'Sign in required.'})};result=data;}
+   if(['nativePairingStatus','nativeRetryPeerDelivery'].includes(r.action)){if(r.action==='nativeRetryPeerDelivery'&&config.onRetry)await config.onRetry(r);if(failStatus)return {ok:false,json:async()=>({error:'Request refused.'})};if(deferred){const wait=deferred;deferred=null;result=await wait;}else result={deliveryAttempted:r.action==='nativeRetryPeerDelivery',serverTime:n.serverTime,peers:n.peers,pairingReceived:n.pairingReceived,pairingSent:n.pairingSent,outbox:n.outbox,globalWritable:n.globalWritable,globalRevision:n.globalRevision,globalTreeId:n.globalTreeId};}
    if(r.action==='prepare')result={challengeId:'challenge',operationId:'operation',options:{challenge:'AQ',allowCredentials:[]},requiresHardware:false,reviewSummary:{kind:r.data.operation.kind,peerURL:descriptor(!first).endpoint,peerVault:descriptor(!first).vaultId,comparison:code}};
    if(r.action==='approve')result=typeof next==='function'?next():next;
    return {ok:true,json:async()=>clone(result)};
-  };
+  };if(config.beforeParse)config.beforeParse(w);
  }});await tick();await tick();const $=id=>dom.window.document.getElementById(id);
  return {dom,$,n,data,calls,errors,timers,clipboard,failStatus:value=>{failStatus=value},next:value=>{next=value},defer:promise=>{deferred=promise},open:()=>dom.window.document.querySelector('[data-tab="nativePeers"]').click(),check:async()=>{$('peerCheckProgress').click();await tick();await tick()},step:()=>[1,2,3,4,5,6].find(i=>!$('peerStep'+i).hidden),poll:async()=>{const t=[...timers].reverse().find(t=>!t.cancelled);assert(t,'No automatic progress check scheduled');t.cancelled=true;await t.fn();await tick();await tick()}};
 }
 async function confirm(f){f.$('approve').click();await tick();await tick();}
 function received(first,id=pair){return {id:first?tb:ta,owner:first?b:a,pairingId:id,revision:'0',at:'2026-11-02T12:00:00Z'};}
 function sent(first,id=pair,revision='0'){return {peerId:first?b:a,pairingId:id,status:'APPLIED',treeId:first?ta:tb,revision};}
-(async()=>{
+if(require.main===module)(async()=>{
  const first=await fixture(true),second=await fixture(false),x=first.$,y=second.$;first.open();assert.equal(first.step(),1);assert.equal(x('peerSteps').children.length,6);x('peerStartFirst').click();assert.equal(first.step(),2);x('nativeInvite').click();await tick();assert.equal(x('review').open,true);assert.match(x('reviewText').textContent,/Step 2 of 6/);assert.doesNotMatch(x('reviewText').textContent,/"kind"/);
  first.next({invitation:invite,pairingSetup:{kind:'invitation',invitationId:'invitation-1',expires:String(Math.floor(Date.now()/1000)+900)}});await confirm(first);assert.equal(first.step(),3);assert.equal(x('nativeSensitiveDialog').open,true);x('nativeSensitiveCopy').click();await tick();assert.equal(first.clipboard.at(-1),invite);assert.equal(x('nativeSensitiveValue').value,invite);
  // An unrelated request cannot hijack the invitation being followed by this wizard.
@@ -64,3 +64,5 @@ function sent(first,id=pair,revision='0'){return {peerId:first?b:a,pairingId:id,
  for(const f of [first,second,resume,pending]){assert.equal(f.dom.window.localStorage.length,0);assert.equal(f.dom.window.sessionStorage.length,0);assert.equal(f.errors.length,0,f.errors.map(e=>e.message).join('\n'));f.dom.window.close();}
  console.log('PASS six-step two-platform wizard: invitation handoff, exact code approval, automatic progress, current-pair receipts, real scope navigation, resume, cancellation and hidden/late cleanup');
 })().catch(e=>{process.stderr.write(e.stack+'\n');process.exitCode=1});
+
+module.exports={fixture,tick,confirm,peer,descriptor,received,sent,a,b,pair,code};

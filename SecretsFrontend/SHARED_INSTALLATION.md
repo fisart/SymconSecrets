@@ -1,14 +1,52 @@
-# Shared installation: steps 1–6
+# Shared installation: connect from one platform
 
-Use **Connections** in the HTML administration page on each platform. The wizard
-advances as authenticated requests, approvals and synchronization receipts arrive.
-It explicitly tells you which platform needs the next action.
+Use **Connections** in the HTML administration page of the platform where you
+want to start. Keep this page open. The wizard coordinates the other vault using
+an approval popup; you do not copy invitations or navigate its administration menus.
+Every vault retains its own administrator authentication and exact approvals.
 
-The **first platform** is normally the installation where you maintain the shared
-secrets. The **second platform** receives its Global section. Pairing also shares
-the second platform’s own Global section back to the first as a separate tree.
-Each tree has one editing owner. Received copies are read-only; Local secrets,
-administrators and keys stay private to their own platform.
+1. **Prepare.** Install/update the module and complete the initial Setup assistant
+   on both platforms once. Sign in on the initiating platform and open
+   **Connections**. In **Other platform**, choose a known address or enter the
+   complete HTTPS Secrets administration or peer URL. A sole known peer is
+   prefilled. Select **Connect from here**. Allow the approval popup and sign in
+   there if asked. A peer URL opens its own configured frontend automatically.
+2. **Invitation.** Confirm the invitation-creation popup on the initiating platform.
+   The wizard transfers its one-use invitation directly to the selected HTTPS
+   approval popup. The invitation is not put on the clipboard, in a URL or in
+   browser storage. If a previous pending connection exists, the wizard first
+   opens exact removal approvals here and in the other popup before replacing it.
+3. **Request.** Confirm the request in the other platform's popup. The wizard sends
+   the approved request automatically. Delivery problems appear in the initiating
+   wizard; **Retry delivery on the other platform** retries that existing message.
+   Use **Show approval popup** if the browser does not bring it forward. No menus,
+   manual invitation transfer or second administration tab are needed.
+4. **Approve.** After the request arrives, the other popup closes and the initiating
+   wizard opens the final confirmation automatically. It checks the exact vault,
+   invitation, pairing ID and matching connection code before opening this approval.
+   Confirm the exact displayed platform and sharing scope with your passkey.
+5. **Check sharing.** Stay in the initiating wizard. It checks current-pairing
+   receipt of the other Global section and acknowledgement of the current outgoing
+   Global revision, with no pending sharing messages. Approval alone is insufficient.
+   The wizard reports a blocked connection rather than asking you to approve a
+   request that never arrived. HTTPS/certificate errors still need correcting;
+   browser coordination does not bypass server-side TLS verification.
+6. **Ready.** The wizard confirms the exchange. Select **Open my shared secrets**
+   to create a harmless test entry in **Global · owned**, or **Open received secrets**
+   to inspect the other platform's read-only section. Local secrets, administrators
+   and keys remain private. Applications need their own **Automation access** grant.
+
+**Cancel guided connection**, cancelling an approval, leaving Connections or
+closing the initiating page stops coordination. Saved server-side requests remain
+available under **Your connections**. Completion is never inferred from closing a
+popup. Browser channels are temporary, origin/window/nonce-bound and time out after
+10 minutes. Credentials, sessions, tokens and vault values never cross this channel.
+A changed existing public vault identity pauses setup before removal or approval.
+
+## Advanced: manual invitation setup
+
+Open **Advanced: manual invitation setup** only when the automatic approval-popup
+flow cannot be used. The original bilateral protocol remains available:
 
 1. **Prepare.** Complete the Setup assistant on both platforms. Open both HTML
    administration pages in separate tabs and sign in. Both HTTPS addresses must

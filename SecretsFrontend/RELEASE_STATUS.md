@@ -257,3 +257,22 @@ failures add a fixed certificate-reason enum, numeric verification result and
 nullable booleans for configured CA-location readability. No CA path, raw cURL
 error or response body is returned. Unknown/native trust sources stay unknown;
 absence of a file path is not treated as proof of a missing trust store.
+
+## Initiating-platform connection coordinator
+
+Connections defaults to **Other platform → Connect from here**. A known peer URL
+opens that backend's own pinned frontend using a read-only GET/HEAD redirect.
+POST peer envelopes and wire formats remain unchanged. The browser coordinates
+existing exact passkey approvals via a temporary nonce/origin/window-bound popup
+channel. No invitation is copied, persisted or placed in a URL. The other vault
+must authenticate its administrator before coordination, and explicitly approve
+its request/removal; the initiator explicitly approves invitation creation and
+final acceptance. Pending replacements are separately approved on both sides.
+Existing public identity changes pause before any removal or approval. Current
+pairing/invitation/code checks gate the final acceptance dialog. Remote retry
+issues the existing approved immutable request and reports its result centrally.
+The popup returns automatically after acknowledged delivery; current signed
+bidirectional exchange evidence still gates Ready. Cancellation, page exit,
+timeout and stale/foreign popup replies cannot confer authority. The earlier
+Magic Connect transport handling and server-side TLS validation remain enforced.
+Deployment testing of actual popup/passkey behavior and remote TLS is outstanding.
