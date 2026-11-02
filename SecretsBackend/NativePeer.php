@@ -5,6 +5,19 @@ require_once __DIR__ . '/Tree.php';
 require_once __DIR__ . '/NativeTransfer.php';
 require_once __DIR__ . '/../SecretsFrontend/Configuration.php';
 
+/** Public delivery diagnostics contain fixed categories and numeric codes only. */
+final class SecretsBackendNativePeerDeliveryFailure extends RuntimeException
+{
+    public const PROBLEMS=['dns','connect','timeout','certificate','tls','http','response-size','invalid-reply','transport','unconfirmed'];
+    public function __construct(public readonly string $problem, public readonly int $httpStatus=0, public readonly int $curlCode=0)
+    { parent::__construct('Native peer delivery is unconfirmed.'); }
+    public static function transport(int $curlCode,int $httpStatus,bool $tooLarge=false): self
+    {
+        $problem=$tooLarge?'response-size':($curlCode===0?'http':match($curlCode){5,6=>'dns',7=>'connect',28=>'timeout',51,58,60,77,82,83,90,91=>'certificate',35,59,64,66,80=>'tls',default=>'unconfirmed'});
+        return new self($problem,$httpStatus,$curlCode);
+    }
+}
+
 /** Optional bilateral encrypted synchronization. Every vault remains independently usable. */
 final class SecretsBackendNativePeer
 {
@@ -70,6 +83,12 @@ final class SecretsBackendNativePeer
         return ['id'=>$id??SecretsBackendCodec::uuid(),'ackId'=>SecretsBackendCodec::uuid(),'receiverId'=>$peer['id'],'pairingId'=>$peer['pairingId'],'epoch'=>$peer['epoch'],
             'kind'=>$kind,'sequence'=>$sequence,'payload'=>$payload,'status'=>'queued','attempts'=>0,'nextAttemptAt'=>0];
     }
+    /** A replacement pairing cannot send a notification bound to its retired predecessor. */
+    public static function retireRevocation(array $state,string $peerId): array
+    {
+        $old=$state['pairing']['peers'][$peerId]??null;if(!is_array($old)||$old['state']!=='REVOKED')return $state;
+        $state['outbox']['jobs']=array_values(array_filter($state['outbox']['jobs'],static fn($j)=>!($j['receiverId']===$peerId&&$j['kind']==='REVOKE'&&$j['pairingId']===$old['pairingId'])));return $state;
+    }
     public static function queueGlobal(array $state,?string $only=null): array
     {
         if(!($state['native']['globalWritable']??true))throw new RuntimeException('This shared tree is frozen or owned by another vault.');
@@ -122,6 +141,7 @@ final class SecretsBackendNativePeer
                 $this->store->change($current['head'],$m['id'],$digest,static function($s)use($m,$payload,$pair,$digest){
                     $invite=$s['native']['invites'][$payload['invitationId']]??null;if(!is_array($invite)||($invite['usedBy']??null)!==null||(int)$invite['expires']<time())throw new RuntimeException('Invitation changed during pairing.');
                     $s['native']['invites'][$payload['invitationId']]['usedBy']=$m['sender'];unset($s['native']['invites'][$payload['invitationId']]['secret']);
+                    $s=self::retireRevocation($s,$m['sender']);
                     $row=self::peerRecord($pair,$pair['b'],'Peer '.substr($m['sender'],0,8),'PENDING_APPROVAL');$row+=['requestDigest'=>$digest,'requestId'=>$m['id'],'invitationId'=>$payload['invitationId'],'expires'=>$payload['expires']];
                     $s['pairing']['peers'][$m['sender']]=$row;return $s;
                 },['action'=>'peer-request','actor'=>$m['sender'],'target'=>$pair['id']]);
@@ -190,12 +210,14 @@ final class SecretsBackendNativePeer
     public function exchange(array $peer,string $kind,array $payload,string $id,string $sequence='0'): array
     {
         $target=$peer['descriptor'];$m=$this->envelope($target,$kind,$peer['pairingId'],$peer['epoch'],$id,$sequence,$payload);$bytes=SecretsBackendCodec::json($m);
-        if($this->transport===null)throw new RuntimeException('No supplied-PHP HTTPS transport is available.');
-        $reply=SecretsFrontendConfiguration::decodeBounded(($this->transport)($target,$bytes),65536,32);self::exact($reply,['format','kind','sender','receiver','pairingId','epoch','id','sequence','payload','signature']);
+        if($this->transport===null)throw new SecretsBackendNativePeerDeliveryFailure('transport');
+        $response=($this->transport)($target,$bytes);
+        try{$reply=SecretsFrontendConfiguration::decodeBounded($response,65536,32);self::exact($reply,['format','kind','sender','receiver','pairingId','epoch','id','sequence','payload','signature']);
         if($reply['format']!=='SECB.Peer.1'||$reply['kind']!=='REPLY'||$reply['sender']!==$target['vaultId']||$reply['receiver']!==$this->descriptor()['vaultId']||$reply['pairingId']!==$peer['pairingId']||$reply['epoch']!==$peer['epoch']||$reply['id']!==$id||$reply['sequence']!==$sequence)throw new RuntimeException('Peer reply was misbound.');
         self::verify($reply,$target['signKey']);$body=SecretsFrontendConfiguration::decode($this->store->openPeer($reply['payload']));
         if(($body['requestId']??'')!==$id||($body['requestKind']??'')!==$kind||($body['requestDigest']??'')!==self::logical($m,$payload))throw new RuntimeException('Peer acknowledgement does not match the immutable request.');
         return $body;
+        }catch(Throwable $e){throw new SecretsBackendNativePeerDeliveryFailure('invalid-reply');}
     }
     public function dispatch(int $maximum=2): array
     {
@@ -217,10 +239,25 @@ final class SecretsBackendNativePeer
                 },['action'=>'peer-receipt','actor'=>$job['receiverId'],'target'=>$job['id']]);$results[]=['id'=>$job['id'],'status'=>'ACKNOWLEDGED'];
             }catch(Throwable $e){
                 $key='backoff:'.$job['id'];try{$backoff=$this->store->get($key,'delivery-backoff');}catch(Throwable $ignored){$backoff=['attempts'=>0];}
-                $attempts=min(20,$backoff['attempts']+1);$body=['attempts'=>$attempts,'nextAttemptAt'=>time()+min(300,2**$attempts)];
+                $attempts=min(20,$backoff['attempts']+1);$body=['attempts'=>$attempts,'lastAttemptAt'=>time(),'nextAttemptAt'=>time()+min(300,2**$attempts),
+                    'problem'=>$e instanceof SecretsBackendNativePeerDeliveryFailure&&in_array($e->problem,SecretsBackendNativePeerDeliveryFailure::PROBLEMS,true)?$e->problem:'unconfirmed',
+                    'httpStatus'=>$e instanceof SecretsBackendNativePeerDeliveryFailure?$e->httpStatus:0,'curlCode'=>$e instanceof SecretsBackendNativePeerDeliveryFailure?$e->curlCode:0];
                 try{$this->store->replace($key,'delivery-backoff',$body,time()+3600);}catch(Throwable $ignored){$this->store->put($key,'delivery-backoff',$body,time()+3600);}
                 $results[]=['id'=>$job['id'],'status'=>'RETRY_PENDING'];break;
             }
         }return $results;
+    }
+    /** Reads local retry records only. Never returns payloads, response bodies or exception text. */
+    public function deliveryStatus(array $state): array
+    {
+        $out=[];foreach($state['outbox']['jobs']as$job){
+            if(isset($out[$job['receiverId']]))continue;
+            $safe=['jobId'=>$job['id'],'kind'=>$job['kind'],'attempts'=>0,'lastAttemptAt'=>0,'nextAttemptAt'=>0,'problem'=>'not-attempted','httpStatus'=>0,'curlCode'=>0];
+            try{$b=$this->store->get('backoff:'.$job['id'],'delivery-backoff');
+                foreach(['attempts','lastAttemptAt','nextAttemptAt','httpStatus','curlCode']as$key)$safe[$key]=max(0,(int)($b[$key]??0));
+                $safe['problem']=in_array($b['problem']??'',SecretsBackendNativePeerDeliveryFailure::PROBLEMS,true)?$b['problem']:'unconfirmed';
+            }catch(Throwable $ignored){}
+            $out[$job['receiverId']]=$safe;
+        }return $out;
     }
 }

@@ -20,14 +20,15 @@ trait SecretsBackendNativeRuntime
     public static function nativeHTTPS(string $endpoint,string $bytes): string
     {
         SecretsBackendNativePeer::endpoint($endpoint);
-        if(!function_exists('curl_init'))throw new RuntimeException('This supplied PHP has no bounded HTTPS POST transport for remote peers. Local pairing remains available.');
-        $h=curl_init($endpoint);$response='';
+        if(!function_exists('curl_init'))throw new SecretsBackendNativePeerDeliveryFailure('transport');
+        $h=curl_init($endpoint);$response='';$tooLarge=false;
         try{
             curl_setopt_array($h,[CURLOPT_POST=>true,CURLOPT_POSTFIELDS=>$bytes,CURLOPT_HTTPHEADER=>['Content-Type: application/json','Accept: application/json'],
                 CURLOPT_FOLLOWLOCATION=>false,CURLOPT_CONNECTTIMEOUT_MS=>1500,CURLOPT_TIMEOUT_MS=>4500,CURLOPT_SSL_VERIFYPEER=>true,CURLOPT_SSL_VERIFYHOST=>2,
-                CURLOPT_WRITEFUNCTION=>static function($handle,string $chunk)use(&$response):int{if(strlen($response)+strlen($chunk)>65536)return 0;$response.=$chunk;return strlen($chunk);}]);
+                CURLOPT_WRITEFUNCTION=>static function($handle,string $chunk)use(&$response,&$tooLarge):int{if(strlen($response)+strlen($chunk)>65536){$tooLarge=true;return 0;}$response.=$chunk;return strlen($chunk);}]);
             if(defined('CURLOPT_PROTOCOLS_STR'))curl_setopt($h,CURLOPT_PROTOCOLS_STR,'https');elseif(defined('CURLOPT_PROTOCOLS'))curl_setopt($h,CURLOPT_PROTOCOLS,CURLPROTO_HTTPS);
-            if(curl_exec($h)===false||(int)curl_getinfo($h,CURLINFO_RESPONSE_CODE)!==200)throw new RuntimeException('Peer delivery is unconfirmed; its immutable request will be retried.');
+            $ok=curl_exec($h);$code=(int)curl_errno($h);$http=(int)curl_getinfo($h,CURLINFO_RESPONSE_CODE);
+            if($ok===false||$http!==200)throw SecretsBackendNativePeerDeliveryFailure::transport($code,$http,$tooLarge);
             return $response;
         }finally{curl_close($h);}
     }

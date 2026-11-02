@@ -37,7 +37,11 @@ administrators and keys stay private to their own platform.
    retries automatically. **Check progress** reads status; **5 · Resend my shared
    secrets** requires a separate explicit approval and requests authenticated
    resynchronization. Check connectivity, HTTPS certificates, module versions
-   and PHP HTTPS transport if waiting continues.
+   and PHP HTTPS transport if waiting continues. **Connection check** shows the
+   recorded delivery category (DNS, connection, timeout, certificate, HTTP or
+   invalid signed response), attempts and retry timing. Expand **Connection details
+   for support** and select **Copy connection details** if support is needed. The
+   copied report excludes invitations, credentials, response bodies and values.
 6. **Ready.** Use **Open my shared secrets** on the first platform and create a
    harmless test entry in **Global · owned**. Use **Open received secrets** on the
    second platform and check the value. Change it on the first platform and check
@@ -49,6 +53,23 @@ page reload. With multiple connections, choose the intended one explicitly.
 **Back to Step 1** leaves the wizard; existing server-side requests remain listed
 under **Your connections**. **Remove connection** requires approval and stops that
 connection; copies already received by the other platform remain there.
+
+If the approval window expires, the wizard shows **Start again after an expired
+request** instead of asking you to submit the same request again:
+
+1. Select **Check progress** first: an approval already sent may still arrive.
+2. Correct the problem shown by **Connection check**. An HTTP refusal alone does
+   not prove whether a proxy, backend configuration or expired invitation caused it.
+3. Select **Remove expired request** and approve. Remove the corresponding expired
+   pending request on the other platform too, if it exists. This does not erase
+   either platform's own Global or Local secrets.
+4. Create a new invitation on the first platform, use it on the second and finish
+   request/approval within 15 minutes. Both platforms must approve the new pairing.
+
+Expiry is evaluated using the Symcon server's time rather than the browser clock.
+Old undelivered revocation notifications are retired when a removed pairing is
+replaced, so they cannot block or apply to the new connection. Certificate checking,
+signed acknowledgements and exact administrator approval remain required.
 
 Automatic checks run only while the Connections page is visible, pause around
 approval dialogs, stop after completion or 15 minutes, and do not extend session

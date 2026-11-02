@@ -156,6 +156,7 @@ final class SecretsBackendNativeOperations
         }elseif($kind==='nativePair'){
             $pair=$op['pair'];SecretsBackendNativePeer::pairCheck($pair);$remote=$pair['a'];
             if((int)$op['expires']<time()||(isset($s['pairing']['peers'][$remote['vaultId']])&&$s['pairing']['peers'][$remote['vaultId']]['state']!=='REVOKED')||count($s['pairing']['peers'])>=32)throw new RuntimeException('Pairing expired, already exists or exceeds capacity.');
+            $s=SecretsBackendNativePeer::retireRevocation($s,$remote['vaultId']);
             $row=SecretsBackendNativePeer::peerRecord($pair,$remote,$op['name'],'PENDING_REMOTE');$row+=['requestId'=>$op['requestId'],'expires'=>$op['expires']];$s['pairing']['peers'][$row['id']]=$row;
             $s['outbox']['jobs'][]=SecretsBackendNativePeer::job($row,'PAIR_REQUEST',['invitationId'=>$op['invitationId'],'expires'=>$op['expires'],'pair'=>$pair,'proof'=>$op['proof']],'0',$op['requestId']);
         }elseif($kind==='nativeAcceptPair'){
@@ -349,9 +350,10 @@ final class SecretsBackendNativeOperations
     private function pairingStatus(array $state): array
     {
         $received=[];foreach($state['native']['received']as$id=>$r)$received[]=['id'=>$id,'owner'=>$r['owner'],'revision'=>$r['revision'],'pairingId'=>$r['pairingId']??null,'at'=>$r['at']];
-        $peers=array_values(array_map(static fn($p)=>$p+['comparison'=>SecretsBackendNativePeer::comparison($p['pair'])],$state['pairing']['peers']));
+        $delivery=$this->peer->deliveryStatus($state);
+        $peers=array_values(array_map(static fn($p)=>$p+['comparison'=>SecretsBackendNativePeer::comparison($p['pair']),'delivery'=>$delivery[$p['id']]??null],$state['pairing']['peers']));
         $sent=[];foreach($state['native']['deliveryReceipts']as$id=>$receipt)$sent[]=['peerId'=>$id]+array_intersect_key($receipt,array_flip(['pairingId','requestKind','status','treeId','revision']));
-        return ['peers'=>$peers,'pairingReceived'=>$received,'pairingSent'=>$sent,'globalTreeId'=>$state['native']['globalTreeId'],'globalRevision'=>$state['stream']['globalRevision'],'remoteHttpsAvailable'=>function_exists('curl_init'),'globalWritable'=>$state['native']['globalWritable'],
+        return ['serverTime'=>time(),'peers'=>$peers,'pairingReceived'=>$received,'pairingSent'=>$sent,'globalTreeId'=>$state['native']['globalTreeId'],'globalRevision'=>$state['stream']['globalRevision'],'remoteHttpsAvailable'=>function_exists('curl_init'),'globalWritable'=>$state['native']['globalWritable'],
             'outbox'=>array_values(array_map(static fn($j)=>array_intersect_key($j,array_flip(['id','receiverId','kind','sequence','status'])),$state['outbox']['jobs']))];
     }
     public function metadata(array $state): array
@@ -362,7 +364,7 @@ final class SecretsBackendNativeOperations
         $progress=$this->pairingStatus($state);
         return ['legacyImports'=>array_values($state['native']['legacyImports']??[]),'backupOrigin'=>$state['policy']['backupOrigin']??null,'primaryOrigin'=>$state['policy']['origin'],'info'=>$this->store->metadata(),'storage'=>$this->store->storagePaths(),'peerEndpoint'=>$this->peer->descriptor()['endpoint'],'peerDescriptor'=>$this->peer->descriptor(),
             'globalTreeId'=>$state['native']['globalTreeId'],'globalWritable'=>$state['native']['globalWritable'],'ownedTrees'=>$owned,'transfers'=>array_map(static fn($t)=>array_diff_key($t,['node'=>true]),$state['native']['transfers']),
-            'peers'=>$progress['peers'],'pairingReceived'=>$progress['pairingReceived'],'pairingSent'=>$progress['pairingSent'],'globalRevision'=>$progress['globalRevision'],'remoteHttpsAvailable'=>$progress['remoteHttpsAvailable'],'received'=>$received,'machines'=>$machines,'queuedJobs'=>count($state['outbox']['jobs']),
+            'serverTime'=>$progress['serverTime'],'peers'=>$progress['peers'],'pairingReceived'=>$progress['pairingReceived'],'pairingSent'=>$progress['pairingSent'],'globalRevision'=>$progress['globalRevision'],'remoteHttpsAvailable'=>$progress['remoteHttpsAvailable'],'received'=>$received,'machines'=>$machines,'queuedJobs'=>count($state['outbox']['jobs']),
             'providers'=>array_values(array_map(static fn($p)=>SecretsBackendNativeEffects::targetWritable($state,$p)?$p:array_replace($p,['status'=>'OWNER_CHANGED']),$state['native']['providers'])),'effects'=>array_map(static fn($e)=>array_intersect_key($e,array_flip(['id','providerId','state','reason','createdAt','httpStatus','attempts'])),$state['native']['effects']),
             'hardwareProfile'=>['version'=>$state['policy']['management']['settings']['HardwareTrustVersion'],'fingerprints'=>$state['policy']['management']['files']['HardwareRoots'],'aaguids'=>json_decode($state['policy']['management']['settings']['HardwareAAGUIDs'],true)],
             'outbox'=>array_map(static fn($j)=>array_intersect_key($j,array_flip(['id','receiverId','kind','sequence','status'])),$state['outbox']['jobs'])];

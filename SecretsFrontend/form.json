@@ -182,7 +182,7 @@
     },
     {
       "type": "Label",
-      "caption": "Shared installation: complete first-time setup on each platform, then open Connections in the HTML administration page and follow its numbered six-step wizard."
+      "caption": "Shared installation: complete first-time setup on each platform, then open Connections in the HTML administration page and follow its numbered six-step wizard. If delivery stalls, use Connection check there. Follow Start again after an expired request when the approval window closes."
     }
   ],
   "status": [

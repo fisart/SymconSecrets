@@ -233,3 +233,14 @@ received-scope navigation. PHP integration fixtures exercise real signed/encrypt
 two-vault exchanges, current-pairing receipts, masked HTTP progress and unchanged
 session inactivity. Deployment-specific remote TLS and network testing remains
 outstanding; standalone rollback limitations and independent review gates remain.
+
+Connection progress now includes fixed, masked delivery diagnostics from the local
+retry record: transport category, HTTP/cURL codes, attempt count and retry timing.
+No remote response or arbitrary exception text is stored or exposed. Expired
+requests use a numbered restart flow, hide the submitted-request button and block
+expired approvals. Server time avoids false expiry from a fast browser clock;
+manual progress can still observe a previously approved late acceptance. Explicit
+removal followed by a new pairing retires the old undelivered revocation notice
+on each side, preventing it from blocking the replacement. Tests cover categorized
+failures, diagnostic redaction, clock skew, expired/cancelled cleanup and actual
+signed/encrypted re-pairing with both old revocations still undelivered.
