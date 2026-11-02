@@ -28,7 +28,13 @@ trait SecretsBackendNativeRuntime
                 CURLOPT_WRITEFUNCTION=>static function($handle,string $chunk)use(&$response,&$tooLarge):int{if(strlen($response)+strlen($chunk)>65536){$tooLarge=true;return 0;}$response.=$chunk;return strlen($chunk);}]);
             if(defined('CURLOPT_PROTOCOLS_STR'))curl_setopt($h,CURLOPT_PROTOCOLS_STR,'https');elseif(defined('CURLOPT_PROTOCOLS'))curl_setopt($h,CURLOPT_PROTOCOLS,CURLPROTO_HTTPS);
             $ok=curl_exec($h);$code=(int)curl_errno($h);$http=(int)curl_getinfo($h,CURLINFO_RESPONSE_CODE);
-            if($ok===false||$http!==200)throw SecretsBackendNativePeerDeliveryFailure::transport($code,$http,$tooLarge);
+            if($ok===false||$http!==200){
+                $file=trim((string)ini_get('curl.cainfo'));$directory='';
+                if($file===''&&defined('CURLINFO_CAINFO'))$file=(string)(curl_getinfo($h,constant('CURLINFO_CAINFO'))?:'');
+                if(defined('CURLINFO_CAPATH'))$directory=(string)(curl_getinfo($h,constant('CURLINFO_CAPATH'))?:'');
+                $trust=['fileSpecified'=>$file!=='','fileReadable'=>$file!==''?is_readable($file):null,'directorySpecified'=>$directory!=='','directoryReadable'=>$directory!==''?is_dir($directory)&&is_readable($directory):null];
+                throw SecretsBackendNativePeerDeliveryFailure::transport($code,$http,$tooLarge,(int)curl_getinfo($h,CURLINFO_SSL_VERIFYRESULT),curl_error($h),$trust);
+            }
             return $response;
         }finally{curl_close($h);}
     }

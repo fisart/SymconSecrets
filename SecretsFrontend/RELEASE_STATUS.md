@@ -244,3 +244,16 @@ removal followed by a new pairing retires the old undelivered revocation notice
 on each side, preventing it from blocking the replacement. Tests cover categorized
 failures, diagnostic redaction, clock skew, expired/cancelled cleanup and actual
 signed/encrypted re-pairing with both old revocations still undelivered.
+
+The connection wizard now prominently separates local passkey approval from
+acknowledged delivery. Buttons give immediate inline progress and outcome
+feedback, including confirmation/cancellation and unchanged status checks.
+**Try delivery now** uses an authenticated, CSRF-checked, primary-origin request,
+bound to the peer and current pairing ID, limited to six attempts per peer/minute.
+It sends at most one existing immutable approved job and does not create or
+approve a new pairing. No arbitrary destination or message is accepted. Background
+retry remains unchanged and status polling performs no remote requests. TLS
+failures add a fixed certificate-reason enum, numeric verification result and
+nullable booleans for configured CA-location readability. No CA path, raw cURL
+error or response body is returned. Unknown/native trust sources stay unknown;
+absence of a file path is not treated as proof of a missing trust store.

@@ -41,7 +41,16 @@ administrators and keys stay private to their own platform.
    recorded delivery category (DNS, connection, timeout, certificate, HTTP or
    invalid signed response), attempts and retry timing. Expand **Connection details
    for support** and select **Copy connection details** if support is needed. The
-   copied report excludes invitations, credentials, response bodies and values.
+   copied report excludes invitations, credentials, response bodies and values. **Try
+   delivery now** retries only the saved, already-approved message for this exact
+   connection and shows its result immediately. It creates no new pairing and
+   needs no second approval. **Check progress** continues to read local status only.
+   A prominent **Connection blocked** notice explains that local passkey approval
+   does not mean the first platform received the request. A valid site certificate
+   may fail validation in Symcon because its CA trust store or server-supplied
+   chain differs from the browser's. TLS diagnostics include the verification
+   result, a fixed reason and configured CA-location readability; they do not
+   expose certificate files, local paths or raw error text.
 6. **Ready.** Use **Open my shared secrets** on the first platform and create a
    harmless test entry in **Global · owned**. Use **Open received secrets** on the
    second platform and check the value. Change it on the first platform and check

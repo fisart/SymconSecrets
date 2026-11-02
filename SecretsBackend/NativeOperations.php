@@ -257,6 +257,14 @@ final class SecretsBackendNativeOperations
     public function request(string $action,array $data): array
     {
         if($action==='nativePairingStatus'){SecretsBackendNativePeer::exact($data,[]);return $this->pairingStatus($this->store->read()['state']);}
+        if($action==='nativeRetryPeerDelivery'){
+            SecretsBackendNativePeer::exact($data,['peerId','pairingId']);SecretsBackendNativePeer::uuid($data['peerId']);SecretsBackendNativePeer::uuid($data['pairingId']);
+            $state=$this->store->read()['state'];$p=$state['pairing']['peers'][$data['peerId']]??null;
+            if(!is_array($p)||$p['state']==='REVOKED'||$p['pairingId']!==$data['pairingId'])throw new RuntimeException('This connection changed or was removed. Check progress first.');
+            $this->store->rate('peer-manual-retry:'.$p['id'],6);
+            $result=$this->peer->dispatch(1,$p['id'],true,$p['pairingId']);
+            return $this->pairingStatus($this->store->read()['state'])+['deliveryAttempted'=>$result!==[]];
+        }
         if($action==='legacySources'){SecretsBackendNativePeer::exact($data,[]);return ['sources'=>SecretsBackendLegacyImport::sources()];}
         if($action==='legacyPreview')return $this->legacyPreview($data);
         if($action==='nativeUploadBegin'){SecretsBackendNativePeer::exact($data,['length','digest']);if(!is_int($data['length'])||!is_string($data['digest']))throw new RuntimeException('Invalid upload metadata.');return $this->uploads()->begin($data['length'],$data['digest']);}

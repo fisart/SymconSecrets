@@ -9,12 +9,22 @@ require_once __DIR__ . '/../SecretsFrontend/Configuration.php';
 final class SecretsBackendNativePeerDeliveryFailure extends RuntimeException
 {
     public const PROBLEMS=['dns','connect','timeout','certificate','tls','http','response-size','invalid-reply','transport','unconfirmed'];
-    public function __construct(public readonly string $problem, public readonly int $httpStatus=0, public readonly int $curlCode=0)
+    public const CERTIFICATE_REASONS=['issuer-untrusted','chain-unverified','hostname-mismatch','expired','not-yet-valid','self-signed','revoked','unknown'];
+    public function __construct(public readonly string $problem, public readonly int $httpStatus=0, public readonly int $curlCode=0,
+        public readonly int $tlsVerifyResult=-1, public readonly string $certificateReason='unknown', public readonly array $caTrust=[])
     { parent::__construct('Native peer delivery is unconfirmed.'); }
-    public static function transport(int $curlCode,int $httpStatus,bool $tooLarge=false): self
+    public static function transport(int $curlCode,int $httpStatus,bool $tooLarge=false,int $tlsVerifyResult=-1,string $error='',array $caTrust=[]): self
     {
         $problem=$tooLarge?'response-size':($curlCode===0?'http':match($curlCode){5,6=>'dns',7=>'connect',28=>'timeout',51,58,60,77,82,83,90,91=>'certificate',35,59,64,66,80=>'tls',default=>'unconfirmed'});
-        return new self($problem,$httpStatus,$curlCode);
+        $error=strtolower($error);$reason='unknown';
+        foreach(['no alternative certificate subject name'=>'hostname-mismatch','does not match target host'=>'hostname-mismatch','certificate has expired'=>'expired','certificate is not yet valid'=>'not-yet-valid','self-signed certificate'=>'self-signed','unable to get local issuer certificate'=>'issuer-untrusted','unable to verify the first certificate'=>'chain-unverified','certificate revoked'=>'revoked']as$phrase=>$candidate)if(str_contains($error,$phrase)){$reason=$candidate;break;}
+        return new self($problem,$httpStatus,$curlCode,$tlsVerifyResult,$reason,$caTrust);
+    }
+    public static function tlsDetails(array $data): array
+    {
+        $safe=['tlsVerifyResult'=>max(-1,(int)($data['tlsVerifyResult']??-1)),'certificateReason'=>in_array($data['certificateReason']??'',self::CERTIFICATE_REASONS,true)?$data['certificateReason']:'unknown','caTrust'=>[]];
+        foreach(['fileSpecified','fileReadable','directorySpecified','directoryReadable']as$key)$safe['caTrust'][$key]=is_bool($data['caTrust'][$key]??null)?$data['caTrust'][$key]:null;
+        return $safe;
     }
 }
 
@@ -219,13 +229,13 @@ final class SecretsBackendNativePeer
         return $body;
         }catch(Throwable $e){throw new SecretsBackendNativePeerDeliveryFailure('invalid-reply');}
     }
-    public function dispatch(int $maximum=2): array
+    public function dispatch(int $maximum=2,?string $onlyPeer=null,bool $retryNow=false,?string $onlyPairing=null): array
     {
         $results=[];
         for($n=0;$n<$maximum;++$n){$current=$this->store->read();$job=null;
-            $seen=[];foreach($current['state']['outbox']['jobs']as$item){if(isset($seen[$item['receiverId']]))continue;$seen[$item['receiverId']]=true;
+            $seen=[];foreach($current['state']['outbox']['jobs']as$item){if(($onlyPeer!==null&&$item['receiverId']!==$onlyPeer)||($onlyPairing!==null&&$item['pairingId']!==$onlyPairing)||isset($seen[$item['receiverId']]))continue;$seen[$item['receiverId']]=true;
                 try{$backoff=$this->store->get('backoff:'.$item['id'],'delivery-backoff');}catch(Throwable $ignored){$backoff=['nextAttemptAt'=>0,'attempts'=>0];}
-                if(($item['status']??'')==='queued'&&$backoff['nextAttemptAt']<=time()){$job=$item;break;}}
+                if(($item['status']??'')==='queued'&&($retryNow||$backoff['nextAttemptAt']<=time())){$job=$item;break;}}
             if($job===null)break;$peer=$current['state']['pairing']['peers'][$job['receiverId']]??null;
             if($job['kind']==='TREE_SYNC'){$tree=$current['state']['native']['trees'][$job['treeId']]??null;$subscriber=$tree['subscribers'][$job['receiverId']]??null;if(!is_array($tree)||$tree['frozen']||!is_array($subscriber))break;$peer=['id'=>$job['receiverId'],'pairingId'=>$subscriber['subscriptionId'],'epoch'=>$tree['epoch'],'descriptor'=>$subscriber['descriptor'],'active'=>true];}
             if(!is_array($peer)||$peer['pairingId']!==$job['pairingId']||$peer['epoch']!==$job['epoch']||(!$peer['active']&&!in_array($job['kind'],['PAIR_REQUEST','REVOKE'],true)))break;
@@ -242,6 +252,7 @@ final class SecretsBackendNativePeer
                 $attempts=min(20,$backoff['attempts']+1);$body=['attempts'=>$attempts,'lastAttemptAt'=>time(),'nextAttemptAt'=>time()+min(300,2**$attempts),
                     'problem'=>$e instanceof SecretsBackendNativePeerDeliveryFailure&&in_array($e->problem,SecretsBackendNativePeerDeliveryFailure::PROBLEMS,true)?$e->problem:'unconfirmed',
                     'httpStatus'=>$e instanceof SecretsBackendNativePeerDeliveryFailure?$e->httpStatus:0,'curlCode'=>$e instanceof SecretsBackendNativePeerDeliveryFailure?$e->curlCode:0];
+                $body+=SecretsBackendNativePeerDeliveryFailure::tlsDetails($e instanceof SecretsBackendNativePeerDeliveryFailure?['tlsVerifyResult'=>$e->tlsVerifyResult,'certificateReason'=>$e->certificateReason,'caTrust'=>$e->caTrust]:[]);
                 try{$this->store->replace($key,'delivery-backoff',$body,time()+3600);}catch(Throwable $ignored){$this->store->put($key,'delivery-backoff',$body,time()+3600);}
                 $results[]=['id'=>$job['id'],'status'=>'RETRY_PENDING'];break;
             }
@@ -257,6 +268,7 @@ final class SecretsBackendNativePeer
                 foreach(['attempts','lastAttemptAt','nextAttemptAt','httpStatus','curlCode']as$key)$safe[$key]=max(0,(int)($b[$key]??0));
                 $safe['problem']=in_array($b['problem']??'',SecretsBackendNativePeerDeliveryFailure::PROBLEMS,true)?$b['problem']:'unconfirmed';
             }catch(Throwable $ignored){}
+            $safe+=SecretsBackendNativePeerDeliveryFailure::tlsDetails($b??[]);unset($b);
             $out[$job['receiverId']]=$safe;
         }return $out;
     }
