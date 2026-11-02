@@ -148,3 +148,17 @@ trees retain their existing revision, hardware-write, ownership and replication
 rules; received and frozen trees stay read-only. After a confirmed rename the
 breadcrumb/history follows the new name, and deleting the open folder returns to
 its parent. Cancellation leaves navigation unchanged.
+
+## Copy visible secret values
+
+Each revealed value has a **Copy value** clipboard button, in the folder browser
+and advanced reveal area. It copies the exact displayed value without another
+request or passkey prompt. Hardware reveal policy still governs the initial
+disclosure. Copy stays available for revealed read-only values. The control is a
+sibling of the record button so copying does not select, open or edit the entry.
+If clipboard access is unavailable or denied, the visible text is selected for
+the browser's Copy command. Clearing/hiding values, expiry, navigation or sign-out
+removes the controls; detached controls cannot copy old values and late clipboard
+completion cannot restore cleared UI. Clipboard contents are not automatically
+cleared. Browser tests cover exact whitespace/Unicode, copy without network calls,
+manual fallback, hardware reveal gating, read-only values, expiry and late replies.
