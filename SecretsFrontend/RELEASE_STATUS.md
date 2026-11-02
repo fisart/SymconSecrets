@@ -187,3 +187,18 @@ Symcon's generated wrapper requires every parameter despite PHP method defaults.
 The console regression wrapper therefore has no optional parameters, and a
 dependency-free form audit checks all frontend/backend callback argument counts
 against the public module methods plus their instance ID.
+
+## Password generator
+
+The graphical new-secret and change-value editor includes **Generate password**,
+**Length** (12–128, default 24), and **Include symbols** (enabled by default).
+Passwords always include uppercase/lowercase letters and digits, plus a symbol
+when enabled. Browser Web Crypto supplies the randomness; byte rejection avoids
+modulo bias and whole-candidate rejection enforces the selected character groups.
+Failures are bounded and never fall back to weak randomness. Generation only
+fills the masked, unsaved value field; the existing eye reveals/remasks it. Save
+still follows the usual exact approval and hardware-write policy. No request,
+clipboard write or persistent browser storage occurs while generating. Existing
+cancel/navigation/hide cleanup also clears generated drafts. Browser tests cover
+new/edit flows, options, rejection sampling, missing/failing random generation,
+no requests until review, masking, approval staging and draft cleanup.
