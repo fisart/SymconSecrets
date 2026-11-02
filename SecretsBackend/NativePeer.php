@@ -31,6 +31,7 @@ final class SecretsBackendNativePeer
         SecretsBackendCodec::unb64($d['signKey'],32);SecretsBackendCodec::unb64($d['boxKey'],32);
     }
     public static function digest(array $value): string { return hash('sha256',SecretsBackendNativeStore::canonical($value)); }
+    public static function comparison(array $pair): string { return strtoupper(implode(' ',str_split(substr(self::digest($pair),0,20),5))); }
     private function signed(array $value): array { $value['signature']=$this->store->sign('SECB.NATIVE.PEER.1:'.SecretsBackendNativeStore::canonical($value));return $value; }
     private static function verify(array $value,string $key): void
     {
@@ -121,7 +122,7 @@ final class SecretsBackendNativePeer
                 $this->store->change($current['head'],$m['id'],$digest,static function($s)use($m,$payload,$pair,$digest){
                     $invite=$s['native']['invites'][$payload['invitationId']]??null;if(!is_array($invite)||($invite['usedBy']??null)!==null||(int)$invite['expires']<time())throw new RuntimeException('Invitation changed during pairing.');
                     $s['native']['invites'][$payload['invitationId']]['usedBy']=$m['sender'];unset($s['native']['invites'][$payload['invitationId']]['secret']);
-                    $row=self::peerRecord($pair,$pair['b'],'Peer '.substr($m['sender'],0,8),'PENDING_APPROVAL');$row+=['requestDigest'=>$digest,'requestId'=>$m['id'],'expires'=>$payload['expires']];
+                    $row=self::peerRecord($pair,$pair['b'],'Peer '.substr($m['sender'],0,8),'PENDING_APPROVAL');$row+=['requestDigest'=>$digest,'requestId'=>$m['id'],'invitationId'=>$payload['invitationId'],'expires'=>$payload['expires']];
                     $s['pairing']['peers'][$m['sender']]=$row;return $s;
                 },['action'=>'peer-request','actor'=>$m['sender'],'target'=>$pair['id']]);
             }
@@ -212,7 +213,7 @@ final class SecretsBackendNativePeer
                 if(in_array($job['kind'],['SYNC','RESYNC','TREE_SYNC'],true)&&(($reply['treeId']??'')!==($job['payload']['treeId']??$job['payload']['tree']['treeId'])||($reply['revision']??'')!==($job['payload']['revision']??$job['payload']['tree']['revision'])||($reply['sequence']??'')!==$job['sequence']||($reply['nodeDigest']??'')!==($job['payload']['nodeDigest']??$job['payload']['tree']['nodeDigest'])))throw new RuntimeException('Peer receipt names another snapshot.');
                 $latest=$this->store->read();$this->store->change($latest['head'],$job['ackId'],self::digest($reply),static function($s)use($job,$reply){
                     $s['outbox']['jobs']=array_values(array_filter($s['outbox']['jobs'],static fn($x)=>$x['id']!==$job['id']));
-                    $s['native']['deliveryReceipts'][$job['receiverId']]=$reply;return $s;
+                    $s['native']['deliveryReceipts'][$job['receiverId']]=array_replace($reply,['pairingId'=>$job['pairingId']]);return $s;
                 },['action'=>'peer-receipt','actor'=>$job['receiverId'],'target'=>$job['id']]);$results[]=['id'=>$job['id'],'status'=>'ACKNOWLEDGED'];
             }catch(Throwable $e){
                 $key='backoff:'.$job['id'];try{$backoff=$this->store->get($key,'delivery-backoff');}catch(Throwable $ignored){$backoff=['attempts'=>0];}

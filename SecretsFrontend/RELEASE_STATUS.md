@@ -202,3 +202,34 @@ clipboard write or persistent browser storage occurs while generating. Existing
 cancel/navigation/hide cleanup also clears generated drafts. Browser tests cover
 new/edit flows, options, rejection sampling, missing/failing random generation,
 no requests until review, masking, approval staging and draft cleanup.
+
+## Shared-installation wizard
+
+**Connections** now provides the same numbered six-step wizard on each platform:
+**1 · Prepare**, **2 · Invitation**, **3 · Request**, **4 · Approve**,
+**5 · Check sharing**, **6 · Ready**. Each screen identifies the current platform,
+explains which tab needs the next action, and advances from authenticated progress.
+Invitation creation opens the existing timed one-use popup; a matching consumed
+invitation closes it so Step 4 is visible. Confirmation popups describe the exact
+platform and matching connection code in plain language. Unrelated requests are
+not selected automatically. Existing/pending connections can be resumed explicitly.
+
+The wizard requires both current-pairing incoming evidence and a verified outgoing
+receipt for the current Global revision, with no pending sharing messages, before
+showing Ready. Pairing activation, stale snapshots and receipts from a previous
+pairing are insufficient. Read-only progress polling is authenticated/CSRF-checked,
+pauses when hidden or approving, stops after completion/15 minutes and does not
+extend session inactivity. It never submits or approves another mutation. Stored
+receipts now retain their already-verified pairing ID; protocol wire messages and
+existing approval/security policies are unchanged. Missing remote HTTPS transport
+is explained during preparation. Global sections keep independent editing owners;
+Local secrets, passkeys and keys remain local. Ownership transfer is collapsed
+under Advanced. The operating guide, console help and `SHARED_INSTALLATION.md` use
+the same six names and sequence.
+
+Tests exercise both browser roles, automatic progress, exact invitation/code
+binding, cancellation/resume, stale/replaced pairings, hidden/delayed replies and
+received-scope navigation. PHP integration fixtures exercise real signed/encrypted
+two-vault exchanges, current-pairing receipts, masked HTTP progress and unchanged
+session inactivity. Deployment-specific remote TLS and network testing remains
+outstanding; standalone rollback limitations and independent review gates remain.

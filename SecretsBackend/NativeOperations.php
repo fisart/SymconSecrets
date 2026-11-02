@@ -54,7 +54,7 @@ final class SecretsBackendNativeOperations
                 $op['candidateRecord']=$c;break;
             case 'nativeInvite':SecretsBackendNativePeer::exact($op,['kind']);$op['invitation']=$this->peer->invitation();break;
             case 'nativePair':SecretsBackendNativePeer::exact($op,['kind','invitation','name']);$op=$this->peer->pairOperation($op['invitation'],$op['name']);break;
-            case 'nativeAcceptPair':SecretsBackendNativePeer::exact($op,['kind','peerId']);$p=$state['pairing']['peers'][$op['peerId']]??null;if(!is_array($p)||$p['state']!=='PENDING_APPROVAL')throw new RuntimeException('Select the exact pending pairing request.');$op['pairDigest']=SecretsBackendNativePeer::digest($p['pair']);break;
+            case 'nativeAcceptPair':SecretsBackendNativePeer::exact($op,['kind','peerId']);$p=$state['pairing']['peers'][$op['peerId']]??null;if(!is_array($p)||$p['state']!=='PENDING_APPROVAL')throw new RuntimeException('Select the exact pending pairing request.');$op['pairDigest']=SecretsBackendNativePeer::digest($p['pair']);$op['peerReview']=['peerURL'=>$p['descriptor']['endpoint'],'peerVault'=>$p['id'],'comparison'=>SecretsBackendNativePeer::comparison($p['pair'])];break;
             case 'nativeRevokePeer':SecretsBackendNativePeer::exact($op,['kind','peerId']);if(!isset($state['pairing']['peers'][$op['peerId']]))throw new RuntimeException('Unknown peer.');break;
             case 'nativeRotateKey':SecretsBackendNativePeer::exact($op,['kind']);$op['keyId']=SecretsBackendCodec::uuid();break;
             case 'nativeBackup':SecretsBackendNativePeer::exact($op,['kind']);$op['recoveryKey']=SecretsBackendCodec::b64(random_bytes(32));break;
@@ -236,7 +236,9 @@ final class SecretsBackendNativeOperations
     {
         return match($op['kind']){
             'nativeLegacyImport'=>$this->legacyResult($op,$validated),
-            'nativeInvite'=>['invitation'=>SecretsBackendNativePeer::invitationText($op['invitation']),'clearAfterSeconds'=>60],
+            'nativeInvite'=>['invitation'=>SecretsBackendNativePeer::invitationText($op['invitation']),'clearAfterSeconds'=>60,'pairingSetup'=>['kind'=>'invitation','invitationId'=>$op['invitation']['id'],'expires'=>$op['invitation']['expires']]],
+            'nativePair'=>['nativeChanged'=>true,'pairingSetup'=>['kind'=>'request','peerId'=>$op['pair']['a']['vaultId'],'pairingId'=>$op['pair']['id'],'expires'=>$op['expires']]],
+            'nativeAcceptPair'=>['nativeChanged'=>true,'pairingSetup'=>['kind'=>'accepted','peerId'=>$op['peerId'],'pairingId'=>$validated['state']['pairing']['peers'][$op['peerId']]['pairingId']]],
             'nativeMachineGrant'=>['machineId'=>$op['id'],'capabilityToken'=>$op['token'],'clearAfterSeconds'=>60],
             'nativeBackup'=>['backup'=>SecretsBackendNativeBackup::encrypt($this->store,$op['recoveryKey'],$validated),'recoveryKey'=>$op['recoveryKey'],'clearAfterSeconds'=>60],
             'nativeRestore'=>$this->restoreResult($op),
@@ -253,6 +255,7 @@ final class SecretsBackendNativeOperations
     private function hardwareResult(array $profile): array { if($this->hardwareApplied!==null)($this->hardwareApplied)($profile);return ['hardwareProfileApplied'=>true,'reloginRequired'=>true]; }
     public function request(string $action,array $data): array
     {
+        if($action==='nativePairingStatus'){SecretsBackendNativePeer::exact($data,[]);return $this->pairingStatus($this->store->read()['state']);}
         if($action==='legacySources'){SecretsBackendNativePeer::exact($data,[]);return ['sources'=>SecretsBackendLegacyImport::sources()];}
         if($action==='legacyPreview')return $this->legacyPreview($data);
         if($action==='nativeUploadBegin'){SecretsBackendNativePeer::exact($data,['length','digest']);if(!is_int($data['length'])||!is_string($data['digest']))throw new RuntimeException('Invalid upload metadata.');return $this->uploads()->begin($data['length'],$data['digest']);}
@@ -270,6 +273,8 @@ final class SecretsBackendNativeOperations
         if($op['kind']==='nativeConnectActivate'){$c=$op['candidateRecord'];$out+=['origin'=>$c['origin'],'rpId'=>parse_url($c['origin'],PHP_URL_HOST),'administrator'=>$c['entry']['administrator'],'userHandle'=>$c['entry']['userHandle'],'credential'=>$c['entry']['id'],'fingerprint'=>hash('sha256',$c['entry']['publicKey']),'browserKey'=>$c['keyDigest'],'rights'=>$c['rights'],'candidateDigest'=>$op['digest'],'effect'=>'Activate exactly this tested backup credential.'];}
 
         foreach(['label','hardware','probe','name','newName','scope','path','write','peerId','mode','sourceVault','sourceAt','backupDigest','treeId','transferId','newTreeId']as$key)if(isset($op[$key]))$out[$key]=$op[$key];
+        if(isset($op['peerReview']))$out+=$op['peerReview'];
+        if(isset($op['pair']))$out['comparison']=SecretsBackendNativePeer::comparison($op['pair']);
         if(isset($op['pair']))$out+=['peerURL'=>$op['pair']['a']['endpoint'],'peerVault'=>$op['pair']['a']['vaultId'],'peerFingerprint'=>hash('sha256',$op['pair']['a']['signKey']),'pairingDigest'=>SecretsBackendNativePeer::digest($op['pair'])];
         if($op['kind']==='nativeHardwareProfile')$out+=['trustVersion'=>$op['version'],'certificateFingerprints'=>$op['hashes'],'allowedAAGUIDs'=>$op['aaguids'],'effect'=>'Existing verified hardware credentials must be re-enrolled and tested against this new trust generation. Hardware-only policy remains enforced.'];
         if(isset($op['certificate']))$out+=['ownershipCertificate'=>SecretsBackendNativePeer::digest($op['certificate']),'newOwner'=>$op['certificate']['newOwner'],'recipients'=>count($op['certificate']['recipients']),'effect'=>'Freeze this writer permanently within the current lineage; the new owner must explicitly accept.'];
@@ -340,14 +345,24 @@ final class SecretsBackendNativeOperations
             $this->legacyCommitSource=$source;try{return $commit();}finally{$this->legacyCommitSource=null;}
         });
     }
+    /** Authenticated progress only: no values, invitation secrets, session refresh or remote requests. */
+    private function pairingStatus(array $state): array
+    {
+        $received=[];foreach($state['native']['received']as$id=>$r)$received[]=['id'=>$id,'owner'=>$r['owner'],'revision'=>$r['revision'],'pairingId'=>$r['pairingId']??null,'at'=>$r['at']];
+        $peers=array_values(array_map(static fn($p)=>$p+['comparison'=>SecretsBackendNativePeer::comparison($p['pair'])],$state['pairing']['peers']));
+        $sent=[];foreach($state['native']['deliveryReceipts']as$id=>$receipt)$sent[]=['peerId'=>$id]+array_intersect_key($receipt,array_flip(['pairingId','requestKind','status','treeId','revision']));
+        return ['peers'=>$peers,'pairingReceived'=>$received,'pairingSent'=>$sent,'globalTreeId'=>$state['native']['globalTreeId'],'globalRevision'=>$state['stream']['globalRevision'],'remoteHttpsAvailable'=>function_exists('curl_init'),'globalWritable'=>$state['native']['globalWritable'],
+            'outbox'=>array_values(array_map(static fn($j)=>array_intersect_key($j,array_flip(['id','receiverId','kind','sequence','status'])),$state['outbox']['jobs']))];
+    }
     public function metadata(array $state): array
     {
         $received=[];foreach($state['native']['received']as$id=>$r)if(!isset($state['native']['trees'][$id]))$received[]=['id'=>$id,'owner'=>$r['owner'],'revision'=>$r['revision'],'at'=>$r['at'],'entries'=>SecretsBackendTree::listing($r['node'])];
         $owned=[];foreach($state['native']['trees']as$id=>$r)$owned[]=['id'=>$id,'owner'=>$r['owner'],'epoch'=>$r['epoch'],'revision'=>$r['revision'],'frozen'=>$r['frozen'],'entries'=>SecretsBackendTree::listing($r['node'])];
         $machines=[];foreach($state['native']['machines']as$m){unset($m['hash']);$machines[]=$m;}
+        $progress=$this->pairingStatus($state);
         return ['legacyImports'=>array_values($state['native']['legacyImports']??[]),'backupOrigin'=>$state['policy']['backupOrigin']??null,'primaryOrigin'=>$state['policy']['origin'],'info'=>$this->store->metadata(),'storage'=>$this->store->storagePaths(),'peerEndpoint'=>$this->peer->descriptor()['endpoint'],'peerDescriptor'=>$this->peer->descriptor(),
             'globalTreeId'=>$state['native']['globalTreeId'],'globalWritable'=>$state['native']['globalWritable'],'ownedTrees'=>$owned,'transfers'=>array_map(static fn($t)=>array_diff_key($t,['node'=>true]),$state['native']['transfers']),
-            'peers'=>array_values($state['pairing']['peers']),'received'=>$received,'machines'=>$machines,'queuedJobs'=>count($state['outbox']['jobs']),
+            'peers'=>$progress['peers'],'pairingReceived'=>$progress['pairingReceived'],'pairingSent'=>$progress['pairingSent'],'globalRevision'=>$progress['globalRevision'],'remoteHttpsAvailable'=>$progress['remoteHttpsAvailable'],'received'=>$received,'machines'=>$machines,'queuedJobs'=>count($state['outbox']['jobs']),
             'providers'=>array_values(array_map(static fn($p)=>SecretsBackendNativeEffects::targetWritable($state,$p)?$p:array_replace($p,['status'=>'OWNER_CHANGED']),$state['native']['providers'])),'effects'=>array_map(static fn($e)=>array_intersect_key($e,array_flip(['id','providerId','state','reason','createdAt','httpStatus','attempts'])),$state['native']['effects']),
             'hardwareProfile'=>['version'=>$state['policy']['management']['settings']['HardwareTrustVersion'],'fingerprints'=>$state['policy']['management']['files']['HardwareRoots'],'aaguids'=>json_decode($state['policy']['management']['settings']['HardwareAAGUIDs'],true)],
             'outbox'=>array_map(static fn($j)=>array_intersect_key($j,array_flip(['id','receiverId','kind','sequence','status'])),$state['outbox']['jobs'])];
