@@ -182,7 +182,7 @@
     },
     {
       "type": "Label",
-      "caption": "Shared installation: complete first-time setup once on each platform. Then open Connections on the initiating platform, choose Other platform and select Connect from here. The wizard transfers the invitation, opens approval popups and checks sharing automatically; no copy/paste or menu navigation on the other platform is needed. If delivery stalls, use Connection check and Try delivery now there for an immediate result. Follow Start again after an expired request when the approval window closes."
+      "caption": "Shared installation: complete first-time setup once on each platform. Then open Connections on the initiating platform, choose Other platform and select Connect from here. Global becomes one shared vault editable on both platforms; Local remains private. Existing connections use Merge into one Global vault to approve the new permissions. Concurrent versions are preserved under Secrets → Resolve conflict. Follow 1 · Show versions, 2 · Keep selected version or Keep all versions with different names, 3 · Confirm. The wizard transfers the invitation, opens approval popups and checks sharing automatically; no copy/paste or menu navigation on the other platform is needed. If delivery stalls, use Connection check and Try delivery now there for an immediate result. Follow Start again after an expired request when the approval window closes."
     }
   ],
   "status": [

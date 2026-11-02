@@ -357,3 +357,12 @@ a backend transport implementation marker, and whether saved diagnostic evidence
 predates the latest delivery attempt. Tests exercise ACTIVE with a failed acceptance,
 stale receipts, pending jobs and subsequent verified completion in both manual and
 coordinated UI flows. This status correction does not itself repair delivery.
+
+## Shared Global update — 2026-11-02
+
+The new connection wizard uses one writable Global namespace with causal merging
+and explicit conflict resolution, replacing separate received trees for new
+shared-global-v1 pairings. Existing connections require explicit upgrade approvals;
+old Global machine grants/providers are disabled at activation. No installation
+reset is required. See [SHARED_GLOBAL.md](SHARED_GLOBAL.md) for exact permissions,
+limits, migration, tests and outstanding deployment acceptance.

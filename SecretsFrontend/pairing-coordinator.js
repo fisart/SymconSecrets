@@ -38,14 +38,16 @@ async function pairCoordinatorPump(){const c=pairCoordinator;if(!c||c.busy||c.wa
  try{
   if(c.mode==='local'&&c.stage==='opening'&&Date.now()-(c.openedAt||Date.now())>15000){pairCoordinatorStatus('Waiting for sign-in in the approval popup. If you are already signed in there, check that this module is updated on both platforms and read any popup message.');$('peerCoordinatorOpen').hidden=false;}
   if(c.mode==='remote'&&c.stage==='hello'){
-   if(!document.hidden){pairCoordinatorSend('READY',{descriptor:snapshot.native.peerDescriptor});try{window.opener?.focus();}catch{}}
-   pairCoordinatorStatus('Ready. The initiating wizard will send the connection invitation automatically.');
+   if(!document.hidden){pairCoordinatorSend('READY',{descriptor:snapshot.native.peerDescriptor,sharedGlobalSupported:snapshot.native.sharedGlobalSupported===true});try{window.opener?.focus();}catch{}}
+   const existing=snapshot.native.peers.find(p=>p.active&&p.state==='ACTIVE'&&p.descriptor.endpoint===c.issuerEndpoint);
+   if(existing){if(peerWizardState.peerId!==existing.id)peerWizardResume(existing.id);pairCoordinatorStatus(peerConnectionLabel(existing)+'. Continue in the initiating wizard. Global sharing permissions may need a new approval.');}
+   else pairCoordinatorStatus('Waiting for the initiating wizard to send the invitation. No connection has been completed yet.');
   }else if(c.remote){
    await pairCoordinatorRefresh();if(c!==pairCoordinator)return;const p=pairCoordinatorPeer(c);
    if(c.mode==='local'){
     if(c.stage==='prepare'){
-     if(p?.active){peerWizardResume(p.id);c.stage='sharing';pairCoordinatorSend('FINISHED');pairCoordinatorStatus('This connection is already approved. Checking sharing automatically.');}
-     else if(p){pairCoordinatorStatus('Approve replacing the previous pending request. The other platform’s popup will handle its matching request too.');await pairCoordinatorReview({kind:'nativeRevokePeer',peerId:p.id},'Replace this exact pending connection before creating a fresh invitation. Your own Global and Local secrets are retained.','invite');}
+     if(p?.active&&p.pair?.scope==='shared-global-v1'){peerWizardResume(p.id);c.stage='sharing';pairCoordinatorSend('FINISHED');pairCoordinatorStatus('This connection is already approved. Checking sharing automatically.');}
+     else if(p){pairCoordinatorStatus('Approve replacing the previous connection with one shared Global vault. The other platform’s popup will handle its matching approval too.');await pairCoordinatorReview({kind:'nativeRevokePeer',peerId:p.id},'Replace this exact connection with shared Global editing. Existing secrets are retained. Conflicting values will need your choice.','invite');}
      else c.stage='invite';
     }
     if(c.stage==='invite'){pairCoordinatorStatus('Confirm creation of the invitation here. The wizard sends it directly to the other platform.');await pairCoordinatorReview({kind:'nativeInvite'},'Create a one-use invitation for '+c.origin+'. It will be sent only to the selected approval popup. Both vaults must still approve the exact pairing.','request');}
@@ -55,7 +57,7 @@ async function pairCoordinatorPump(){const c=pairCoordinator;if(!c||c.busy||c.wa
     }
     if(c.stage==='sharing'){
      if(p&&!peerWizardState.role)peerWizardResume(p.id);
-     pairCoordinatorStatus(peerWizardStep===6?'Complete. Both platforms exchanged their Global sections. Local secrets remain private.':peerDeliveryBlocked(p)?'Pairing approved · delivery blocked. The connection is not ready. Use Connection check below.':'Pairing approved. Waiting for verified data exchange before this connection is Ready.');
+     pairCoordinatorStatus(peerWizardStep===6?'Complete. Global is shared across both platforms. Local secrets remain private.':peerDeliveryBlocked(p)?'Pairing approved · delivery blocked. The connection is not ready. Use Connection check below.':'Pairing approved. Waiting for verified data exchange before this connection is Ready.');
      if(peerWizardStep===6){pairCoordinatorSend('FINISHED');clearTimeout(pairCoordinatorTimer);pairCoordinator=null;$('peerCoordinatorCancel').hidden=true;$('peerCoordinatorAgain').hidden=false;$('peerCoordinatorRetry').hidden=true;renderPeerConnections();return;}
     }
    }else{
@@ -63,7 +65,7 @@ async function pairCoordinatorPump(){const c=pairCoordinator;if(!c||c.busy||c.wa
      if(p){pairCoordinatorStatus('Confirm removal of this platform’s previous connection to '+c.origin+' before starting the replacement.');await pairCoordinatorReview({kind:'nativeRevokePeer',peerId:p.id},'Replace this exact previous connection with the one requested by '+c.origin+'. Received copies are retained; your own secrets stay unchanged.','pair');}
      else c.stage='pair';
     }
-    if(c.stage==='pair'&&c.invitation&&!document.hidden){const invitation=c.invitation;pairCoordinatorStatus('Confirm connection to '+c.origin+'. The initiating wizard will finish the remaining steps automatically.');await pairCoordinatorReview({kind:'nativePair',invitation,name:('Platform '+c.origin).slice(0,80)},'Request sharing with the initiating vault at '+c.origin+'. Global sections are shared; Local secrets remain private.','delivery');}
+    if(c.stage==='pair'&&c.invitation&&!document.hidden){const invitation=c.invitation;pairCoordinatorStatus('Confirm connection to '+c.origin+'. The initiating wizard will finish the remaining steps automatically.');await pairCoordinatorReview({kind:'nativePair',invitation,name:('Platform '+c.origin).slice(0,80)},'Request sharing with the initiating vault at '+c.origin+'. Both platforms may edit one shared Global vault. Conflicting versions are retained; Local secrets remain private.','delivery');}
     if(c.stage==='delivery'&&p){
      if(!c.attempted){c.attempted=true;const progress=await api('nativeRetryPeerDelivery',{peerId:p.id,pairingId:p.pairingId});if(c!==pairCoordinator)return;Object.assign(snapshot.native,progress);}
      const current=pairCoordinatorPeer(c),queued=snapshot.native.outbox.some(j=>j.receiverId===p.id&&j.kind==='PAIR_REQUEST');
@@ -80,15 +82,17 @@ window.addEventListener('message',event=>{const c=pairCoordinator,m=event.data;i
   if(m.action==='CANCEL'){pairCoordinatorStop('The guided connection was cancelled. Saved requests remain available.',false);return;}
   if(c.mode==='local'&&m.action==='ERROR'){pairCoordinatorStatus('The other platform paused: '+String(m.data.message||'Approval could not finish.').slice(0,240)+' Cancel this guided connection and start again when corrected. Saved requests remain available.');c.failed=true;return;}
   if(c.mode==='local'&&m.action==='READY'&&c.stage==='opening'){
+   if(m.data.sharedGlobalSupported!==true)throw Error('Update the Secrets module on both platforms before merging Global secrets.');
    const d=pairCoordinatorDescriptor(m.data.descriptor),u=pairCoordinatorURL(d.endpoint);if(u.origin!==c.origin||d.vaultId===snapshot.native.info.vaultId)throw Error('The popup did not identify the selected platform.');
    if(c.target.includes('/hook/secrets_peer_')&&d.endpoint!==c.target)throw Error('The popup returned a different backend.');
-   c.remote=d;c.stage='prepare';pairCoordinatorSend('HELLO',{descriptor:snapshot.native.peerDescriptor});
+   c.remote=d;c.stage='prepare';pairCoordinatorSend('HELLO',{descriptor:snapshot.native.peerDescriptor,sharedGlobalSupported:snapshot.native.sharedGlobalSupported===true});
   }else if(c.mode==='remote'&&m.action==='HELLO'&&c.stage==='hello'){
+   if(m.data.sharedGlobalSupported!==true)throw Error('Update the Secrets module on both platforms before merging Global secrets.');
    const d=pairCoordinatorDescriptor(m.data.descriptor);if(d.endpoint!==c.issuerEndpoint||new URL(d.endpoint).origin!==c.origin||d.vaultId===snapshot.native.info.vaultId)throw Error('The initiating vault address changed.');c.remote=d;c.stage='waiting-invitation';
   }else if(c.mode==='remote'&&m.action==='INVITATION'&&c.stage==='waiting-invitation'){
    if(typeof m.data.invitation!=='string'||!m.data.invitation.startsWith('SECBPAIR1.')||m.data.invitation.length>16384)throw Error('Invalid invitation handoff.');
    // Decode only to check browser handoff identity; the backend verifies the signature and proof.
-   const invitation=JSON.parse(new TextDecoder().decode(binary(m.data.invitation.slice(10))));if(!pairCoordinatorSame(invitation.issuer,c.remote))throw Error('The invitation belongs to another vault.');
+   const invitation=JSON.parse(new TextDecoder().decode(binary(m.data.invitation.slice(10))));if(invitation.scope!=='shared-global-v1')throw Error('Use a new shared Global invitation from the updated module.');if(!pairCoordinatorSame(invitation.issuer,c.remote))throw Error('The invitation belongs to another vault.');
    c.invitation=m.data.invitation;c.stage='prepare';
   }else if(c.mode==='local'&&m.action==='REQUESTED'&&c.stage==='request'){
    if(!/^[a-f0-9-]{36}$/.test(m.data.pairingId)||!/^([A-F0-9]{5} ){3}[A-F0-9]{5}$/.test(m.data.comparison))return;c.requested={pairingId:m.data.pairingId,comparison:m.data.comparison};$('peerCoordinatorOpen').hidden=true;$('peerCoordinatorRemoteError').textContent='';$('peerCoordinatorRetry').hidden=true;

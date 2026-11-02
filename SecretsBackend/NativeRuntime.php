@@ -91,6 +91,7 @@ trait SecretsBackendNativeRuntime
             if(!$grant['active']||!hash_equals($grant['hash'],$hash))continue;
             $target=SecretsBackendNativeOperations::machineTarget($state,$scope);
             if($grant['scope']!==$scope||($grant['treeId']??'')!==$target['treeId']||($write&&(!$grant['write']||!$target['writable']))||count($path)<count($grant['path'])||array_slice($path,0,count($grant['path']))!==$grant['path'])throw new RuntimeException('Machine capability does not permit this exact scope/path/action.');
+            if($scope==='global')SecretsBackendSharedGlobal::assertPath($state,$path);
             return $grant;
         }throw new RuntimeException('Machine capability is missing or revoked.');
     }

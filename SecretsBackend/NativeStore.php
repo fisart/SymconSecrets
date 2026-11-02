@@ -5,6 +5,7 @@ require_once __DIR__ . '/NativePlatform.php';
 require_once __DIR__ . '/Codec.php';
 require_once __DIR__ . '/BootstrapVerifier.php';
 require_once __DIR__ . '/NativeRelocation.php';
+require_once __DIR__ . '/SharedGlobal.php';
 
 /** One encrypted complete-state journal, implemented solely with supplied PHP. */
 final class SecretsBackendNativeStore implements SecretsBackendStorage
@@ -313,7 +314,12 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
             if (!SecretsBackendCodec::same($this->frame['head'], $expectedHead)) throw new RuntimeException('Revision conflict; reload and approve the current change.');
             $maintenance = in_array($audit['action'] ?? '', ['nativeConnectRevoke','login','reveal','nativeReveal','nativeBackup','nativeCompact','revoke','nativeMachineRevoke','nativeRevokePeer','nativeRotateKey','enroll-recovery','policy'], true);
             if (count($this->frame['state']['operations']['outcomes']) >= ($maintenance ? 4112 : 3500)) throw new RuntimeException('Operation retention is full; create and verify a backup, then compact explicitly.');
-            $state = $mutate($this->frame['state']); $changed = self::stateDigest($state) !== $expectedHead['digest']; $index = $changed ? SecretsBackendCodec::increment($expectedHead['index']) : $expectedHead['index'];
+            $state = $mutate($this->frame['state']);
+            if(isset($state['native']['sharedGlobal'])&&self::canonical($state['native']['sharedGlobal'])===self::canonical($this->frame['state']['native']['sharedGlobal']??null)&&self::canonical($state['vault']['global'])!==self::canonical($this->frame['state']['vault']['global'])){
+                $state=SecretsBackendSharedGlobal::capture($state);
+                if(class_exists(SecretsBackendNativePeer::class))$state=SecretsBackendNativePeer::queueGlobal($state);
+            }
+            $changed = self::stateDigest($state) !== $expectedHead['digest']; $index = $changed ? SecretsBackendCodec::increment($expectedHead['index']) : $expectedHead['index'];
             $event = $this->event($audit, $operationId, 'committed');
             $state['operations']['audit'][] = $event + ['afterIndex' => $index, 'afterRevision' => $state['vault']['revision']];
             // Outcome omits its own digest to avoid a circular state hash.

@@ -1,3 +1,9 @@
+> Shared Global update (2026-11-02): new wizard pairings use `shared-global-v1`
+> and the multi-writer merge/authorization contract in [SHARED_GLOBAL.md](SHARED_GLOBAL.md).
+> The single-owner sections below describe legacy `global` pairings and their
+> compatibility/transfer implementation; they do not govern the new shared Global
+> namespace. Existing pairings require fresh bilateral approval to upgrade.
+
 # Symcon-native vault protocol — native implementation profile
 
 Date: 1 November 2026 (Europe/Rome).

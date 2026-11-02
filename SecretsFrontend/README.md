@@ -104,3 +104,10 @@ file-sync-only profile and requires private-ACL confirmation.
 
 The earlier external anchor/quorum prototypes remain in repository history and
 component tests. They are never a native-mode fallback or runtime requirement.
+
+## One shared Global vault
+
+New connections merge Global across platforms. Local stays private. Concurrent
+versions are preserved for explicit conflict resolution. Existing separate-tree
+connections require a new approval through **Merge into one Global vault**.
+See [the upgrade steps, security contract and tests](SHARED_GLOBAL.md).

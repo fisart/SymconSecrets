@@ -37,6 +37,7 @@ final class SecretsBackendNativeEffects
     }
     public static function token(array $state,string $scope,array $path): string
     {
+        if($scope==='global')SecretsBackendSharedGlobal::assertPath($state,$path);
         $value=SecretsBackendTree::value(SecretsBackendTree::at($state['vault'][$scope],$path));if(!is_string($value)||$value===''||strlen($value)>16384)throw new RuntimeException('The selected token reference is not a bounded nonempty string.');return $value;
     }
     public function prepare(array $state,string $providerId): array

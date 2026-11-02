@@ -14,7 +14,7 @@ final class NativePeerMachineProbe
 }
 $checks=0;$roots=[];$ok=static function(bool $v,string $why)use(&$checks):void{if(!$v)throw new RuntimeException($why);++$checks;};
 $no=static function(callable $f,string $why)use(&$checks):void{try{$f();}catch(Throwable $e){++$checks;return;}throw new RuntimeException($why);};
-$op=static function(SecretsBackendNativeOperations $ops,SecretsBackendNativeStore $s,array $raw):array{$current=$s->read();$normalized=$ops->normalize($raw,$current['state'],false);$s->change($current['head'],SecretsBackendCodec::uuid(),SecretsBackendNativePeer::digest($normalized),static fn($state)=>$ops->apply($normalized,$state));return $normalized;};
+$op=static function(SecretsBackendNativeOperations $ops,SecretsBackendNativeStore $s,array $raw):array{$current=$s->read();$normalized=$ops->normalize($raw,$current['state'],false);if($raw['kind']==='nativeInvite'){/* Retain regression coverage for the deployed separate-owner protocol. New shared Global has its own transport suite. */$peer=(new ReflectionProperty($ops,'peer'))->getValue($ops);$normalized['invitation']=$peer->invitation(false);unset($normalized['_nativeSeal']);$normalized['_nativeSeal']=$s->opaque('native-operation:'.SecretsBackendNativeStore::canonical($normalized));}$s->change($current['head'],SecretsBackendCodec::uuid(),SecretsBackendNativePeer::digest($normalized),static fn($state)=>$ops->apply($normalized,$state));return $normalized;};
 try{
  foreach([1,2,3,5]as$count){
     $stores=[];$peers=[];$ops=[];$routes=[];$drop=null;$wire=[];
