@@ -14,6 +14,8 @@ else{eval(substr(file_get_contents($template),5));$actualEntry=false;}
 function SECB_CallLegacyAPI(int $id,int $source,string $method,string $args): string {return $GLOBALS['instances'][$id]->CallLegacyAPI($source,$method,$args);}
 function SECB_IsNativePortalAuthenticated(int $id): bool {return $GLOBALS['instances'][$id]->IsNativePortalAuthenticated();}
 function SECB_GetNativePortalLoginURL(int $id,string $path,string $server): string {return $GLOBALS['instances'][$id]->GetNativePortalLoginURL($path,$server);}
+function SECB_GetLegacyAPIStatus(int $id): string {return $GLOBALS['instances'][$id]->GetLegacyAPIStatus();}
+function IPS_LogMessage(string $sender,string $message): void {$GLOBALS['apiLogs'][]=['sender'=>$sender,'message'=>$message];}
 function SEC_GetKeys(int $id): string {return $GLOBALS['instances'][$id]->GetKeys();}
 function SEC_GetSecret(int $id,string $ident): string {return $GLOBALS['instances'][$id]->GetSecret($ident);}
 function SEC_SetRecordFields(int $id,string $path,array $fields,string $scope): bool {return $GLOBALS['instances'][$id]->SetRecordFields($path,$fields,$scope);}
@@ -36,7 +38,7 @@ try{
     $approve(['kind'=>'save','scope'=>'local','path'=>['Private'],'revision'=>$invoke('session')['data']['revision'],'mode'=>'create','json'=>'{"token":"NATIVE-LOCAL-CANARY"}']);
     foreach([49800,59597]as$id){
         $m=new SecretsManager($id);$m->properties=['OperationMode'=>$id===49800?0:2,'KeyFolderPath'=>$root.'/retired-does-not-exist','PortalEnabled'=>false,'SlaveURLs'=>'[{"Url":"https://retired.invalid/hook/secrets_123"}]'];$m->values=['Vault'=>'RETIRED-CIPHERTEXT-MUST-NOT-BE-READ','PortalDebugMessage'=>'retained'];$before=$m->properties;$m->Create();$m->ApplyChanges();
-        $ok($m->status===102,'Native replacement did not activate against the unique ready backend.');$ok($m->properties['NativeBackendInstanceID']===5101,'Backend was not detected automatically.');
+        $ok($m->status===102,'Native replacement did not activate against the unique ready backend.');$ok($m->properties['NativeBackendInstanceID']===0&&json_decode($m->attributes['NativeBackendBinding'],true)['backend']===5101,'Automatic backend discovery must pin without changing properties recursively.');
         foreach($before as$property=>$value)$ok($m->properties[$property]===$value,'Retired configuration changed.');
         $ok($m->values['Vault']==='RETIRED-CIPHERTEXT-MUST-NOT-BE-READ','Saved old ciphertext was changed.');
         $ok(json_decode(SEC_GetKeys($id),true)===['Hikvision'],'Unchanged SEC call did not read the native vault.');
@@ -45,6 +47,14 @@ try{
         $info=json_decode($m->GetReplacementInfo(),true);$ok($info['engine']==='native-only'&&!$info['oldImplementationEnabled']&&!$info['oldStorageUsed']&&$info['ready'],'Replacement metadata suggested a legacy fallback.');
         $ok(!SEC_SetRecordFields($id,'blocked',['key'=>'value'],'global'),'Default replacement writes were not frozen.');
     }
+    // Module updates may apply the SEC instance before the backend has recovered.
+    $back->properties['Enabled']=false;$late=new SecretsManager(49999);$GLOBALS['moduleIDs'][49999]=SecretsBackendLegacyImport::MODULE;$late->Create();$late->ApplyChanges();
+    $ok($late->status===200&&$late->timers['NativeBindingRetry']===5000,'Unavailable backend must schedule bounded automatic binding retry.');
+    $ok(json_decode($late->GetReplacementInfo(),true)['code']==='NO_READY_BACKEND','Startup diagnostics did not explain the missing ready backend.');
+    $back->properties['Enabled']=true;
+    $ok(str_contains(SEC_GetSecret(49999,'Hikvision'),'NATIVE-ONLY-CANARY'),'An instance applied before native recovery stayed permanently unbound.');
+    $late->RetryNativeBinding();$ok($late->status===102&&$late->timers['NativeBindingRetry']===0&&$late->properties['NativeBackendInstanceID']===0,'Automatic retry did not finish without recursive property changes.');
+    unset($GLOBALS['instances'][49999],$GLOBALS['moduleIDs'][49999]);
     $a=$GLOBALS['instances'][49800];$b=$GLOBALS['instances'][59597];$ok($warnings===[],'Successful replacement reads produced warnings.');
     $hookRows=json_decode($hooks->properties['Hooks'],true);$ok(count(array_filter($hookRows,static fn($h)=>$h['Hook']==='/hook/secrets_49800'&&$h['TargetID']===49800))===1,'Existing hook was duplicated or reassigned.');
     $ok(!file_exists($root.'/retired-does-not-exist'),'Retired key directory was created or accessed.');
@@ -63,7 +73,27 @@ try{
     $ok(SecretsBackendLegacyImport::sources()===[],'Retired managers were discovered as import sources.');
     secReject(static fn()=>SecretsBackendLegacyImport::read(49800,65536),'Retired vault files were read.');++$checks;
     $policy=SecretsBackendNativeLegacyHTTPS::proposal('https://new-peer.example.test/hook/secrets_peer_99');$ok($policy['policy']===['mode'=>'strict'],'Peer transport depended on retired manager configuration.');
-    $grant['enabled']=false;$approve($grant);$ok(SEC_GetKeys(49800)==='[]','Replacement bypassed an explicit native read revocation.');$grant['enabled']=true;$approve($grant);
+    $grant['enabled']=false;$approve($grant);$ok(SEC_GetKeys(49800)==='[]','Replacement bypassed an explicit native read revocation.');
+    // Real configuration callbacks require a pure JSON response, even with display_errors on.
+    restore_error_handler();$oldDisplay=ini_set('display_errors','1');$oldLog=ini_set('log_errors','0');ob_start();
+    $options=json_decode(SEC_GetKeys(49800),true);echo json_encode(['elements'=>[['type'=>'Select','name'=>'RemoteServer','options'=>$options]]]);
+    $formBody=ob_get_clean();ini_set('display_errors',(string)$oldDisplay);ini_set('log_errors',(string)$oldLog);
+    set_error_handler(static function(int $severity,string $message)use(&$warnings):bool{$warnings[]=$message;return true;});
+    $ok(is_array(json_decode($formBody,true)),'A refused SEC read corrupted the consumer configuration form with PHP warning output.');
+    $logs=count($GLOBALS['apiLogs']??[]);ob_start();for($i=0;$i<100;$i++)SEC_GetKeys(49800);$noise=ob_get_clean();
+    $ok($noise===''&&count($GLOBALS['apiLogs']??[])===$logs,'Repeated refused reads flooded output/logs instead of using the per-instance throttle.');
+    $a->buffers['LegacyAPILogAt']=(string)(time()-61);SEC_GetKeys(49800);$ok(count($GLOBALS['apiLogs']??[])===$logs+1,'Failure log throttle did not reopen after one minute.');
+    ob_start();$ownForm=$a->GetConfigurationForm();$ownNoise=ob_get_clean();$ok($ownNoise===''&&str_contains($ownForm,'Show native connection status')&&is_array(json_decode($ownForm,true)),'Native instance diagnostics require another script or corrupt form JSON.');
+    $failure=json_decode($a->GetReplacementInfo(),true);$ok(($failure['lastFailure']['code']??'')==='LEGACY_API_REFUSED'&&($failure['access']['code']??'')==='READ_GRANT_DISABLED','Read refusal diagnostics lost native access status.');
+    ob_start();$back->GetKeys();$back->GetKeys();$nativeNoise=ob_get_clean();
+    $ok($nativeNoise===''&&($back->GetLegacyAPIStatus()!==''),'Direct SECB failure corrupted callback output.');
+
+$grant['enabled']=true;$approve($grant);
+    SEC_GetKeys(49800);$ok(!isset(json_decode($a->GetReplacementInfo(),true)['lastFailure']),'A successful read retained a stale failure diagnostic.');
+    ob_start();$missing=SEC_GetSecret(49800,'NONEXISTENT-KEY-CANARY');$missingNoise=ob_get_clean();
+    $ok($missing===''&&$missingNoise===''&&json_decode($a->GetReplacementInfo(),true)['lastFailure']['code']==='APPLICATION_RECORD_MISSING','Missing records emitted PHP notices or lost the failure diagnostic.');
+    $ok(!str_contains(json_encode($GLOBALS['apiLogs']??[]),'CANARY'),'Logs disclosed a secret value or record name.');
+    $ok($warnings===[],'Failed SEC/SECB reads still emitted PHP warnings/notices.');
     $back->properties['Enabled']=false;$ok(SEC_GetKeys(49800)==='[]'&&!json_decode($a->GetReplacementInfo(),true)['ready'],'Unavailable native backend fell back to old storage.');$back->properties['Enabled']=true;
     $other=new ReplacementReadyBackend(5102);$GLOBALS['moduleIDs'][5102]='{52165EDD-B2C0-40EC-8A59-42A97319B6E2}';
     $new=new SecretsManager(50000);$GLOBALS['moduleIDs'][50000]=SecretsBackendLegacyImport::MODULE;$new->Create();$new->ApplyChanges();$ok($new->status===200&&$new->properties['NativeBackendInstanceID']===0,'Ambiguous backend selection guessed a target.');

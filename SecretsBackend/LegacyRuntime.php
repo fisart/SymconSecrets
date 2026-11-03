@@ -43,7 +43,8 @@ trait SecretsBackendLegacyRuntime
             default=>'The native backend could not validate its current storage, runtime or pinned security configuration. No automatic recovery or permission change was attempted.'};
         $out['nextStep']=in_array($out['code'],['READ_GRANT_MISSING','READ_GRANT_DISABLED','READ_NOT_APPROVED','GLOBAL_IDENTITY_CHANGED'],true)
             ?'In Automation access -> Existing SEC applications, select This backend and review its explicit access override. The backend ID is detected automatically. Leave writes frozen for read-only scripts.'
-            :($out['code']==='READ_ALLOWED'?'Run the read again. If it warns, the operation failed after this status check; do not treat its fallback [] as an empty vault.':'Check the backend status and applied settings.');
+            :($out['code']==='READ_ALLOWED'?'Run the read again and inspect lastFailure if it fails. Read failures are logged without printing into consumer JSON; a fallback [] does not prove an empty vault.':'Check the backend status and applied settings.');
+        $last=json_decode($this->GetBuffer('LegacyAPILastFailure'),true);if(is_array($last))$out['lastFailure']=$last;
         return SecretsBackendCodec::json($out);
     }
     public function CallLegacyAPI(int $SourceInstanceID,string $Method,string $ArgumentsJSON): string
@@ -57,16 +58,26 @@ trait SecretsBackendLegacyRuntime
         try{$service=$this->legacyService($SourceInstanceID);$value=$service->{$Method}(...$args);$output=$service->output();$this->SetBuffer('LegacyAPILastError','');}
         catch(Throwable $error){
             $output=$Method==='EncryptAndSave'?'❌ Error: Encryption failed.':'';
-            $failure=['code'=>'LEGACY_API_REFUSED','meaning'=>'The read/write request failed authorization or backend validation. The fallback value does not prove an empty vault.'];
+            $failure=['code'=>$error->getCode()===2101?'APPLICATION_RECORD_MISSING':'LEGACY_API_REFUSED','meaning'=>'The read/write request failed authorization or backend validation. The fallback value does not prove an empty vault.'];
             $this->SetBuffer('LegacyAPILastError','Legacy '.$Method.' refused; check approved access, binding, freeze, Global conflicts and backend readiness.');
             $value=match($Method){'GetKeys'=>'[]','GetExplorerFields'=>[],'SetRecordFields','ImportLocalSecrets'=>false,'EncryptAndSave'=>null,default=>''};
         }
         return SecretsBackendCodec::json(['value'=>$value,'output'=>$output??'','error'=>$failure]);
     }
+    private function legacyFailedRead(string $method,string $code): void
+    {
+        if(!preg_match('/^[A-Z_]{1,48}$/D',$code))$code='LEGACY_API_REFUSED';
+        $this->SetBuffer('LegacyAPILastFailure',json_encode(['method'=>$method,'code'=>$code,'at'=>time()],JSON_THROW_ON_ERROR));
+        $lock='SECB.LegacyAPILog.'.$this->InstanceID;if(!IPS_SemaphoreEnter($lock,1))return;
+        try{if((int)$this->GetBuffer('LegacyAPILogAt')>time()-60)return;$this->SetBuffer('LegacyAPILogAt',(string)time());
+            if(function_exists('IPS_LogMessage'))IPS_LogMessage('SecretsBackend '.$this->InstanceID,'Application read refused ('.$code.'). Run SECB_GetLegacyAPIStatus('.$this->InstanceID.'); fallback values do not prove an empty vault.');
+        }catch(Throwable $ignored){}finally{IPS_SemaphoreLeave($lock);}
+    }
     private function legacyValue(string $method,array $args)
     {
-        $result=json_decode($this->CallLegacyAPI($this->InstanceID,$method,SecretsBackendCodec::json($args)),true,32,JSON_THROW_ON_ERROR);if(($result['output']??'')!=='')echo $result['output'];
-        if(($result['error']??null)!==null&&in_array($method,['GetKeys','GetSecret','GetExplorerFields','ExportLocalSecrets'],true))trigger_error('SecretsBackend: legacy read refused. Run SECB_GetLegacyAPIStatus('.$this->InstanceID.') for permission and backend diagnostics; the fallback value is not evidence of an empty vault.',E_USER_WARNING);
+        $result=json_decode($this->CallLegacyAPI($this->InstanceID,$method,SecretsBackendCodec::json($args)),true,32,JSON_THROW_ON_ERROR);if($method==='EncryptAndSave'&&($result['output']??'')!=='')echo $result['output'];
+        if(($result['error']??null)!==null&&in_array($method,['GetKeys','GetSecret','GetExplorerFields','ExportLocalSecrets'],true))$this->legacyFailedRead($method,$result['error']['code']??'LEGACY_API_REFUSED');
+        elseif(($result['error']??null)===null)$this->SetBuffer('LegacyAPILastFailure','');
         return $result['value'];
     }
     public function GetKeys(): string { return $this->legacyValue(__FUNCTION__,[]); }

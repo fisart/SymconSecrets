@@ -68,7 +68,7 @@ final class SecretsBackendLegacyAPI
             if($ident==='__LOCAL__')return self::encoded(self::value($s['vault']['local']));
             if(str_starts_with($ident,'__'))throw new RuntimeException('Legacy identity/internal areas are unavailable through the application API.');
             if(isset($s['native']['sharedGlobal']))SecretsBackendSharedGlobal::assertPath($s,[$ident],false);
-            $root=self::value($s['vault']['global']);if(!array_key_exists($ident,$root)){trigger_error('SecretsManager: Secret not found.',E_USER_NOTICE);return '';}
+            $root=self::value($s['vault']['global']);if(!array_key_exists($ident,$root))throw new RuntimeException('Application record is unavailable.',2101);
             return self::encoded($root[$ident]);
         },__FUNCTION__);
     }

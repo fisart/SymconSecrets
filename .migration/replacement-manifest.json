@@ -2,7 +2,7 @@
   "format": "NativeSECReplacement.1",
   "sourceCommit": "d612e52c772beea3c39f7994a2f354169e451ac1",
   "originalModuleSHA256": "7424da5bc0c7fb8aae689b7e36360538e9205edab8cf9bb3c17c52fb46e0abc6",
-  "adapterSHA256": "119d0fe3fb29f669e47e05574a7a2cad666efbb942e8a819a509a068c454d5d4",
+  "adapterSHA256": "fb35f5cb5783d2cf9bcddaf1f081c4c1a531c899e409f4c343f41cb315e32b44",
   "guid": "{7C5A3841-3F7B-4D2A-9E1C-5B6D8F9A0E12}",
   "prefix": "SEC",
   "activation": "No installation changed; switching to this branch replaces all instances of the old module type. A unique ready native backend is selected automatically and pinned.",
