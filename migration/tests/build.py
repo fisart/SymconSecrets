@@ -25,8 +25,9 @@ with tempfile.TemporaryDirectory(prefix='secrets-replacement-test-') as director
     commit = git('rev-parse','HEAD')
     original = (root/'SecretsManager/module.php').read_bytes()
     metadata = (root/'SecretsManager/module.json').read_bytes()
-    subprocess.run([sys.executable,str(builder),str(root)],check=True,capture_output=True)
-    manifest = json.loads((root/'migration/replacement-manifest.json').read_text())
+    result = subprocess.run([sys.executable,str(builder),str(root)],capture_output=True,text=True,encoding='utf-8',errors='replace')
+    assert result.returncode == 0, result.stdout + result.stderr
+    manifest = json.loads((root/'migration/replacement-manifest.json').read_text(encoding='utf-8'))
     assert manifest['sourceCommit'] == commit
     assert manifest['originalModuleSHA256'] == hashlib.sha256(original).hexdigest()
     assert manifest['prefix'] == 'SEC'
@@ -39,6 +40,6 @@ with tempfile.TemporaryDirectory(prefix='secrets-replacement-test-') as director
     (root/'migration/replacement-manifest.json').unlink()
     assert (root/'SecretsManager/module.php').read_bytes() == original
     assert git('status','--porcelain') == ''
-    (root/'SecretsManager/module.php').write_text('dirty checkout')
+    (root/'SecretsManager/module.php').write_text('dirty checkout',encoding='utf-8')
     assert subprocess.run([sys.executable,str(builder),str(root)],capture_output=True).returncode != 0
 print('PASS replacement builder: exact commit/hash, unchanged GUID/prefix, isolated code-only diff, dirty/repeat refusal and byte-identical code rollback')
