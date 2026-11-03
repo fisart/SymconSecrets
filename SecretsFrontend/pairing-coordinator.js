@@ -46,7 +46,7 @@ async function pairCoordinatorPump(){const c=pairCoordinator;if(!c||c.busy||c.wa
    await pairCoordinatorRefresh();if(c!==pairCoordinator)return;const p=pairCoordinatorPeer(c);
    if(c.mode==='local'){
     if(c.stage==='prepare'){
-     if(p?.active&&p.pair?.scope==='shared-global-v1'){peerWizardResume(p.id);c.stage='sharing';pairCoordinatorSend('FINISHED');pairCoordinatorStatus('This connection is already approved. Checking sharing automatically.');}
+     if(p?.active){peerWizardResume(p.id);c.stage='sharing';pairCoordinatorSend('FINISHED');pairCoordinatorStatus('This connection is already approved. Checking sharing automatically.');}
      else if(p){pairCoordinatorStatus('Approve replacing the previous connection with one shared Global vault. The other platform’s popup will handle its matching approval too.');await pairCoordinatorReview({kind:'nativeRevokePeer',peerId:p.id},'Replace this exact connection with shared Global editing. Existing secrets are retained. Conflicting values will need your choice.','invite');}
      else c.stage='invite';
     }

@@ -237,7 +237,7 @@ final class SecretsBackendApplication
         if ($this->settings['origin'] !== $this->primaryOrigin() && !in_array($action,['session','list','sessionReveal','sessionTimeout','prepare','approve','logout'],true)) throw new RuntimeException('Use the primary address for setup and integration management.');
         if ($action === 'connectCandidateReview') { self::exact($data,['candidate']); $c=$this->connectCandidate($data['candidate'],$current['state']); return ['data'=>['candidate'=>$data['candidate'],'digest'=>SecretsBootstrapVerifier::digest($c),'label'=>$c['entry']['label'],'origin'=>$c['origin'],'administrator'=>$c['entry']['administrator'],'rights'=>$c['rights'],'fingerprint'=>hash('sha256',$c['entry']['publicKey'])]]; }
         if ($action === 'connectDiscovery') { self::exact($data, []); return ['data'=>['permitted'=>true]]; }
-        if ($native instanceof SecretsBackendNativeOperations && in_array($action, ['nativePairingStatus','nativeRetryPeerDelivery','legacySources','legacyPreview','nativeUploadBegin','nativeUploadChunk','nativeUploadFinish','nativeOperationStatus'], true)) return ['data' => $native->request($action, $data)];
+        if ($native instanceof SecretsBackendNativeOperations && in_array($action, ['nativeGlobalStatus','nativePairingStatus','nativeRetryPeerDelivery','legacySources','legacyPreview','nativeUploadBegin','nativeUploadChunk','nativeUploadFinish','nativeOperationStatus'], true)) return ['data' => $native->request($action, $data)];
         if (in_array($action,['nativeCandidateOptions','nativeCandidateSubmit'],true)) return ['data'=>$this->nativeCandidate($action,$data,$session,$current)];
         if ($action === 'logout') { self::exact($data, []); $this->store->delete($session['hash']); return ['data' => ['loggedOut' => true], 'cookie' => $this->cookieName() . '=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0']; }
         if ($action === 'sessionTimeout') {
@@ -263,7 +263,7 @@ final class SecretsBackendApplication
                 }, $this->audit('reveal', $session['credential'], $target));
             $this->store->refreshAdministratorSession($session['hash']);
             if (in_array($operation['kind'],['nativeReveal','nativeGlobalReveal'],true)) return ['data' => $native->result($operation, $current)];
-            return ['data' => ['fields' => SecretsBackendTree::reveal(SecretsBackendTree::at($current['state']['vault'][$operation['scope']], $operation['path'])), 'clearAfterSeconds' => 30]];
+            return ['data' => ['fields' => SecretsBackendTree::reveal(SecretsBackendTree::at($operation['scope']==='global'&&isset($current['state']['native'])?SecretsBackendSharedGlobal::available($current['state']):$current['state']['vault'][$operation['scope']], $operation['path'])), 'clearAfterSeconds' => 30]];
         }
         if ($action === 'session' || $action === 'list') {
             self::exact($data, []); $this->store->authorize('metadata', hash('sha256', $session['hash'] . ':' . $current['head']['digest']), $current,
@@ -271,7 +271,7 @@ final class SecretsBackendApplication
             if ($this->store instanceof SecretsBackendNativeStore) $session = $this->store->refreshAdministratorSession($session['hash']) + ['hash' => $session['hash']];
             else { $session['last'] = time(); $this->store->replace($session['hash'], 'session', array_diff_key($session, ['hash' => true]), $session['created'] + 3600); }
             return ['data' => ['authenticated' => true, 'csrf' => $session['csrf'], 'idleLimit' => (int)($session['idleLimit'] ?? 900), 'revision' => $current['state']['vault']['revision'], 'hardware' => $current['state']['policy']['hardware'],
-                'global' => SecretsBackendTree::listing($current['state']['vault']['global']), 'local' => SecretsBackendTree::listing($current['state']['vault']['local']),
+                'global' => SecretsBackendTree::listing(isset($current['state']['native'])?SecretsBackendSharedGlobal::available($current['state']):$current['state']['vault']['global']), 'local' => SecretsBackendTree::listing($current['state']['vault']['local']),
                 'native' => $native instanceof SecretsBackendNativeOperations ? $native->metadata($current['state']) : null,
                 'credentials' => array_map(static fn($c) => array_intersect_key($c, array_flip(['id', 'label', 'active', 'hardware', 'aaguid', 'trustVersion', 'tested'])), array_values($current['state']['identity']['credentials']))]];
         }
@@ -320,7 +320,7 @@ final class SecretsBackendApplication
                 }, $this->audit('reveal', $id, SecretsBackendCodec::json([$operation['scope'], $operation['path']])));
                 // The protected counter commit is not permission to read a different record revision.
                 if ($latest['state']['vault']['revision'] !== $operation['revision']) throw new RuntimeException('Record changed before reveal.');
-                return ['data' => ['fields' => SecretsBackendTree::reveal(SecretsBackendTree::at($latest['state']['vault'][$operation['scope']], $operation['path'])), 'clearAfterSeconds' => 30]];
+                return ['data' => ['fields' => SecretsBackendTree::reveal(SecretsBackendTree::at($operation['scope']==='global'&&isset($latest['state']['native'])?SecretsBackendSharedGlobal::available($latest['state']):$latest['state']['vault'][$operation['scope']], $operation['path'])), 'clearAfterSeconds' => 30]];
             }
             if (str_starts_with($operation['kind'], 'native') && $native instanceof SecretsBackendNativeOperations) {
                 $latest = $this->store->read();
@@ -343,7 +343,7 @@ final class SecretsBackendApplication
             self::exact($operation, $kind === 'save' ? ['kind', 'scope', 'path', 'revision', 'mode', 'json'] : ($kind==='rename'?['kind','scope','path','revision','newName']:['kind', 'scope', 'path', 'revision']));
             if (!in_array($operation['scope'], ['global', 'local'], true) || !is_array($operation['path']) || (!$operation['path'] && $kind !== 'reveal') || !is_string($operation['revision']) || $operation['revision'] !== $state['vault']['revision']) throw new RuntimeException('Invalid scope or stale revision.');
             SecretsBackendTree::path($operation['path']);
-            if($operation['scope']==='global'&&isset($state['native']['sharedGlobal']))SecretsBackendSharedGlobal::assertPath($state,$operation['path']);
+            if($operation['scope']==='global'&&isset($state['native']['sharedGlobal']))SecretsBackendSharedGlobal::assertPath($state,$operation['path'],$kind==='reveal');
             if ($kind === 'save') { if (!is_string($operation['json']) || !in_array($operation['mode'], ['create', 'replace'], true)) throw new InvalidArgumentException('Invalid save.'); SecretsBackendTree::parse($operation['json']); }
             elseif($kind==='rename'){if(!is_string($operation['newName']))throw new InvalidArgumentException('Enter a folder name.');$copy=$state['vault'][$operation['scope']];SecretsBackendTree::rename($copy,$operation['path'],$operation['newName']);}
             else SecretsBackendTree::at($state['vault'][$operation['scope']], $operation['path']);

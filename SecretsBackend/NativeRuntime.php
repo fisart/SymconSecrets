@@ -91,7 +91,7 @@ trait SecretsBackendNativeRuntime
             if(!$grant['active']||!hash_equals($grant['hash'],$hash))continue;
             $target=SecretsBackendNativeOperations::machineTarget($state,$scope);
             if($grant['scope']!==$scope||($grant['treeId']??'')!==$target['treeId']||($write&&(!$grant['write']||!$target['writable']))||count($path)<count($grant['path'])||array_slice($path,0,count($grant['path']))!==$grant['path'])throw new RuntimeException('Machine capability does not permit this exact scope/path/action.');
-            if($scope==='global')SecretsBackendSharedGlobal::assertPath($state,$path);
+            if($scope==='global')SecretsBackendSharedGlobal::assertPath($state,$path,!$write);
             return $grant;
         }throw new RuntimeException('Machine capability is missing or revoked.');
     }
@@ -103,7 +103,7 @@ trait SecretsBackendNativeRuntime
         $store=$this->nativeStore();$store->rate('machine:'.hash('sha256',$CapabilityToken),120);$current=$store->read();$grant=$this->nativeCapability($current['state'],$CapabilityToken,$Scope,$path,false);
         $store->authorize('machine-read',hash('sha256',$Scope.':'.$PathJSON),$current,function(array $checked)use($CapabilityToken,$Scope,$path):void{$this->nativeCapability($checked['state'],$CapabilityToken,$Scope,$path,false);},['action'=>'machine-read','actor'=>$grant['id'],'target'=>$Scope.':'.$PathJSON]);
         $target=SecretsBackendNativeOperations::machineTarget($current['state'],$Scope);
-        return SecretsBackendCodec::json(['value'=>SecretsBackendTree::value(SecretsBackendTree::at($target['node'],$path)),'revision'=>$target['revision']]);
+        return SecretsBackendCodec::json(['value'=>SecretsBackendTree::value(SecretsBackendTree::at($Scope==='global'?SecretsBackendSharedGlobal::available($current['state']):$target['node'],$path)),'revision'=>$target['revision']]);
     }
     public function WriteNativeSecret(string $CapabilityToken,string $Scope,string $PathJSON,string $ValueJSON,string $ExpectedRevision,string $Sequence,string $OperationID): string
     {

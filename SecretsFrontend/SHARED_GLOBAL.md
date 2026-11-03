@@ -20,44 +20,39 @@ locally and merge after reconnection. There is no timestamp-based winner.
 | Concurrent changes inside a list | Compare the entire list; no guessing about shifted indexes |
 | Conflict resolution races with another edit | Reject stale approval or preserve a new conflict |
 
-Applications and ordinary reveal/edit operations refuse a conflicted path and
-any containing subtree. Unrelated paths remain usable. A display projection is
+Applications refuse exact conflicted paths. Reads of containing folders return
+only usable entries; mutations of containing subtrees require resolution first. Unrelated paths remain usable. A display projection is
 never permission to return an arbitrary version. Received transport snapshots
 cannot be used to bypass the Global conflict check.
 
-## Upgrade: retain both existing vaults
+## Automatic operation
 
-1. Update this module on **every** participating platform and reload its page.
-2. On the initiating platform, open **Connections**. For the existing connection,
-   select **Merge into one Global vault**. No vault reset is required.
-3. Follow the numbered connection wizard. It opens the other platform and asks
-   for exact approvals to retire the old connection and create the new one.
-   Both existing Global contents are retained. Existing Local data is not shared.
-4. Wait for the signed exchange. Open **Global secrets**. Test's existing Global
-   contents and Heartbeat's existing Global contents are merged; a different
-   value at the same path requires a choice.
-5. Resolve each conflict: **1 · Show versions**, **2 · Keep selected version**
-   or **Keep all versions with these names**, then **3 · Confirm**. Choosing a
-   radio option before Show versions displays just that version. Values clear
-   after 30 seconds. The existing reveal hardware policy still applies.
-6. Review and reissue Global **Automation access** grants and Global OAuth
-   provider configurations. Old Global grants/providers are disabled on initial
-   activation so old permissions do not silently expand to newly shared secrets.
+Update the module on every connected platform and reload its page. Existing
+active connections automatically negotiate shared Global through their signed,
+encrypted peer channel. No reset, import, merge button, new pairing or additional
+passkey approval is needed. Pending and revoked connections cannot enable it.
+New connections use the normal numbered connection wizard once.
 
-The ordinary setup wizard also uses this new model for new connections. Local
-administrators, passkeys, machine tokens, hardware policy and Local secrets do
-not replicate. The old SecretsManager is unchanged.
+The editor offers only **Global** and **Local**. Conflicting versions are omitted
+from normal Global listings and reads and appear in **Conflicts**. A folder read
+continues returning its unconflicted contents. Exact reads of a conflicted secret
+fail explicitly; the module never guesses a password. Writes replacing a folder
+with unresolved versions are refused until those versions are resolved.
 
-A legacy connection remains read-only/separate until a fresh bilateral approval
-names `shared-global-v1`. New scope is bound into the signed invitation, pairing
-proof, comparison code and approval digest. The browser coordinator verifies
-support on both sides before creating the new invitation. Older peers reject
-the new scope; existing connections are never silently upgraded.
+In **Conflicts**, choose **Show versions**, then keep a selected version or keep
+all under different names. Confirm the exact choice with the existing passkey
+and hardware policy. Resolutions propagate automatically. Existing application
+grants keep their approved paths and existing OAuth configurations keep working
+where their referenced secrets have no conflict.
 
-A platform with several old active separate-tree connections must remove those
-connections before activating the new shared model, then pair them under the
-new permissions. Existing single-owner transfers/frozen trees must be resolved
-first. The old owner-transfer mechanism cannot change shared Global authority.
+The page refreshes masked metadata in the background without refreshing session
+idle activity. It pauses during editing, reveal and approvals. Background
+synchronization also repairs a delivery gap using signed cursor/challenge checks;
+a manual resynchronization is unnecessary. Restored senders still cannot
+overwrite a newer receiver.
+
+The old SecretsManager remains independent. Local credentials, tokens, hardware
+policies and private Local values do not replicate.
 
 ## Trust and membership
 
@@ -130,16 +125,31 @@ an isolated host still has the previously documented native-mode limitations.
   object order, deletion history, folder conflicts, no timestamp winner,
   masked metadata, exact choices, Keep all and stale-resolution refusal.
 - `shared-global-peers.php`: real signed/encrypted exchange and on-disk journals;
-  explicit legacy upgrade, preserved initial contents, three-platform relay,
+  automatic existing-connection join, preserved initial contents, three-platform relay,
   offline conflicts, lost reply, machine fencing, resync, restart and backup.
 - `pairing-wizard.php`: actual passkey approvals, session/CSRF checks, restricted
   conflict reveal, hardware reveal gating, resolution and bidirectional exchange.
 - Browser suites: one Global selection, masked conflict cards, per-version reveal,
-  exact keep/rename requests, hardware handoff, automatic pairing and legacy upgrade.
+  exact keep/rename requests, hardware handoff, automatic pairing and automatic existing-connection join.
 - Existing native storage, import, ownership, machine, OAuth, setup, passkey and
   backup suites remain regression tests. Original repository blobs remain intact.
 
-Deployment acceptance still requires updating both live modules, approving the
-upgrade, checking Test's known Global entries on Heartbeat, editing in both
+Deployment acceptance still requires updating both live modules, checking Test's known Global entries on Heartbeat, editing in both
 directions, testing an offline conflict and restarting both Symcon instances.
 No live vault has been reset or migrated by the development tools.
+
+## Automatic connection protocol
+
+`GLOBAL_ENABLE` and its `GLOBAL_ENABLED` acknowledgement bind to the existing
+active pair UUID/epoch, sender, recipient, immutable job and mode through the
+existing authenticated envelope. It changes a separate runtime Global-mode field;
+the original pairing descriptor and comparison digest remain immutable. Both
+updated peers must speak this mode. An unavailable or older peer stays pending
+background retry; no TLS or signature check is bypassed. Lost acknowledgements
+retry the same operation. Revocation fences activation and its acknowledgement.
+
+Old queued snapshots drain in sequence before the shared model snapshots. Every
+subsequent shared snapshot authenticates its model and projection. Only the
+approved peer channel can start the automatic transition; public page access and
+pending enrollment grant no authority. Installing this release adopts the unified
+Global behaviour for existing active connections as requested by the operator.

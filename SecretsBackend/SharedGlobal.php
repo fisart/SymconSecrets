@@ -77,10 +77,17 @@ final class SecretsBackendSharedGlobal
         };
         $node=$build([]);ksort($conflicts,SORT_STRING);return ['node'=>$node,'conflicts'=>array_values($conflicts)];
     }
-    public static function assertPath(array $state,array $path): void
+    public static function assertPath(array $state,array $path,bool $read=false): void
     {
         if(!isset($state['native']['sharedGlobal']))return;
-        foreach(self::view($state['native']['sharedGlobal'])['conflicts']as$c)if(self::prefix($path,$c['path'])||self::prefix($c['path'],$path))throw new RuntimeException('Global secret has unresolved versions. Open Secrets and select Resolve conflict.');
+        foreach(self::view($state['native']['sharedGlobal'])['conflicts']as$c)if((!$read&&self::prefix($path,$c['path']))||self::prefix($c['path'],$path))throw new RuntimeException('Global secret has unresolved versions. Open Secrets and select Resolve conflict.');
+    }
+    public static function available(array $state): array
+    {
+        $node=$state['vault']['global'];if(!isset($state['native']['sharedGlobal']))return $node;
+        // Conflicting versions stay in the encrypted model and the Conflicts tab only.
+        foreach(self::view($state['native']['sharedGlobal'])['conflicts']as$c){try{SecretsBackendTree::edit($node,$c['path'],null,'delete');}catch(InvalidArgumentException $ignored){}}
+        return $node;
     }
     private static function write(array $m,string $author,array $changes): array
     {
@@ -92,13 +99,9 @@ final class SecretsBackendSharedGlobal
     {
         if(isset($s['native']['sharedGlobal']))return $s;
         if(!$s['native']['globalWritable']||$s['native']['trees'])throw new RuntimeException('Resolve ownership transfers before joining one shared Global vault.');
-        foreach($s['pairing']['peers']as$p)if($p['active']&&$p['pair']['scope']!==self::SCOPE)throw new RuntimeException('Remove old separate-tree connections before joining the shared Global vault. Existing vault files are retained.');
         $s['native']['sharedGlobal']=self::write(self::empty(),$s['native']['vaultId'],self::flatten($s['vault']['global']));
         $s['vault']['global']=self::view($s['native']['sharedGlobal'])['node'];
         $s['vault']['revision']=SecretsBackendCodec::increment($s['vault']['revision']);$s['stream']['globalRevision']=SecretsBackendCodec::increment($s['stream']['globalRevision']);
-        // Old capabilities authorized only the old local Global contents.
-        foreach($s['native']['machines']as&$g)if($g['scope']==='global')$g['active']=false;unset($g);
-        foreach($s['native']['providers']as&$p)if(in_array('global',[$p['secretScope'],$p['refreshScope'],$p['resultScope']],true)){$p['active']=false;$p['automatic']=false;}unset($p);
         return $s;
     }
     public static function capture(array $s): array

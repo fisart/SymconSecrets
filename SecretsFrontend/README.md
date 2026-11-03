@@ -58,7 +58,7 @@ persisted or privately backed up.
   Changes and deletion require review and passkey approval. Hide values
   manually or wait 30 seconds. Hardware-protected reveal still requires a key.
   Lists and other typed values remain in the advanced editor. Local values are
-  not synchronized and received shared trees are read-only. Each sign-in can
+  not synchronized. Conflicting Global versions appear in Conflicts. Each sign-in can
   use a 1, 5 or 15-minute inactivity timeout (maximum session: one hour).
 - **Peers:** create a short-lived invitation, approve its exact recipient on the
   issuing vault, inspect immutable pending deliveries and revoke connections.
@@ -108,6 +108,5 @@ component tests. They are never a native-mode fallback or runtime requirement.
 ## One shared Global vault
 
 New connections merge Global across platforms. Local stays private. Concurrent
-versions are preserved for explicit conflict resolution. Existing separate-tree
-connections require a new approval through **Merge into one Global vault**.
-See [the upgrade steps, security contract and tests](SHARED_GLOBAL.md).
+versions are preserved for explicit conflict resolution. Existing active connections join automatically in the background.
+See [the automatic operation, security contract and tests](SHARED_GLOBAL.md).

@@ -366,3 +366,13 @@ shared-global-v1 pairings. Existing connections require explicit upgrade approva
 old Global machine grants/providers are disabled at activation. No installation
 reset is required. See [SHARED_GLOBAL.md](SHARED_GLOBAL.md) for exact permissions,
 limits, migration, tests and outstanding deployment acceptance.
+
+## Automatic Global and separate Conflicts — 2026-11-03
+
+Active connections negotiate Global sharing in the background after updating both
+modules. The manual merge/upgrade and extra approvals are removed. Existing
+application paths continue working. Global and Local are the only editor scopes;
+conflicting versions appear only in Conflicts. Folder reads omit conflicting
+entries while serving unaffected entries. Automatic signed resynchronization
+repairs sequence gaps. Background UI metadata refresh does not extend sessions.
+This section supersedes the manual upgrade instructions in earlier entries.

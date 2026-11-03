@@ -284,6 +284,7 @@ final class SecretsBackendNativeOperations
     private function hardwareResult(array $profile): array { if($this->hardwareApplied!==null)($this->hardwareApplied)($profile);return ['hardwareProfileApplied'=>true,'reloginRequired'=>true]; }
     public function request(string $action,array $data): array
     {
+        if($action==='nativeGlobalStatus'){SecretsBackendNativePeer::exact($data,[]);$s=$this->store->read()['state'];return ['revision'=>$s['vault']['revision'],'global'=>SecretsBackendTree::listing(SecretsBackendSharedGlobal::available($s)),'local'=>SecretsBackendTree::listing($s['vault']['local']),'sharedGlobal'=>SecretsBackendSharedGlobal::metadata($s)];}
         if($action==='nativePairingStatus'){SecretsBackendNativePeer::exact($data,[]);return $this->pairingStatus($this->store->read()['state']);}
         if($action==='nativeRetryPeerDelivery'){
             SecretsBackendNativePeer::exact($data,['peerId','pairingId']);SecretsBackendNativePeer::uuid($data['peerId']);SecretsBackendNativePeer::uuid($data['pairingId']);
@@ -310,7 +311,7 @@ final class SecretsBackendNativeOperations
     {
         $out=['kind'=>$op['kind']];
         if($op['kind']==='nativeGlobalResolve')$out+=['path'=>$op['path'],'choices'=>$op['choices'],'effect'=>'Resolve exactly these Global versions and synchronize the chosen result. Versions not selected are removed from the live Global vault.'];
-        if(in_array($op['kind'],['nativeInvite','nativePair','nativeAcceptPair'],true))$out['sharing']='One shared Global vault. Both platforms may edit all Global secrets and share them with their approved Global partners. Local stays private. Concurrent changes preserve all versions. Existing Global automation capabilities and OAuth providers are disabled when switching to shared Global; review and reissue them.';
+        if(in_array($op['kind'],['nativeInvite','nativePair','nativeAcceptPair'],true))$out['sharing']='One shared Global vault. Both platforms may edit all Global secrets and share them with their approved Global partners. Local stays private. Concurrent changes preserve all versions. Existing application permissions keep their approved paths.';
         if($op['kind']==='nativeLegacyImport')$out+=$op['review'];
         if($op['kind']==='nativeConnectStage')$out+=['origin'=>$op['origin'],'effect'=>'Allow restricted backup passkey enrollment only; no general access yet.'];
         if($op['kind']==='nativeConnectRevoke')$out+=['origin'=>$op['origin'],'generation'=>$op['generation'],'effect'=>'Invalidate backup sessions, challenges and pending enrollment.'];

@@ -17,7 +17,7 @@ async function fixture(first,config={}){const calls=[],errors=[],timers=[],clipb
  const v=new VirtualConsole();v.on('jsdomError',e=>errors.push(e));
  const dom=new JSDOM(source,{url:config.url||origin+path,runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:v,beforeParse(w){
   w.focus=()=>{};Object.defineProperty(w,'crypto',{value:webcrypto});w.TextEncoder=TextEncoder;w.TextDecoder=TextDecoder;w.PublicKeyCredential=function(){};Object.defineProperty(w,'isSecureContext',{value:true});
-  const timeout=w.setTimeout.bind(w),clear=w.clearTimeout.bind(w);w.setTimeout=(fn,ms,...args)=>{if(ms===5000){const timer={id:100000+timers.length,fn,cancelled:false};timers.push(timer);return timer.id;}return timeout(fn,ms,...args)};w.clearTimeout=id=>{const timer=timers.find(t=>t.id===id);if(timer)timer.cancelled=true;else clear(id)};
+  const timeout=w.setTimeout.bind(w),clear=w.clearTimeout.bind(w);w.setTimeout=(fn,ms,...args)=>{if(ms===10000)return -10000;if(ms===5000){const timer={id:100000+timers.length,fn,cancelled:false};timers.push(timer);return timer.id;}return timeout(fn,ms,...args)};w.clearTimeout=id=>{const timer=timers.find(t=>t.id===id);if(timer)timer.cancelled=true;else clear(id)};
   w.HTMLDialogElement.prototype.showModal=function(){this.open=true};w.HTMLDialogElement.prototype.close=function(){this.open=false};
   Object.defineProperty(w.navigator,'clipboard',{value:{writeText:async value=>clipboard.push(value)}});
   Object.defineProperty(w.navigator,'credentials',{value:{get:async()=>({type:'public-key',rawId:new Uint8Array([1]).buffer,response:{clientDataJSON:new Uint8Array([1]).buffer,authenticatorData:new Uint8Array([1]).buffer,signature:new Uint8Array([1]).buffer,userHandle:null}})}});

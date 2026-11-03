@@ -36,7 +36,7 @@ final class SecretsBackendNativePeer
 {
     use SecretsBackendNativeTransfer;
     private $transport;
-    public function __construct(private SecretsBackendNativeStore $store, private string $endpoint, ?callable $transport = null) { self::endpoint($endpoint); $this->transport = $transport; }
+    public function __construct(private SecretsBackendNativeStore $store, private string $endpoint, ?callable $transport = null, private bool $automaticGlobal=true) { self::endpoint($endpoint); $this->transport = $transport; }
     public static function exact(array $value, array $keys): void { if (array_diff(array_keys($value),$keys) || array_diff($keys,array_keys($value))) throw new RuntimeException('Unexpected native protocol fields.'); }
     public static function uuid(string $value): void { if (!preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/D',$value)) throw new RuntimeException('Invalid native UUID.'); }
     public static function decimal(string $value): void { if (!preg_match('/^(?:0|[1-9][0-9]{0,17})$/D',$value)) throw new RuntimeException('Invalid native sequence.'); }
@@ -102,13 +102,14 @@ final class SecretsBackendNativePeer
         $old=$state['pairing']['peers'][$peerId]??null;if(!is_array($old)||$old['state']!=='REVOKED')return $state;
         $state['outbox']['jobs']=array_values(array_filter($state['outbox']['jobs'],static fn($j)=>!($j['receiverId']===$peerId&&$j['kind']==='REVOKE'&&$j['pairingId']===$old['pairingId'])));return $state;
     }
+    public static function shared(array $peer): bool { return ($peer['globalMode']??$peer['pair']['scope']??'')===SecretsBackendSharedGlobal::SCOPE; }
     public static function queueGlobal(array $state,?string $only=null): array
     {
-        foreach($state['pairing']['peers']as$p)if($p['active']&&$p['pair']['scope']===SecretsBackendSharedGlobal::SCOPE){$state=SecretsBackendSharedGlobal::enable($state);break;}
+        foreach($state['pairing']['peers']as$p)if($p['active']&&self::shared($p)){$state=SecretsBackendSharedGlobal::enable($state);break;}
         $state=SecretsBackendSharedGlobal::capture($state);
         if(!($state['native']['globalWritable']??true))throw new RuntimeException('This shared tree is frozen or owned by another vault.');
         foreach($state['pairing']['peers']as$peer){
-            if(!$peer['active']||($only!==null&&$peer['id']!==$only))continue;
+            if(!$peer['active']||($only!==null&&$peer['id']!==$only)||(isset($state['native']['sharedGlobal'])&&!self::shared($peer)))continue;
             if(count($state['outbox']['jobs'])>=128)throw new RuntimeException('Peer outbox is full; synchronize or explicitly resolve pending deliveries first.');
             $seq=SecretsBackendCodec::increment($state['stream']['next'][$peer['id']]??'0');$state['stream']['next'][$peer['id']]=$seq;
             $payload=self::globalPayload($state,$peer,$state['stream']['queuedDigest'][$peer['id']]??str_repeat('0',64));$digest=$payload['nodeDigest'];
@@ -119,7 +120,7 @@ final class SecretsBackendNativePeer
     public static function globalPayload(array $s,array $peer,string $previous): array
     {
         $node=$s['vault']['global'];$extra=[];
-        if($peer['pair']['scope']===SecretsBackendSharedGlobal::SCOPE)$extra=['merge'=>$s['native']['sharedGlobal']];
+        if(self::shared($peer))$extra=['merge'=>$s['native']['sharedGlobal']];
         elseif(isset($s['native']['sharedGlobal']))throw new RuntimeException('Approve shared Global access before sending merged secrets to an old connection.');
         return ['treeId'=>$s['native']['globalTreeId'],'owner'=>$s['native']['vaultId'],'ownershipEpoch'=>$s['native']['ownershipEpoch'],'revision'=>$s['stream']['globalRevision'],'previousDigest'=>$previous,'nodeDigest'=>self::digest($extra?['node'=>$node]+$extra:$node),'node'=>$node]+$extra;
     }
@@ -139,7 +140,7 @@ final class SecretsBackendNativePeer
         self::exact($m,['format','kind','sender','receiver','pairingId','epoch','id','sequence','payload','signature']);
         foreach(['sender','receiver','pairingId','id']as$key){if(!is_string($m[$key]))throw new RuntimeException('Invalid peer identity.');self::uuid($m[$key]);}
         self::decimal($m['epoch']);self::decimal($m['sequence']);
-        if($m['format']!=='SECB.Peer.1'||$m['receiver']!==$this->descriptor()['vaultId']||!in_array($m['kind'],['PAIR_REQUEST','PAIR_ACCEPT','SYNC','STATUS','RESYNC','REVOKE','OWNER_OFFER','TREE_SYNC'],true))throw new RuntimeException('Wrong native peer purpose or recipient.');
+        if($m['format']!=='SECB.Peer.1'||$m['receiver']!==$this->descriptor()['vaultId']||!in_array($m['kind'],['GLOBAL_ENABLE','PAIR_REQUEST','PAIR_ACCEPT','SYNC','STATUS','RESYNC','REVOKE','OWNER_OFFER','TREE_SYNC'],true))throw new RuntimeException('Wrong native peer purpose or recipient.');
         if($m['kind']==='TREE_SYNC')return $this->receiveOwnedTree($m);
         $current=$this->store->read();$peer=$current['state']['pairing']['peers'][$m['sender']]??null;
         if($m['kind']!=='PAIR_REQUEST'){
@@ -171,6 +172,11 @@ final class SecretsBackendNativePeer
             }
             return $this->reply($m,$target,$digest,['status'=>$status,'pairDigest'=>self::digest($pair)]);
         }
+        if($m['kind']==='GLOBAL_ENABLE'){
+            self::exact($payload,['mode']);if($payload['mode']!==SecretsBackendSharedGlobal::SCOPE||!$peer['active'])throw new RuntimeException('Shared Global requires an active connection.');
+            if(!self::shared($peer))$this->store->change($current['head'],$m['id'],$digest,static function($s)use($m){$s['pairing']['peers'][$m['sender']]['globalMode']=SecretsBackendSharedGlobal::SCOPE;$s=SecretsBackendSharedGlobal::enable($s);return self::queueGlobal($s,$m['sender']);},['action'=>'global-connect','actor'=>$m['sender'],'target'=>$m['pairingId']]);
+            return $this->reply($m,$peer['descriptor'],$digest,['status'=>'GLOBAL_ENABLED','mode'=>SecretsBackendSharedGlobal::SCOPE]);
+        }
         if($m['kind']==='PAIR_ACCEPT'){
             self::exact($payload,['pairDigest','requestId']);
             if(!in_array($peer['state'],['PENDING_REMOTE','ACTIVE'],true))throw new RuntimeException('A revoked pairing cannot be reactivated by an old acceptance.');
@@ -189,7 +195,7 @@ final class SecretsBackendNativePeer
             self::exact($payload,['reason']);$this->store->change($current['head'],$m['id'],$digest,static fn($s)=>self::revoke($s,$m['sender']),['action'=>'peer-revoke','actor'=>$m['sender'],'target'=>$peer['pairingId']]);
             return $this->reply($m,$peer['descriptor'],$digest,['status'=>'REVOKED']);
         }
-        $isResync=$m['kind']==='RESYNC';$shared=$peer['pair']['scope']===SecretsBackendSharedGlobal::SCOPE;
+        $isResync=$m['kind']==='RESYNC';$shared=isset($payload['merge']);if($shared&&!self::shared($peer))throw new RuntimeException('Shared Global negotiation is incomplete.');
         self::exact($payload,array_merge(['treeId','owner','ownershipEpoch','revision','previousDigest','nodeDigest','node'],$isResync?['challenge']:[],$shared?['merge']:[]));
         if($shared){SecretsBackendSharedGlobal::validate($payload['merge']);if(self::digest(SecretsBackendSharedGlobal::view($payload['merge'])['node'])!==self::digest($payload['node']))throw new RuntimeException('Shared Global projection does not match its versions.');}
         if($payload['treeId']!==$peer['descriptor']['treeId']||$payload['owner']!==$m['sender']||$payload['ownershipEpoch']!=='1'||($payload['node']['type']??'')!=='object')throw new RuntimeException('Peer cannot write this tree or scope.');
@@ -203,7 +209,7 @@ final class SecretsBackendNativePeer
             if(($old['requestDigest']??'')!==$digest||($old['requestId']??'')!==$m['id'])throw new RuntimeException('Conflicting duplicate peer sequence.');
             return $this->reply($m,$peer['descriptor'],$digest,$old['receipt']);
         }
-        if((!$isResync&&$m['sequence']!==SecretsBackendCodec::increment($cursor['sequence']??'0'))||($isResync&&self::compare($m['sequence'],$cursor['sequence']??'0')<=0)||$payload['previousDigest']!==($cursor['nodeDigest']??str_repeat('0',64)))throw new RuntimeException('Peer delivery gap; request authenticated resynchronization.');
+        if((!$isResync&&$m['sequence']!==SecretsBackendCodec::increment($cursor['sequence']??'0'))||($isResync&&self::compare($m['sequence'],$cursor['sequence']??'0')<=0)||$payload['previousDigest']!==($cursor['nodeDigest']??str_repeat('0',64))){if($shared&&!$isResync)return $this->reply($m,$peer['descriptor'],$digest,['status'=>'RESYNC_REQUIRED']);throw new RuntimeException('Peer delivery gap; request authenticated resynchronization.');}
         if($old!==null&&(self::compare($payload['revision'],$old['revision'])<0||($payload['revision']===$old['revision']&&$payload['nodeDigest']!==$old['nodeDigest'])))throw new RuntimeException('Peer restore is stale or divergent.');
         
         $receipt=['status'=>'APPLIED','treeId'=>$payload['treeId'],'revision'=>$payload['revision'],'sequence'=>$m['sequence'],'nodeDigest'=>$payload['nodeDigest']];
@@ -247,8 +253,30 @@ final class SecretsBackendNativePeer
         return $body;
         }catch(Throwable $e){throw new SecretsBackendNativePeerDeliveryFailure('invalid-reply');}
     }
+    private function recoverGlobalGap(array $peer,array $job): void
+    {
+        $cursor=$this->exchange($peer,'STATUS',['treeId'=>$job['payload']['treeId']],SecretsBackendCodec::uuid());
+        if(($cursor['status']??'')!=='CURSOR')throw new RuntimeException('Peer cursor is unavailable.');
+        $cur=$this->store->read();$this->store->change($cur['head'],SecretsBackendCodec::uuid(),self::digest($cursor),static function($s)use($peer,$cursor){
+            $p=$s['pairing']['peers'][$peer['id']]??null;if(!$p||!$p['active']||$p['pairingId']!==$peer['pairingId']||!self::shared($p))throw new RuntimeException('Connection changed during automatic resynchronization.');
+            if(self::compare($cursor['revision'],$s['stream']['globalRevision'])>0)throw new RuntimeException('Restored sender cannot overwrite a newer receiver.');
+            $seq=SecretsBackendCodec::increment($s['stream']['next'][$p['id']]??'0');if(self::compare($seq,$cursor['sequence'])<=0)$seq=SecretsBackendCodec::increment($cursor['sequence']);
+            $s['outbox']['jobs']=array_values(array_filter($s['outbox']['jobs'],static fn($j)=>$j['receiverId']!==$p['id']||!in_array($j['kind'],['SYNC','RESYNC'],true)));
+            $payload=self::globalPayload($s,$p,$cursor['nodeDigest'])+['challenge'=>$cursor['challenge']];$s['stream']['next'][$p['id']]=$seq;$s['stream']['queuedDigest'][$p['id']]=$payload['nodeDigest'];$s['outbox']['jobs'][]=self::job($p,'RESYNC',$payload,$seq);return $s;
+        },['action'=>'global-resynchronize','actor'=>'background','target'=>$peer['pairingId']]);
+    }
+    private function queueAutomaticGlobal(): void
+    {
+        $cur=$this->store->read();foreach($cur['state']['pairing']['peers']as$p){
+            if(!$p['active']||self::shared($p))continue;
+            foreach($cur['state']['outbox']['jobs']as$j)if($j['receiverId']===$p['id']&&$j['kind']==='GLOBAL_ENABLE')continue 2;
+            if(count($cur['state']['outbox']['jobs'])>=128)return;
+            $this->store->change($cur['head'],SecretsBackendCodec::uuid(),self::digest(['auto-global'=>$p['pairingId']]),static function($s)use($p){$s['outbox']['jobs'][]=self::job($p,'GLOBAL_ENABLE',['mode'=>SecretsBackendSharedGlobal::SCOPE]);return $s;},['action'=>'global-connect-queued','actor'=>'background','target'=>$p['pairingId']]);return;
+        }
+    }
     public function dispatch(int $maximum=2,?string $onlyPeer=null,bool $retryNow=false,?string $onlyPairing=null): array
     {
+        if($this->automaticGlobal)$this->queueAutomaticGlobal();
         $results=[];
         for($n=0;$n<$maximum;++$n){$current=$this->store->read();$job=null;
             $seen=[];foreach($current['state']['outbox']['jobs']as$item){if(($onlyPeer!==null&&$item['receiverId']!==$onlyPeer)||($onlyPairing!==null&&$item['pairingId']!==$onlyPairing)||isset($seen[$item['receiverId']]))continue;$seen[$item['receiverId']]=true;
@@ -258,11 +286,13 @@ final class SecretsBackendNativePeer
             if($job['kind']==='TREE_SYNC'){$tree=$current['state']['native']['trees'][$job['treeId']]??null;$subscriber=$tree['subscribers'][$job['receiverId']]??null;if(!is_array($tree)||$tree['frozen']||!is_array($subscriber))break;$peer=['id'=>$job['receiverId'],'pairingId'=>$subscriber['subscriptionId'],'epoch'=>$tree['epoch'],'descriptor'=>$subscriber['descriptor'],'active'=>true];}
             if(!is_array($peer)||$peer['pairingId']!==$job['pairingId']||$peer['epoch']!==$job['epoch']||(!$peer['active']&&!in_array($job['kind'],['PAIR_REQUEST','REVOKE'],true)))break;
             try{$reply=$this->exchange($peer,$job['kind'],$job['payload'],$job['id'],$job['sequence']);
-                $expected=match($job['kind']){'PAIR_REQUEST'=>['PENDING_APPROVAL','ACTIVE'],'PAIR_ACCEPT'=>['ACTIVE'],'SYNC','RESYNC'=>['APPLIED'],'REVOKE'=>['REVOKED'],'OWNER_OFFER'=>['OFFER_RECEIVED'],'TREE_SYNC'=>['TREE_APPLIED'],default=>[]};
+                if($this->automaticGlobal&&$job['kind']==='SYNC'&&($reply['status']??'')==='RESYNC_REQUIRED'){$this->recoverGlobalGap($peer,$job);$results[]=['id'=>$job['id'],'status'=>'RESYNCHRONIZING'];continue;}
+                $expected=match($job['kind']){'GLOBAL_ENABLE'=>['GLOBAL_ENABLED'],'PAIR_REQUEST'=>['PENDING_APPROVAL','ACTIVE'],'PAIR_ACCEPT'=>['ACTIVE'],'SYNC','RESYNC'=>['APPLIED'],'REVOKE'=>['REVOKED'],'OWNER_OFFER'=>['OFFER_RECEIVED'],'TREE_SYNC'=>['TREE_APPLIED'],default=>[]};
                 if(!in_array($reply['status']??'',$expected,true))throw new RuntimeException('Peer did not acknowledge the expected operation.');
                 if(in_array($job['kind'],['SYNC','RESYNC','TREE_SYNC'],true)&&(($reply['treeId']??'')!==($job['payload']['treeId']??$job['payload']['tree']['treeId'])||($reply['revision']??'')!==($job['payload']['revision']??$job['payload']['tree']['revision'])||($reply['sequence']??'')!==$job['sequence']||($reply['nodeDigest']??'')!==($job['payload']['nodeDigest']??$job['payload']['tree']['nodeDigest'])))throw new RuntimeException('Peer receipt names another snapshot.');
                 $latest=$this->store->read();$this->store->change($latest['head'],$job['ackId'],self::digest($reply),static function($s)use($job,$reply){
                     $s['outbox']['jobs']=array_values(array_filter($s['outbox']['jobs'],static fn($x)=>$x['id']!==$job['id']));
+                    if($job['kind']==='GLOBAL_ENABLE'){$p=$s['pairing']['peers'][$job['receiverId']]??null;if(!$p||!$p['active']||$p['pairingId']!==$job['pairingId'])throw new RuntimeException('Connection changed during automatic Global setup.');if(($reply['mode']??'')!==SecretsBackendSharedGlobal::SCOPE)throw new RuntimeException('Peer does not support shared Global.');$s['pairing']['peers'][$job['receiverId']]['globalMode']=SecretsBackendSharedGlobal::SCOPE;return self::queueGlobal(SecretsBackendSharedGlobal::enable($s),$job['receiverId']);}
                     $s['native']['deliveryReceipts'][$job['receiverId']]=array_replace($reply,['pairingId'=>$job['pairingId']]);return $s;
                 },['action'=>'peer-receipt','actor'=>$job['receiverId'],'target'=>$job['id']]);$results[]=['id'=>$job['id'],'status'=>'ACKNOWLEDGED'];
             }catch(Throwable $e){
