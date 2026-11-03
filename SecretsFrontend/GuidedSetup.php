@@ -40,6 +40,7 @@ trait SecretsFrontendGuidedSetup
         if($action==='connectDiscovery'&&($reply['status']??0)===200){
             $reply['data']=SecretsFrontendConnectDiscovery::local();
         }
+        if(($reply['status']??0)===200){if($action==='nativeOverviewStatus')$reply['data']['connectDiscovery']=SecretsFrontendConnectDiscovery::local();elseif($action==='session'&&isset($reply['data']['native']))$reply['data']['native']['connectDiscovery']=SecretsFrontendConnectDiscovery::local();}
         return $reply;
     }
 }

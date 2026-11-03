@@ -286,6 +286,7 @@ final class SecretsBackendNativeOperations
     private function hardwareResult(array $profile): array { if($this->hardwareApplied!==null)($this->hardwareApplied)($profile);return ['hardwareProfileApplied'=>true,'reloginRequired'=>true]; }
     public function request(string $action,array $data): array
     {
+        if($action==='nativeOverviewStatus'){SecretsBackendNativePeer::exact($data,[]);$s=$this->store->read()['state'];return $this->pairingStatus($s)+['overview'=>$this->overviewStatus($s),'backupOrigin'=>$s['policy']['backupOrigin']??null,'routeRevision'=>$s['native']['routeRevision']??'0'];}
         if($action==='nativeGlobalStatus'){SecretsBackendNativePeer::exact($data,[]);$s=$this->store->read()['state'];return ['revision'=>$s['vault']['revision'],'global'=>SecretsBackendTree::listing(SecretsBackendSharedGlobal::available($s)),'local'=>SecretsBackendTree::listing($s['vault']['local']),'sharedGlobal'=>SecretsBackendSharedGlobal::metadata($s)];}
         if($action==='nativePairingStatus'){SecretsBackendNativePeer::exact($data,[]);return $this->pairingStatus($this->store->read()['state']);}
         if($action==='nativeRetryPeerDelivery'){
@@ -394,6 +395,19 @@ final class SecretsBackendNativeOperations
             $this->legacyCommitSource=$source;try{return $commit();}finally{$this->legacyCommitSource=null;}
         });
     }
+    /** Counts only; never includes secret names, values or credential material. */
+    private function overviewStatus(array $state): array
+    {
+        $values=static fn(array $tree):int=>count(array_filter(SecretsBackendTree::listing($tree),static fn($e)=>!in_array($e['type'],['object','array'],true)));
+        $credentials=array_filter($state['identity']['credentials'],static fn($c)=>$c['active']&&($c['tested']??false));
+        $hardware=in_array(true,$state['policy']['hardware'],true);$trust=$state['policy']['management']['settings']['HardwareTrustVersion'];$p=$state['policy']['backupOrigin']??null;
+        $magic=array_filter($credentials,static fn($c)=>($p['status']??'')==='active'&&($c['origin']??'')===$p['origin']&&($c['originGeneration']??'')===$p['generation']&&$c['administrator']===$state['identity']['ownerId']&&(!$hardware||($c['hardware']&&$c['trustVersion']===$trust)));
+        return ['globalValues'=>$values(SecretsBackendSharedGlobal::available($state)),'localValues'=>$values($state['vault']['local']),
+            'credentials'=>count($credentials),'hardwareCredentials'=>count(array_filter($credentials,static fn($c)=>$c['hardware']&&$c['trustVersion']===$trust)),'magicCredentials'=>count($magic),
+            'machines'=>count(array_filter($state['native']['machines'],static fn($m)=>$m['active'])),'providers'=>count(array_filter($state['native']['providers'],static fn($p)=>$p['active'])),
+            'providerIssues'=>count(array_filter($state['native']['providers'],static fn($p)=>$p['active']&&(in_array($p['status'],['QUARANTINED','ERROR','REAUTHORIZE_REQUIRED'],true)||!SecretsBackendNativeEffects::targetWritable($state,$p)))),
+            'pendingEffects'=>count(array_filter($state['native']['effects'],static fn($e)=>in_array($e['state'],['PREPARED','SENT_UNKNOWN','RETRY_SAFE'],true))),'storage'=>$this->store->metadata()];
+    }
     /** Authenticated progress only: no values, invitation secrets, session refresh or remote requests. */
     private function pairingStatus(array $state): array
     {
@@ -411,7 +425,7 @@ final class SecretsBackendNativeOperations
         $owned=[];foreach($state['native']['trees']as$id=>$r)$owned[]=['id'=>$id,'owner'=>$r['owner'],'epoch'=>$r['epoch'],'revision'=>$r['revision'],'frozen'=>$r['frozen'],'entries'=>SecretsBackendTree::listing($r['node'])];
         $machines=[];foreach($state['native']['machines']as$m){unset($m['hash']);$machines[]=$m;}
         $progress=$this->pairingStatus($state);
-        return ['fullAdministrator'=>$this->session!==''&&SecretsBackendBackupOriginPolicy::credentialFull($state,$state['identity']['credentials'][$this->store->get($this->session,'session')['credential']]??[]),'sharedGlobalSupported'=>true,'globalConflictCount'=>$progress['globalConflictCount'],'legacyImports'=>array_values($state['native']['legacyImports']??[]),'backupOrigin'=>$state['policy']['backupOrigin']??null,'primaryOrigin'=>$state['policy']['origin'],'info'=>$this->store->metadata(),'storage'=>$this->store->storagePaths(),'peerEndpoint'=>$this->peer->descriptor()['endpoint'],'peerDescriptor'=>$this->peer->descriptor(),'peerRoutes'=>$this->peer->ownRoutes($state),'routeRevision'=>$state['native']['routeRevision']??'0',
+        return ['overview'=>$this->overviewStatus($state),'fullAdministrator'=>$this->session!==''&&SecretsBackendBackupOriginPolicy::credentialFull($state,$state['identity']['credentials'][$this->store->get($this->session,'session')['credential']]??[]),'sharedGlobalSupported'=>true,'globalConflictCount'=>$progress['globalConflictCount'],'legacyImports'=>array_values($state['native']['legacyImports']??[]),'backupOrigin'=>$state['policy']['backupOrigin']??null,'primaryOrigin'=>$state['policy']['origin'],'info'=>$this->store->metadata(),'storage'=>$this->store->storagePaths(),'peerEndpoint'=>$this->peer->descriptor()['endpoint'],'peerDescriptor'=>$this->peer->descriptor(),'peerRoutes'=>$this->peer->ownRoutes($state),'routeRevision'=>$state['native']['routeRevision']??'0',
             'sharedGlobal'=>SecretsBackendSharedGlobal::metadata($state),'globalTreeId'=>$state['native']['globalTreeId'],'globalWritable'=>$state['native']['globalWritable'],'ownedTrees'=>$owned,'transfers'=>array_map(static fn($t)=>array_diff_key($t,['node'=>true]),$state['native']['transfers']),
             'serverTime'=>$progress['serverTime'],'peers'=>$progress['peers'],'pairingReceived'=>$progress['pairingReceived'],'pairingSent'=>$progress['pairingSent'],'globalRevision'=>$progress['globalRevision'],'remoteHttpsAvailable'=>$progress['remoteHttpsAvailable'],'remoteHttpsTransport'=>$progress['remoteHttpsTransport'],'peerTransportVersion'=>$progress['peerTransportVersion'],'received'=>$received,'machines'=>$machines,'queuedJobs'=>count($state['outbox']['jobs']),
             'providers'=>array_values(array_map(static fn($p)=>SecretsBackendNativeEffects::targetWritable($state,$p)?$p:array_replace($p,['status'=>'OWNER_CHANGED']),$state['native']['providers'])),'effects'=>array_map(static fn($e)=>array_intersect_key($e,array_flip(['id','providerId','state','reason','createdAt','httpStatus','attempts'])),$state['native']['effects']),

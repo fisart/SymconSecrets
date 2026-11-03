@@ -7,7 +7,7 @@ const source=require('./page-source.cjs')().replaceAll('%%NONCE%%','test').repla
 const tick=()=>new Promise(r=>setImmediate(r));
 const credential=()=>({type:'public-key',rawId:new Uint8Array([1]).buffer,response:{clientDataJSON:new Uint8Array([1]).buffer,authenticatorData:new Uint8Array([1]).buffer,signature:new Uint8Array([1]).buffer,attestationObject:new Uint8Array([1]).buffer,userHandle:null}});
 async function fixture(config={}){
- const calls=[],errors=[],maskTimers=[],globalTimers=[],popup={},copied=[];let clipboardReject=false,clipboardWait=null,revealValue='TEST-VALUE',randomOverride=null,randomCalls=0;let output={nativeChanged:true},lose=false,delayReveal=false,resolveReveal;const pendingReveal=new Promise(r=>{resolveReveal=r;});
+ const calls=[],errors=[],maskTimers=[],globalTimers=[],popup={},copied=[];let overviewFailure=false,clipboardReject=false,clipboardWait=null,revealValue='TEST-VALUE',randomOverride=null,randomCalls=0;let output={nativeChanged:true},lose=false,delayReveal=false,resolveReveal;const pendingReveal=new Promise(r=>{resolveReveal=r;});
  const v=new VirtualConsole();v.on('jsdomError',e=>errors.push(e));
  const descriptor={backend:'456',endpoint:'https://secrets.example.test/hook/secrets_peer_456',vaultId:'vault-a',treeId:'tree-a'};
  const n={info:{vaultId:'vault-a',usedBytes:4096,capacityBytes:524288,directorySync:true},peerEndpoint:descriptor.endpoint,peerDescriptor:descriptor,globalTreeId:'tree-a',globalWritable:true,queuedJobs:0,peers:[],ownedTrees:[],received:[{id:'tree-b',owner:'vault-b',at:'2026-11-01T01:00:00Z',revision:'7',entries:[{path:[],type:'object',children:1},{path:['Shared <safe>'],type:'string'}]}],transfers:{},machines:[],hardwareProfile:{version:'none',fingerprints:{},aaguids:[]},providers:[],effects:{}};
@@ -20,6 +20,7 @@ async function fixture(config={}){
   w.open=()=>popup;Object.defineProperty(w.navigator,'clipboard',{configurable:true,value:{writeText:async text=>{if(clipboardReject)throw Error('Clipboard permission denied');copied.push(text);if(clipboardWait)await clipboardWait;}}});
   w.URL.createObjectURL=()=> 'blob:test';w.URL.revokeObjectURL=()=>{};w.HTMLAnchorElement.prototype.click=function(){};
   w.fetch=async(url,options)=>{if(config.origin&&new URL(url,w.location.href).origin!==config.origin)throw Error('Primary hostname contact is blocked');const r=JSON.parse(options.body);calls.push(r);let data={};
+   if(r.action==='nativeOverviewStatus'){if(overviewFailure)throw Error('Status unavailable');data={...n,overview:n.overview||{globalValues:1,localValues:0,credentials:1,hardwareCredentials:0,magicCredentials:0,machines:0,providers:0,pendingEffects:0,storage:n.info},serverTime:n.serverTime||1793656603};}
    if(r.action==='nativeGlobalStatus')data={revision:snapshot.revision,global:snapshot.global,local:snapshot.local,sharedGlobal:n.sharedGlobal};
    if(r.action==='status')data={ready:true,enrollmentNeeded:false};if(r.action==='session')data=snapshot;
    if(r.action==='legacySources')data={sources:[{id:6000,name:'Old <safe>',ready:true},{id:6002,name:'Inactive vault',ready:false}]};
@@ -37,7 +38,7 @@ async function fixture(config={}){
    return{ok:true,json:async()=>data};
   };
  }});
- await tick();await tick();return{dom,$:id=>dom.window.document.getElementById(id),calls,errors,popup,state:snapshot,copied,randomCalls:()=>randomCalls,setRandom:fn=>{randomOverride=fn},setRevealValue:value=>{revealValue=value},rejectClipboard:value=>{clipboardReject=value},waitClipboard:promise=>{clipboardWait=promise},setConnect:p=>{n.backupOrigin=p;n.primaryOrigin='https://secrets.example.test';},setOutput:x=>{output=x},lose:()=>{lose=true},setHardware:x=>{snapshot.hardware.reveal=x},delayReveal:()=>{delayReveal=true},resolveReveal,maskTimers,globalTimers};
+ await tick();await tick();return{dom,$:id=>dom.window.document.getElementById(id),calls,errors,popup,state:snapshot,failOverview:value=>{overviewFailure=value},copied,randomCalls:()=>randomCalls,setRandom:fn=>{randomOverride=fn},setRevealValue:value=>{revealValue=value},rejectClipboard:value=>{clipboardReject=value},waitClipboard:promise=>{clipboardWait=promise},setConnect:p=>{n.backupOrigin=p;n.primaryOrigin='https://secrets.example.test';},setOutput:x=>{output=x},lose:()=>{lose=true},setHardware:x=>{snapshot.hardware.reveal=x},delayReveal:()=>{delayReveal=true},resolveReveal,maskTimers,globalTimers};
 }
 async function approve(f,id,output){f.setOutput(output);f.$(id).click();await tick();assert.equal(f.$('review').open,true);f.$('approve').click();await tick();await tick();}
 module.exports={fixture,tick,approve};
