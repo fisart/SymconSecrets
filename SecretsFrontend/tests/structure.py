@@ -3,6 +3,10 @@ import json
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
+support = {"libs", "docs", "imgs", "tests", "actions"}
+invalid = sorted(p.name for p in root.iterdir() if p.is_dir() and not p.name.startswith(".") and p.name not in support and not (p/"module.json").is_file())
+assert not invalid, "Symcon module.json missing: " + ", ".join(invalid)
+print("PASS Symcon top-level module/support folder layout")
 baseline = json.loads((Path(__file__).parent / "baseline-files.json").read_text())
 for name, expected in baseline.items():
     content = (root / name).read_bytes()

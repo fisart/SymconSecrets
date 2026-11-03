@@ -7,10 +7,10 @@ import sys
 import tempfile
 
 source = Path(__file__).resolve().parents[2]
-builder = source/'migration/build-replacement.py'
+builder = source/'.migration/build-replacement.py'
 with tempfile.TemporaryDirectory(prefix='secrets-replacement-test-') as directory:
     root = Path(directory)
-    for relative in ['SecretsManager/module.json','SecretsManager/module.php','migration/templates/SecretsManager.php.txt']:
+    for relative in ['SecretsManager/module.json','SecretsManager/module.php','.migration/templates/SecretsManager.php.txt']:
         path = root/relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes((source/relative).read_bytes())
@@ -27,17 +27,17 @@ with tempfile.TemporaryDirectory(prefix='secrets-replacement-test-') as director
     metadata = (root/'SecretsManager/module.json').read_bytes()
     result = subprocess.run([sys.executable,str(builder),str(root)],capture_output=True,text=True,encoding='utf-8',errors='replace')
     assert result.returncode == 0, result.stdout + result.stderr
-    manifest = json.loads((root/'migration/replacement-manifest.json').read_text(encoding='utf-8'))
+    manifest = json.loads((root/'.migration/replacement-manifest.json').read_text(encoding='utf-8'))
     assert manifest['sourceCommit'] == commit
     assert manifest['originalModuleSHA256'] == hashlib.sha256(original).hexdigest()
     assert manifest['prefix'] == 'SEC'
     assert (root/'SecretsManager/module.json').read_bytes() == metadata
-    assert (root/'SecretsManager/module.php').read_bytes() == (source/'migration/templates/SecretsManager.php.txt').read_bytes()
+    assert (root/'SecretsManager/module.php').read_bytes() == (source/'.migration/templates/SecretsManager.php.txt').read_bytes()
     assert git('diff','--name-only') == 'SecretsManager/module.php'
-    assert git('ls-files','--others','--exclude-standard') == 'migration/replacement-manifest.json'
+    assert git('ls-files','--others','--exclude-standard') == '.migration/replacement-manifest.json'
     assert subprocess.run([sys.executable,str(builder),str(root)],capture_output=True).returncode != 0
     git('restore','SecretsManager/module.php')
-    (root/'migration/replacement-manifest.json').unlink()
+    (root/'.migration/replacement-manifest.json').unlink()
     assert (root/'SecretsManager/module.php').read_bytes() == original
     assert git('status','--porcelain') == ''
     (root/'SecretsManager/module.php').write_text('dirty checkout',encoding='utf-8')
