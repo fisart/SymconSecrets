@@ -1,3 +1,7 @@
 SecretsBackend/certificates/mozilla-ca.pem -text
 
 SecretsBackend/certificates/letsencrypt-issuers.pem -text
+
+# Preserve the exact replacement bytes verified by the branch manifest on every platform.
+SecretsManager/module.php text eol=lf
+migration/templates/SecretsManager.php.txt text eol=lf
