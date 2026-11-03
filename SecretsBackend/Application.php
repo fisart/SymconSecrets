@@ -34,7 +34,7 @@ final class SecretsBackendApplication
     private function cookieName(): string { return '__Host-SECB_' . $this->settings['backend']; }
     private function session(array $request, array $current): array
     {
-        $cookies = []; preg_match_all('/(?:^|;\s*)' . preg_quote($this->cookieName(), '/') . '=([A-Za-z0-9_-]{43})(?:;|$)/', $request['cookie'] ?? '', $matches);
+        $cookies = []; preg_match_all('/(?:^|;\s*)' . preg_quote($this->cookieName(), '/') . '=([A-Za-z0-9_-]{43})(?=;|$)/', $request['cookie'] ?? '', $matches);
         if (count($matches[1]) !== 1) throw new RuntimeException('Administrator login is required.');
         $hash = hash('sha256', $matches[1][0]); $session = $this->store->get($hash, 'session');
         $credential = $current['state']['identity']['credentials'][$session['credential']] ?? null;
@@ -44,6 +44,17 @@ final class SecretsBackendApplication
         $this->routeCredential($current['state'], $credential);
         if (($session['originGeneration'] ?? '') !== $this->originGeneration($current['state'])) throw new RuntimeException('Origin authorization changed.');
         $session['hash'] = $hash; return $session;
+    }
+    /** Read-only authentication predicate for approved legacy protected pages. */
+    public function portalAuthenticated(array $request): bool
+    {
+        try {
+            $current=$this->store->read();$session=$this->session($request,$current);
+            $credential=$current['state']['identity']['credentials'][$session['credential']];
+            if($this->settings['origin']!==$this->primaryOrigin()&&!SecretsBackendBackupOriginPolicy::credentialFull($current['state'],$credential))return false;
+            $this->store->authorize('legacy-portal',hash('sha256',$session['hash']),$current,function(array $checked)use($request):void{$this->session($request,$checked);});
+            return true;
+        } catch(Throwable $error) { return false; }
     }
     private function requireCsrf(array $request, array $session): void
     {

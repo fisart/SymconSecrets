@@ -5,11 +5,13 @@ require_once __DIR__ . '/SecurityConfiguration.php';
 require_once __DIR__ . '/StoragePaths.php';
 require_once __DIR__ . '/NativeBackend.php';
 require_once __DIR__ . '/NativeRuntime.php';
+require_once __DIR__ . '/LegacyRuntime.php';
 
 class SecretsBackend extends IPSModule
 {
     use SecretsBackendNativeBackend;
     use SecretsBackendNativeRuntime;
+    use SecretsBackendLegacyRuntime;
     public const FRONTEND = '{8D6AE8F7-EA3A-4513-AA14-C3F9613B0E83}';
     private const STRINGS = ['DataDirectory', 'KeyDirectory', 'AdminOrigin', 'AnchorURL', 'AnchorPublicKey', 'AnchorKeyID', 'ClientCertificatePath', 'ClientKeyPath', 'AnchorCAFile', 'HardwareRootsDirectory', 'HardwareAAGUIDs', 'HardwareTrustVersion'];
     public function Create(): void
