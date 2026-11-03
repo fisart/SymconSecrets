@@ -244,7 +244,7 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
         } finally { $this->depth=0;$this->frame=null;$this->dirty=false;foreach(array_reverse($locks)as$h){flock($h,LOCK_UN);fclose($h);} }
     }
     private function physicalPaths(): array { return ['vaultDirectory'=>$this->directory,'keyDirectory'=>$this->keyDirectory]; }
-    public function storageHandoff(): array { return $this->locked(fn():array=>['move'=>$this->frame['state']['native']['storageMove']??null,'profile'=>$this->frame['state']['policy']['management']]); }
+    public function storageHandoff(): array { return $this->locked(fn():array=>['paths'=>$this->physicalPaths(),'move'=>$this->frame['state']['native']['storageMove']??null,'profile'=>$this->frame['state']['policy']['management']]); }
     public function storagePaths(): array { return $this->locked(fn():array=>$this->physicalPaths()); }
     public function reviewStorageMove(array $target,string $kernel,string|array|null $legacyParent=null): array
     {
@@ -297,6 +297,13 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
     }
     public function recoveryRequired(): bool { try { $this->read(); return false; } catch (Throwable $e) { return true; } }
     public function read(bool $fresh = true): array { return $this->locked(function (): array { $this->active(); return $this->current(); }); }
+    /** One local operation, with fresh state and nested authorization under the same lock.
+     * Never retain this snapshot between calls or perform network I/O in the callback.
+     */
+    public function withActiveSnapshot(callable $operation)
+    {
+        return $this->locked(function () use ($operation) { $this->active(); return $operation($this->current()); });
+    }
     public function head(): array { return $this->read()['head']; }
     private function event(array $context, string $id, string $result): array
     {

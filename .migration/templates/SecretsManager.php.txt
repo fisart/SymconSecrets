@@ -30,12 +30,15 @@ class SecretsManager extends IPSModuleStrict
         if(!is_array($pin)||!is_int($pin['backend']??null)||$pin['backend']<=0||!is_string($pin['vault']??null)||$pin['vault']==='')throw new RuntimeException('Invalid native binding.',1008);
         return $pin;
     }
-    private function backend(): int
+    private function backend(bool $inspect = true): int
     {
         if(IPS_HasChanges($this->InstanceID))throw new RuntimeException('Apply or discard pending instance settings.',1001);
         $id=$this->ReadPropertyInteger('NativeBackendInstanceID');if($id===0)$id=$this->discoverBackend();
         if($id<=0||!IPS_InstanceExists($id)||strtoupper(IPS_GetInstance($id)['ModuleInfo']['ModuleID']??'')!=='{52165EDD-B2C0-40EC-8A59-42A97319B6E2}')throw new RuntimeException('The selected native backend is unavailable.',1003);
         $pin=$this->binding();if($pin!==null&&$pin['backend']!==$id)throw new RuntimeException('The pinned native backend changed.',1005);
+        // Bound data calls verify this vault and fresh permissions inside the backend operation.
+        // Full metadata is for discovery/diagnostics, never for every application read.
+        if(!$inspect&&$pin!==null)return $id;
         if(!function_exists('SECB_GetNativeInfo'))throw new RuntimeException('Native backend API is unavailable.',1009);
         $info=json_decode(SECB_GetNativeInfo($id),true,32,JSON_THROW_ON_ERROR);
         if(!($info['initialized']??false)||!($info['ready']??false)||!is_string($info['vaultId']??null))throw new RuntimeException('The native backend is not ready.',1004);
@@ -70,10 +73,14 @@ class SecretsManager extends IPSModuleStrict
         $last=json_decode($this->GetBuffer('LegacyAPILastFailure'),true);if(is_array($last))$out['lastFailure']=$last;
         return json_encode($out,JSON_THROW_ON_ERROR);
     }
-    public function RetryNativeBinding(): void { $this->ApplyChanges(); }
+    public function RetryNativeBinding(): void { $this->applyNativeBinding(); }
     public function ApplyChanges(): void
     {
-        parent::ApplyChanges();$this->SetTimerInterval('NativeBindingRetry',0);
+        parent::ApplyChanges();$this->SetBuffer('NativeBindingDelay','');$this->applyNativeBinding();
+    }
+    private function applyNativeBinding(): void
+    {
+        $this->SetTimerInterval('NativeBindingRetry',0);
         try{
             // Automatic binding lives in an attribute; never change/apply our own properties recursively.
             $this->backend();$path='/hook/secrets_'.$this->InstanceID;
@@ -84,8 +91,10 @@ class SecretsManager extends IPSModuleStrict
                 $found=false;foreach($hooks as$hook)if(($hook['Hook']??'')===$path){if(($hook['TargetID']??0)!==$this->InstanceID)throw new RuntimeException('Legacy hook belongs to another instance.');$found=true;}
                 if(!$found){$hooks[]=['Hook'=>$path,'TargetID'=>$this->InstanceID];IPS_SetProperty($ids[0],'Hooks',json_encode($hooks,JSON_THROW_ON_ERROR));IPS_ApplyChanges($ids[0]);}
             }finally{IPS_SemaphoreLeave('SECF.WebhookControl');}
-            $this->SetStatus(102);
-        }catch(Throwable $error){$this->SetStatus(200);if(!in_array($error->getCode(),[1001,1005,1007,1008],true))$this->SetTimerInterval('NativeBindingRetry',5000);}
+            $this->SetBuffer('NativeBindingDelay','');$this->SetStatus(102);
+        }catch(Throwable $error){$this->SetStatus(200);if(!in_array($error->getCode(),[1001,1005,1007,1008],true)){
+            $delay=max(5000,min(60000,(int)$this->GetBuffer('NativeBindingDelay')));$this->SetTimerInterval('NativeBindingRetry',$delay);$this->SetBuffer('NativeBindingDelay',(string)min(60000,$delay*2));
+        }}
     }
     public function GetConfigurationForm(): string
     {
@@ -109,7 +118,7 @@ class SecretsManager extends IPSModuleStrict
     private function call(string $method,array $args)
     {
         try{
-            $backend=$this->backend();$raw=SECB_CallLegacyAPI($backend,$backend,$method,json_encode($args,JSON_THROW_ON_ERROR));
+            $backend=$this->backend(false);$pin=$this->binding();$raw=SECB_CallBoundLegacyAPI($backend,$pin['vault'],$method,json_encode($args,JSON_THROW_ON_ERROR));
             $result=json_decode($raw,true,32,JSON_THROW_ON_ERROR);if(!is_array($result)||!array_key_exists('value',$result))throw new RuntimeException('Invalid native API response.');
         }catch(Throwable $error){
             $result=['value'=>match($method){'GetKeys'=>'[]','GetExplorerFields'=>[],'SetRecordFields','ImportLocalSecrets'=>false,'EncryptAndSave'=>null,default=>''},'output'=>$method==='EncryptAndSave'?'❌ Error: Encryption failed.':'','error'=>['code'=>self::failureCode($error)]];

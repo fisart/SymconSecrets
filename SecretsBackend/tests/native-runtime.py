@@ -25,3 +25,4 @@ for name in ['.migration/tests/preflight.php', 'SecretsBackend/tests/legacy-api.
     subprocess.run(command + [str(root / name)], cwd=root, check=True, timeout=90)
 
 subprocess.run([sys.executable, str(root / '.migration/tests/build.py')], cwd=root, check=True, timeout=30)
+subprocess.run([sys.executable, str(root / '.migration/tests/read-load.py'), '--php', args.php, '--reads', '30'], cwd=root, check=True, timeout=120)

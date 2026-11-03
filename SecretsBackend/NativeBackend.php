@@ -20,7 +20,7 @@ trait SecretsBackendNativeBackend
         $id = $store->identity();
         if ($id['deploymentId'] !== $binding['uuid'] || $id['binding']['backend'] !== $this->InstanceID
             || $id['binding']['frontend'] !== $this->ReadPropertyInteger('FrontendInstanceID') || $id['binding']['origin'] !== $this->ReadPropertyString('AdminOrigin')) throw new RuntimeException('Native vault identity or instance binding changed.');
-        $physical=$store->storagePaths();$handoff=$store->storageHandoff();$move=$handoff['move'];
+        $handoff=$store->storageHandoff();$physical=$handoff['paths'];$move=$handoff['move'];
         if(is_array($move)&&$physical===$move['to']){
             $approved=$handoff['profile']['settings'];$configuration=$this->configuration();
             $beforeRoots=$approved['HardwareRootsDirectory'];
@@ -46,10 +46,10 @@ trait SecretsBackendNativeBackend
         return $store;
     }
     private function nativeProfile(): array { return SecretsBackendSecurityConfiguration::nativeProfile($this->configuration(), $this->frontendSecurity()); }
-    private function nativeApplication(?string $requestOrigin = null): SecretsBackendApplication
+    private function nativeApplication(?string $requestOrigin = null, ?SecretsBackendNativeStore $store = null): SecretsBackendApplication
     {
         if (!$this->ReadPropertyBoolean('Enabled') || !$this->nativeInitialized()) throw new RuntimeException('Initialize and enable the native backend in the HTML wizard.');
-        $store = $this->nativeStore(); $current = $store->read(); $profile = $current['state']['policy']['management'];
+        $store ??= $this->nativeStore(); $current = $store->read(); $profile = $current['state']['policy']['management'];
         if (!is_array($profile) || ($profile['version'] ?? '') !== 'native-1') throw new RuntimeException('Native security profile is unavailable.');
         SecretsBackendSecurityConfiguration::verify($profile, $this->frontendSecurity());
         if (!SecretsBackendSecurityConfiguration::sameFoundation($profile['settings'], $this->configuration())) throw new RuntimeException('Pinned native foundation changed. Restore the reviewed settings or use recovery.');

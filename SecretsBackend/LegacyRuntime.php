@@ -5,11 +5,11 @@ require_once __DIR__.'/LegacyAPI.php';
 /** Symcon public method signatures matching the old SEC application interface. */
 trait SecretsBackendLegacyRuntime
 {
-    private function legacyService(int $source): SecretsBackendLegacyAPI
+    private function legacyService(int $source, ?SecretsBackendNativeStore $store = null): SecretsBackendLegacyAPI
     {
-        $this->nativeApplication();
         if($source!==$this->InstanceID)throw new RuntimeException('Old manager contexts are disabled on this native-only branch.');
-        return new SecretsBackendLegacyAPI($this->nativeStore(),$source,function(array $permission)use($source):void{
+        $store ??= $this->nativeStore();$this->nativeApplication(null,$store);
+        return new SecretsBackendLegacyAPI($store,$source,function(array $permission)use($source):void{
             if(!IPS_InstanceExists($source)||IPS_HasChanges($source))throw new RuntimeException('The native backend is unavailable or has unapplied settings.');
         },$this->InstanceID);
     }
@@ -49,16 +49,33 @@ trait SecretsBackendLegacyRuntime
     }
     public function CallLegacyAPI(int $SourceInstanceID,string $Method,string $ArgumentsJSON): string
     {
+        return $this->executeLegacyAPI($SourceInstanceID,$Method,$ArgumentsJSON,null);
+    }
+    /** Adapter-only binding check is part of the same fresh operation, not a separate status scan. */
+    public function CallBoundLegacyAPI(string $ExpectedVaultID,string $Method,string $ArgumentsJSON): string
+    {
+        return $this->executeLegacyAPI($this->InstanceID,$Method,$ArgumentsJSON,$ExpectedVaultID);
+    }
+    private function executeLegacyAPI(int $SourceInstanceID,string $Method,string $ArgumentsJSON,?string $expectedVault): string
+    {
         if(!in_array($Method,SecretsBackendLegacyAPI::DATA_METHODS,true))throw new RuntimeException('This legacy administration operation requires its native approved workflow.');
         if(strlen($ArgumentsJSON)>SecretsBackendNativePlatform::budget())throw new InvalidArgumentException('Legacy arguments exceed the native memory budget.');
         $args=json_decode($ArgumentsJSON,true,32,JSON_THROW_ON_ERROR);if(!is_array($args)||!array_is_list($args))throw new InvalidArgumentException('Legacy arguments must be a positional array.');
         $counts=['GetKeys'=>0,'GetSecret'=>1,'GetExplorerFields'=>1,'SetRecordFields'=>3,'ExportLocalSecrets'=>0,'ImportLocalSecrets'=>1,'EncryptAndSave'=>1];
         if(count($args)!==$counts[$Method])throw new InvalidArgumentException('Legacy argument count differs.');
         $failure=null;
-        try{$service=$this->legacyService($SourceInstanceID);$value=$service->{$Method}(...$args);$output=$service->output();$this->SetBuffer('LegacyAPILastError','');}
+        try{
+            $store=$this->nativeStore();
+            [$value,$output]=$store->withActiveSnapshot(function()use($store,$SourceInstanceID,$Method,$args,$expectedVault):array{
+                if($expectedVault!==null&&!hash_equals($store->identity()['deploymentId'],$expectedVault))throw new RuntimeException('The pinned native vault changed.',1005);
+                $service=$this->legacyService($SourceInstanceID,$store);
+                return [$service->{$Method}(...$args),$service->output()];
+            });
+            $this->SetBuffer('LegacyAPILastError','');
+        }
         catch(Throwable $error){
             $output=$Method==='EncryptAndSave'?'❌ Error: Encryption failed.':'';
-            $failure=['code'=>$error->getCode()===2101?'APPLICATION_RECORD_MISSING':'LEGACY_API_REFUSED','meaning'=>'The read/write request failed authorization or backend validation. The fallback value does not prove an empty vault.'];
+            $failure=['code'=>match($error->getCode()){2101=>'APPLICATION_RECORD_MISSING',1005=>'PINNED_VAULT_CHANGED',default=>'LEGACY_API_REFUSED'},'meaning'=>'The read/write request failed authorization or backend validation. The fallback value does not prove an empty vault.'];
             $this->SetBuffer('LegacyAPILastError','Legacy '.$Method.' refused; check approved access, binding, freeze, Global conflicts and backend readiness.');
             $value=match($Method){'GetKeys'=>'[]','GetExplorerFields'=>[],'SetRecordFields','ImportLocalSecrets'=>false,'EncryptAndSave'=>null,default=>''};
         }

@@ -3,6 +3,8 @@ declare(strict_types=1);
 require_once __DIR__.'/../../SecretsFrontend/tests/BootstrapFixture.php';
 class IPSModuleStrict extends IPSModule
 {
+    public int $parentApplies=0;
+    public function ApplyChanges(): void {++$this->parentApplies;parent::ApplyChanges();}
     protected function RegisterVariableString($k,$n,$p='',$position=0): void {if(!array_key_exists($k,$this->values))parent::RegisterVariableString($k,$n,$p,$position);}
     protected function RegisterPropertyInteger($k,$v): void {if(!array_key_exists($k,$this->properties))parent::RegisterPropertyInteger($k,$v);}
     protected function RegisterPropertyString($k,$v): void {if(!array_key_exists($k,$this->properties))parent::RegisterPropertyString($k,$v);}
@@ -12,6 +14,7 @@ $entry=__DIR__.'/../../SecretsManager/module.php';$template=__DIR__.'/../templat
 if(file_get_contents($entry)===file_get_contents($template)){require $entry;$actualEntry=true;}
 else{eval(substr(file_get_contents($template),5));$actualEntry=false;}
 function SECB_CallLegacyAPI(int $id,int $source,string $method,string $args): string {return $GLOBALS['instances'][$id]->CallLegacyAPI($source,$method,$args);}
+function SECB_CallBoundLegacyAPI(int $id,string $vault,string $method,string $args): string {return $GLOBALS['instances'][$id]->CallBoundLegacyAPI($vault,$method,$args);}
 function SECB_IsNativePortalAuthenticated(int $id): bool {return $GLOBALS['instances'][$id]->IsNativePortalAuthenticated();}
 function SECB_GetNativePortalLoginURL(int $id,string $path,string $server): string {return $GLOBALS['instances'][$id]->GetNativePortalLoginURL($path,$server);}
 function SECB_GetLegacyAPIStatus(int $id): string {return $GLOBALS['instances'][$id]->GetLegacyAPIStatus();}
@@ -22,12 +25,13 @@ function SEC_SetRecordFields(int $id,string $path,array $fields,string $scope): 
 function SEC_IsPortalAuthenticated(int $id): bool {return $GLOBALS['instances'][$id]->IsPortalAuthenticated();}
 function IPS_GetConfiguration(int $id): string {throw new RuntimeException('A retired manager configuration must never be consulted.');}
 class ReplacementReadyBackend extends IPSModule {public function GetNativeInfo():string{return json_encode(['initialized'=>true,'ready'=>true,'vaultId'=>'other-vault']);}}
+class ReplacementMeasuredBackend extends SecretsBackend {public int $infoCalls=0;public function GetNativeInfo():string{++$this->infoCalls;return parent::GetNativeInfo();}}
 $checks=0;$ok=static function(bool $value,string $message)use(&$checks):void{secExpect($value,$message);++$checks;};
 $warnings=[];set_error_handler(static function(int $severity,string $message)use(&$warnings):bool{if($severity===E_USER_WARNING){$warnings[]=$message;return true;}return false;});
 $root=sys_get_temp_dir().'/sec-native-replacement-'.bin2hex(random_bytes(8));
 $GLOBALS['moduleIDs']=[5100=>SecretsBackend::FRONTEND,5101=>'{52165EDD-B2C0-40EC-8A59-42A97319B6E2}',49800=>SecretsBackendLegacyImport::MODULE,59597=>SecretsBackendLegacyImport::MODULE,700=>'{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}'];
 $hooks=new IPSModule(700);$hooks->properties['Hooks']='[{"Hook":"/hook/secrets_49800","TargetID":49800}]';
-$front=new SecretsFrontend(5100);$front->Create();$back=new SecretsBackend(5101);$back->Create();
+$front=new SecretsFrontend(5100);$front->Create();$back=new ReplacementMeasuredBackend(5101);$back->Create();
 $request=['origin'=>'https://secrets.example.test','cookie'=>'','csrf'=>'','remote'=>'test'];$gateway=new ReflectionMethod(SecretsFrontend::class,'gateway');
 $invoke=static function(string $action,array $data=[])use($gateway,$front,&$request):array{$r=$gateway->invoke($front,['action'=>$action,'data'=>$data]+$request);if($r['status']!==200)throw new RuntimeException($action.': '.json_encode($r));return $r;};
 try{
@@ -47,10 +51,20 @@ try{
         $info=json_decode($m->GetReplacementInfo(),true);$ok($info['engine']==='native-only'&&!$info['oldImplementationEnabled']&&!$info['oldStorageUsed']&&$info['ready'],'Replacement metadata suggested a legacy fallback.');
         $ok(!SEC_SetRecordFields($id,'blocked',['key'=>'value'],'global'),'Default replacement writes were not frozen.');
     }
+    $a=$GLOBALS['instances'][49800];$infoCalls=$back->infoCalls;$parentApplies=$a->parentApplies;
+    for($i=0;$i<10;$i++)$ok(str_contains(SEC_GetSecret(49800,'Hikvision'),'NATIVE-ONLY-CANARY'),'Repeated bound read failed.');
+    $ok($back->infoCalls===$infoCalls&&$a->parentApplies===$parentApplies,'Application reads performed full metadata scans or lifecycle updates.');
+    $pin=$a->attributes['NativeBackendBinding'];$a->attributes['NativeBackendBinding']=json_encode(['backend'=>5101,'vault'=>'changed-vault']);
+    $ok(SEC_GetSecret(49800,'Hikvision')===''&&json_decode($a->buffers['LegacyAPILastFailure'],true)['code']==='PINNED_VAULT_CHANGED','Bound dispatch failed to check the expected vault inside the read.');$a->attributes['NativeBackendBinding']=$pin;
+    $GLOBALS['changed'][5101]=true;$ok(SEC_GetKeys(49800)==='[]','Optimized read ignored unapplied backend settings.');$GLOBALS['changed'][5101]=false;
     // Module updates may apply the SEC instance before the backend has recovered.
     $back->properties['Enabled']=false;$late=new SecretsManager(49999);$GLOBALS['moduleIDs'][49999]=SecretsBackendLegacyImport::MODULE;$late->Create();$late->ApplyChanges();
     $ok($late->status===200&&$late->timers['NativeBindingRetry']===5000,'Unavailable backend must schedule bounded automatic binding retry.');
     $ok(json_decode($late->GetReplacementInfo(),true)['code']==='NO_READY_BACKEND','Startup diagnostics did not explain the missing ready backend.');
+    $parentApplies=$late->parentApplies;
+    foreach([10000,20000,40000,60000,60000]as$delay){$late->RetryNativeBinding();$ok($late->timers['NativeBindingRetry']===$delay,'Binding retry did not back off to its bounded interval.');}
+    $ok($late->parentApplies===$parentApplies,'Binding retry re-entered the parent lifecycle.');
+    $GLOBALS['changed'][49999]=true;$late->RetryNativeBinding();$ok($late->timers['NativeBindingRetry']===0,'Binding retry continued with unapplied settings.');$GLOBALS['changed'][49999]=false;
     $back->properties['Enabled']=true;
     $ok(str_contains(SEC_GetSecret(49999,'Hikvision'),'NATIVE-ONLY-CANARY'),'An instance applied before native recovery stayed permanently unbound.');
     $late->RetryNativeBinding();$ok($late->status===102&&$late->timers['NativeBindingRetry']===0&&$late->properties['NativeBackendInstanceID']===0,'Automatic retry did not finish without recursive property changes.');
@@ -94,6 +108,8 @@ $grant['enabled']=true;$approve($grant);
     $ok($missing===''&&$missingNoise===''&&json_decode($a->GetReplacementInfo(),true)['lastFailure']['code']==='APPLICATION_RECORD_MISSING','Missing records emitted PHP notices or lost the failure diagnostic.');
     $ok(!str_contains(json_encode($GLOBALS['apiLogs']??[]),'CANARY'),'Logs disclosed a secret value or record name.');
     $ok($warnings===[],'Failed SEC/SECB reads still emitted PHP warnings/notices.');
+    $nativeStore=(new ReflectionMethod(SecretsBackend::class,'nativeStore'))->invoke($back);$nativeStore->invalidate();
+    $ok(SEC_GetKeys(49800)==='[]','Optimized read returned data from a fenced runtime.');$ok($back->Recover(),'Recovery after runtime fencing failed.');
     $back->properties['Enabled']=false;$ok(SEC_GetKeys(49800)==='[]'&&!json_decode($a->GetReplacementInfo(),true)['ready'],'Unavailable native backend fell back to old storage.');$back->properties['Enabled']=true;
     $other=new ReplacementReadyBackend(5102);$GLOBALS['moduleIDs'][5102]='{52165EDD-B2C0-40EC-8A59-42A97319B6E2}';
     $new=new SecretsManager(50000);$GLOBALS['moduleIDs'][50000]=SecretsBackendLegacyImport::MODULE;$new->Create();$new->ApplyChanges();$ok($new->status===200&&$new->properties['NativeBackendInstanceID']===0,'Ambiguous backend selection guessed a target.');
