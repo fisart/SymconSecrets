@@ -93,7 +93,7 @@ final class SecretsFrontendHttp
             } catch (Throwable $exception) { return $reply(503, 'Backend request could not be completed. Check the backend status.'); }
         }
         if ($method === 'HEAD') return ['status' => 200, 'headers' => $headers, 'body' => ''];
-        $boot = json_encode(['primaryOrigin'=>$primaryOrigin,'backupEnrollment'=>$origin!==$primaryOrigin&&($backup['status']??'')==='pending','originGeneration'=>$origin!==$primaryOrigin?($backup['generation']??''):'','origin' => $origin, 'path' => $path, 'theme' => $settings['Theme'], 'guidedV2Only' => ($ui['guidedV2Only'] ?? false) === true], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_THROW_ON_ERROR);
+        $boot = json_encode(['vaultInitialized'=>($ui['vaultInitialized']??false)===true,'setupMode'=>($ui['setupMode']??'')==='recovery'?'recovery':'initial','primaryOrigin'=>$primaryOrigin,'backupEnrollment'=>$origin!==$primaryOrigin&&($backup['status']??'')==='pending','originGeneration'=>$origin!==$primaryOrigin?($backup['generation']??''):'','origin' => $origin, 'path' => $path, 'theme' => $settings['Theme'], 'guidedV2Only' => ($ui['guidedV2Only'] ?? false) === true], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_THROW_ON_ERROR);
         $escape = static fn(string $text): string => htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $links = '';
         foreach (['Portal' => $portal, 'Dokumentation' => $documentation] as $label => $target) {

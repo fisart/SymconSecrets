@@ -92,7 +92,7 @@ run($('nativeRefreshPeers'),load);run($('nativeRefreshProviders'),load);$('scope
 
 $('nativeMachineScope').addEventListener('change',()=>{const scope=$('nativeMachineScope').value;const readOnly=scope.startsWith('received:')||(scope==='global'&&snapshot?.native&&!snapshot.native.globalWritable);$('nativeMachineWrite').disabled=readOnly;if(readOnly)$('nativeMachineWrite').checked=false;});
 
-run($('nativeRecoveryEnrollment'),()=>{tab('setup');message('In the trusted Symcon console, open Recover administrator access. Then prepare and compare your replacement passkey here. Hardware policies remain enforced.');});
+run($('nativeRecoveryEnrollment'),showAdministratorRecovery);run($('accessRecoveryEnrollment'),showAdministratorRecovery);
 
 let connectPopup=null,connectCandidate=null,connectPendingMessage=null,connectEnrollmentStatus=null,connectStatusTimer=null,connectRouteTimer=null;
 function renderConnect(){

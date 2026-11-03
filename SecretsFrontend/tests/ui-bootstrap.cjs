@@ -11,14 +11,15 @@ const wait=async(fn)=>{for(let i=0;i<150;i++){if(fn())return;await new Promise(r
 const b64=x=>Buffer.from(x).toString('base64url');
 const nonce=()=>b64(webcrypto.getRandomValues(new Uint8Array(32)));
 const canonical=x=>x&&typeof x==='object'&&!Array.isArray(x)?Object.fromEntries(Object.keys(x).sort().map(k=>[k,canonical(x[k])])):x;
-async function fixture({delayCreate=false}={}){
+async function fixture({delayCreate=false,mode='initial',initialized=false}={}){
  const calls=[],errors=[],cryptoChecks=[];let pairKey,ctx,expectedNonce,approved=false,creationResolve;
  const delayed=new Promise(r=>{creationResolve=r;});
  const ids={frontend:randomUUID(),intent:nonce(),candidate:nonce(),candidateDigest:'a'.repeat(64),operation:randomUUID()};
  const v=new VirtualConsole();v.on('jsdomError',e=>errors.push(e));
  const snapshot={csrf:'normal-csrf',revision:'0',hardware:{write:false,identity:false,export:false,reveal:false},global:[],local:[],credentials:[]};
- const discovery={mode:'initial',origin,requirements:{native:{windowsACLConfirmationRequired:false}},backends:[{id:456,name:'Native backend',defaults:{vaultDirectory:'/private/vault',keyDirectory:'/private/keys'}}],portals:[],documentation:[],defaults:{backend:456,portal:0,documentation:0,theme:'system',debugEnabled:false}};
- const dom=new JSDOM(source,{url:origin+path,runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:v,beforeParse(w){
+ const discovery={mode,origin,requirements:{native:{windowsACLConfirmationRequired:false}},backends:[{id:456,name:'Native backend',defaults:{vaultDirectory:'/private/vault',keyDirectory:'/private/keys'}}],portals:[],documentation:[],defaults:{backend:456,portal:0,documentation:0,theme:'system',debugEnabled:false}};
+ const rendered=source.replace('\"guidedV2Only\":true','\"guidedV2Only\":true,\"setupMode\":'+JSON.stringify(mode)+',\"vaultInitialized\":'+JSON.stringify(initialized));
+ const dom=new JSDOM(rendered,{url:origin+path,runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:v,beforeParse(w){
   Object.defineProperty(w,'crypto',{value:webcrypto});w.TextEncoder=TextEncoder;Object.defineProperty(w,'isSecureContext',{value:true});
   w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};
   const credential={type:'public-key',rawId:Uint8Array.of(1).buffer,response:{clientDataJSON:Uint8Array.of(2).buffer,attestationObject:Uint8Array.of(3).buffer,authenticatorData:Uint8Array.of(4).buffer,signature:Uint8Array.of(5).buffer,userHandle:null}};
@@ -26,7 +27,7 @@ async function fixture({delayCreate=false}={}){
   w.fetch=async(url,options)=>{
    assert.equal(url,path);assert.equal(options.method,'POST');assert.equal(options.redirect,'error');assert.equal(options.credentials,'same-origin');
    const r=JSON.parse(options.body);calls.push(r);let data={};
-   if(r.action==='status')data={ready:false,message:'Open setup from the console.'};
+   if(r.action==='status')data={ready:initialized,message:'Open setup from the console.'};
    if(r.action==='session')data=snapshot;
    if(r.action==='bootstrapPrepare'){ctx={...ids,prepare:nonce(),challenge:nonce()};data={prepare:ctx.prepare,options:{challenge:ctx.challenge,user:{id:nonce()}},csrf:'bootstrap-csrf',intent:ids.intent,frontend:ids.frontend};}
    if(r.action==='bootstrapSubmit'){
@@ -47,17 +48,17 @@ async function fixture({delayCreate=false}={}){
     if(m.action==='candidateStatus')Object.assign(data,{approved,operation:ids.operation,...(approved?{discovery}:{})});
     if(m.action==='planPreview')Object.assign(data,{planDigest:'b'.repeat(64),configuration:{...body,origin,persistence:{vault:{confirmationRequired:false},keys:{confirmationRequired:false}}}});
     if(m.action==='applyOptions')Object.assign(data,{options:{challenge:nonce(),allowCredentials:[]}});
-    if(m.action==='applyVerify')Object.assign(data,{status:'COMMITTED',authenticated:true,csrf:'normal-csrf'});
+    if(m.action==='applyVerify')Object.assign(data,{status:'COMMITTED',authenticated:mode!=='recovery',csrf:'normal-csrf'});
    }
    return{ok:true,json:async()=>data};
   };
  }});await tick();return{dom,$:id=>dom.window.document.getElementById(id),calls,errors,cryptoChecks,approve:()=>{approved=true;},resolve:()=>creationResolve({type:'public-key',rawId:Uint8Array.of(1).buffer,response:{clientDataJSON:Uint8Array.of(2).buffer,attestationObject:Uint8Array.of(3).buffer}})};
 }
 (async()=>{
- const f=await fixture();f.$('bsPrepare').click();await wait(()=>!f.$('bsWaiting').hidden);assert.equal(f.$('bsComparison').textContent,'1234–5678–9ABC–DEF0');
+ const f=await fixture();assert.equal(f.$('setupNav').hidden,false);assert.match(f.$('setupPurpose').textContent,/encrypted secrets vault.*first administrator/);f.$('bsPrepare').click();await wait(()=>!f.$('bsWaiting').hidden);assert.equal(f.$('bsComparison').textContent,'1234–5678–9ABC–DEF0');
  f.$('bsCheck').click();await wait(()=>f.calls.some(r=>r.data.action==='candidateStatus'));assert.equal(f.$('bsConfiguration').hidden,true,'Pending candidate received configuration.');
  await wait(()=>!f.$('bsCheck').disabled);f.approve();f.$('bsCheck').click();await wait(()=>!f.$('bsConfiguration').hidden);assert.equal(f.$('bsBackendRow').hidden,true);assert.equal(f.$('bsVault').value,'/private/vault');assert.equal(f.$('bsPortal').value,'0');
- f.$('bsReview').click();await wait(()=>!f.$('bsPlan').hidden);assert.match(f.$('bsSummary').textContent,/passkey you prepared/);f.$('bsApply').click();await wait(()=>f.calls.some(r=>r.action==='session'));assert.equal(f.$('login').hidden,true);assert.match(f.$('message').textContent,/You are signed in|you are signed in/);assert.equal(f.$('bsSecrets').hidden,false);assert.equal(f.$('bsLogin').hidden,true);assert.match(f.$('bsResult').textContent,/you are signed in/);f.$('bsSecrets').click();assert.equal(f.$('secrets').hidden,false,'Completion did not open Secrets.');
+ f.$('bsReview').click();await wait(()=>!f.$('bsPlan').hidden);assert.match(f.$('bsSummary').textContent,/passkey you prepared/);f.$('bsApply').click();await wait(()=>f.calls.some(r=>r.action==='session'));assert.equal(f.$('login').hidden,true);assert.match(f.$('message').textContent,/You are signed in|you are signed in/);assert.equal(f.$('bsSecrets').hidden,false);assert.equal(f.$('bsLogin').hidden,true);assert.equal(f.$('setupNav').hidden,true);assert.equal(f.$('firstTimeSetup').hidden,true);assert.match(f.$('bsResult').textContent,/you are signed in/);f.$('bsSecrets').click();assert.equal(f.$('secrets').hidden,false,'Completion did not open Secrets.');
  const vector=f.cryptoChecks[0];const verifier=spawnSync(process.env.PHP_BINARY||'php',['-n','-r',"require 'SecretsBackend/BootstrapVerifier.php'; $v=json_decode(stream_get_contents(STDIN),true); SecretsBootstrapVerifier::message($v['message'],$v['key']); echo 'OK';"],{cwd:require('node:path').join(__dirname,'../..'),input:JSON.stringify(vector),encoding:'utf8'});
  assert.equal(verifier.status,0,verifier.stdout+verifier.stderr);assert.equal(verifier.stdout,'OK','Actual WebCrypto signature did not interoperate with PHP/OpenSSL.');
  assert.equal(f.calls.some(r=>/guided|enrollmentOptions|setupCreate/.test(r.action)),false);assert.equal(f.errors.length,0,f.errors.map(e=>e.message).join('\n'));assert.equal(f.dom.window.localStorage.length,0);assert.equal(f.dom.window.sessionStorage.length,0);f.dom.window.close();
@@ -66,6 +67,8 @@ async function fixture({delayCreate=false}={}){
  assert.equal(automatic.$('bsConfiguration').hidden,false,'Approved setup did not automatically advance.');
  assert.match(automatic.dom.window.document.querySelector('#guide').textContent,/Step 3: Refresh approval requests/);
  assert.doesNotMatch(automatic.dom.window.document.querySelector('#guide').textContent,/ten-minute setup code/);automatic.dom.window.close();
+ const recovery=await fixture({mode:'recovery',initialized:true});await tick();assert.equal(recovery.$('setup').hidden,false);assert.equal(recovery.$('setupTitle').textContent,'Administrator recovery');assert.match(recovery.$('setupPurpose').textContent,/existing vault.*replacement passkey/);assert.equal(recovery.$('firstTimeSetup').hidden,true);assert.match(recovery.$('bsStartTitle').textContent,/replacement/);
+ recovery.$('bsPrepare').click();await wait(()=>!recovery.$('bsWaiting').hidden);recovery.approve();recovery.$('bsCheck').click();await wait(()=>!recovery.$('bsConfiguration').hidden);assert.equal(recovery.$('bsApply').textContent,'Recover administrator access');assert.match(recovery.$('bsPlanEffect').textContent,/existing vault.*preserved/);recovery.$('bsReview').click();await wait(()=>!recovery.$('bsPlan').hidden);recovery.$('bsApply').click();await wait(()=>!recovery.$('bsLogin').hidden);assert.equal(recovery.$('bsDoneTitle').textContent,'Administrator access recovered');assert.equal(recovery.$('setupNav').hidden,true);assert.match(recovery.$('bsResult').textContent,/existing vault/);assert.equal(recovery.errors.length,0);recovery.dom.window.close();
  const late=await fixture({delayCreate:true});late.$('bsPrepare').click();await wait(()=>late.calls.some(r=>r.action==='bootstrapPrepare'));late.dom.window.dispatchEvent(new late.dom.window.Event('pagehide'));late.resolve();await tick();await tick();assert.equal(late.calls.some(r=>r.action==='bootstrapSubmit'),false,'Navigated page submitted a late passkey.');late.dom.window.close();
  console.log('PASS code-free rendered setup, actual WebCrypto/PHP interoperability, serial signed transport, approved defaults, atomic completion/login and late-candidate cleanup');
 })().catch(e=>{process.stderr.write(e.stack+'\n');process.exit(1);});
