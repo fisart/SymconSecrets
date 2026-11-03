@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/NativeStore.php';
 require_once __DIR__ . '/Tree.php';
 require_once __DIR__ . '/SharedGlobal.php';
+require_once __DIR__ . '/NativeHealth.php';
 require_once __DIR__ . '/BackupOriginPolicy.php';
 require_once __DIR__ . '/NativeTransfer.php';
 require_once __DIR__ . '/NativeLegacyHTTPS.php';
@@ -141,7 +142,7 @@ final class SecretsBackendNativePeer
         self::exact($m,['format','kind','sender','receiver','pairingId','epoch','id','sequence','payload','signature']);
         foreach(['sender','receiver','pairingId','id']as$key){if(!is_string($m[$key]))throw new RuntimeException('Invalid peer identity.');self::uuid($m[$key]);}
         self::decimal($m['epoch']);self::decimal($m['sequence']);
-        if($m['format']!=='SECB.Peer.1'||$m['receiver']!==$this->descriptor()['vaultId']||!in_array($m['kind'],['ROUTES','GLOBAL_ENABLE','PAIR_REQUEST','PAIR_ACCEPT','SYNC','STATUS','RESYNC','REVOKE','OWNER_OFFER','TREE_SYNC'],true))throw new RuntimeException('Wrong native peer purpose or recipient.');
+        if($m['format']!=='SECB.Peer.1'||$m['receiver']!==$this->descriptor()['vaultId']||!in_array($m['kind'],['HEALTH','ROUTES','GLOBAL_ENABLE','PAIR_REQUEST','PAIR_ACCEPT','SYNC','STATUS','RESYNC','REVOKE','OWNER_OFFER','TREE_SYNC'],true))throw new RuntimeException('Wrong native peer purpose or recipient.');
         if($m['kind']==='TREE_SYNC')return $this->receiveOwnedTree($m);
         $current=$this->store->read();$peer=$current['state']['pairing']['peers'][$m['sender']]??null;
         if($m['kind']!=='PAIR_REQUEST'){
@@ -196,6 +197,10 @@ final class SecretsBackendNativePeer
         }
         if($m['kind']==='OWNER_OFFER'&&isset($current['state']['native']['sharedGlobal']))throw new RuntimeException('Shared Global does not accept single-owner offers.');
         if($m['kind']==='OWNER_OFFER')return $this->receiveOwnerOffer($m,$payload,$peer,$current,$digest);
+        if($m['kind']==='HEALTH'){
+            self::exact($payload,['format']);if($payload['format']!==SecretsBackendNativeHealth::FORMAT||!self::shared($peer))throw new RuntimeException('Wrong health protocol or sharing scope.');
+            return $this->reply($m,$peer['descriptor'],$digest,['status'=>'GLOBAL_HEALTH','format'=>SecretsBackendNativeHealth::FORMAT]+SecretsBackendNativeHealth::stamp($current['state']));
+        }
         if($m['kind']==='STATUS'){
             self::exact($payload,['treeId']);if($payload['treeId']!==$peer['descriptor']['treeId'])throw new RuntimeException('Peer cannot query another owner’s cursor.');$received=$current['state']['native']['received'][$payload['treeId']]??null;$nonce=SecretsBackendCodec::b64(random_bytes(32));if(($received['pairingId']??null)!==$m['pairingId'])$received=null;
             $this->store->put(hash('sha256','resync:'.$nonce),'resync',['peer'=>$m['sender'],'treeId'=>$payload['treeId']],time()+120);
@@ -210,6 +215,10 @@ final class SecretsBackendNativePeer
         if($shared){SecretsBackendSharedGlobal::validate($payload['merge']);if(self::digest(SecretsBackendSharedGlobal::view($payload['merge'])['node'])!==self::digest($payload['node']))throw new RuntimeException('Shared Global projection does not match its versions.');}
         if($payload['treeId']!==$peer['descriptor']['treeId']||$payload['owner']!==$m['sender']||$payload['ownershipEpoch']!=='1'||($payload['node']['type']??'')!=='object')throw new RuntimeException('Peer cannot write this tree or scope.');
         self::decimal($payload['revision']);if(!hash_equals(self::digest($shared?['node'=>$payload['node'],'merge'=>$payload['merge']]:$payload['node']),$payload['nodeDigest']))throw new RuntimeException('Peer payload digest mismatch.');
+        if($shared&&isset($current['state']['native']['sharedGlobal'])){
+            $local=SecretsBackendNativeHealth::stamp($current['state']);
+            if(SecretsBackendNativeStore::canonical($local['clock'])===SecretsBackendNativeStore::canonical($payload['merge']['clock'])&&!hash_equals($local['digest'],self::digest($payload['merge'])))throw new RuntimeException('Global history differs for the same version clock.');
+        }
         $normalized=SecretsBackendTree::parseBounded(SecretsBackendCodec::json(SecretsBackendTree::value($payload['node'])),$this->store->metadata()['capacityBytes']);
         if(self::digest($normalized)!==self::digest($payload['node']))throw new RuntimeException('Invalid typed peer tree.');
         $old=$current['state']['native']['received'][$payload['treeId']]??null;
@@ -228,7 +237,7 @@ final class SecretsBackendNativePeer
             $peer=$s['pairing']['peers'][$m['sender']]??null;if(!is_array($peer)||!$peer['active']||$peer['epoch']!==$m['epoch'])throw new RuntimeException('Pairing was revoked before publication.');
             $s['native']['received'][$payload['treeId']]=['owner'=>$m['sender'],'epoch'=>$payload['ownershipEpoch'],'revision'=>$payload['revision'],'sequence'=>$m['sequence'],'nodeDigest'=>$payload['nodeDigest'],'node'=>$payload['node'],
                 'shared'=>$shared,'pairingId'=>$m['pairingId'],'requestId'=>$m['id'],'requestDigest'=>$digest,'receipt'=>$receipt,'at'=>gmdate('c')];$s['pairing']['peers'][$m['sender']]['lastSync']=gmdate('c');
-            if($shared){$before=self::digest($s['native']['sharedGlobal']??[]);$s=SecretsBackendSharedGlobal::receive($s,$payload['merge']);if(self::digest($s['native']['sharedGlobal'])!==$before)$s=self::queueGlobal($s);}
+            if($shared){$before=self::digest($s['native']['sharedGlobal']??[]);$s=SecretsBackendSharedGlobal::receive($s,$payload['merge']);if(self::digest($s['native']['sharedGlobal'])!==$before)$s=self::queueGlobal($s);else $s=SecretsBackendNativeHealth::feedback($s,$m['sender'],$payload['merge']);}
             return $s;
         },['action'=>'peer-receive','actor'=>$m['sender'],'target'=>$payload['treeId']]);
         return $this->reply($m,$peer['descriptor'],$digest,$receipt);

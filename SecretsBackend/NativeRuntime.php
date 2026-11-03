@@ -36,7 +36,7 @@ trait SecretsBackendNativeRuntime
     public function RunNativeJobs(): string
     {
         $lock='SECB.NativeJobs.'.$this->InstanceID;if(!IPS_SemaphoreEnter($lock,1))return '[]';
-        try{if(!$this->ReadPropertyBoolean('Enabled')||!$this->nativeInitialized())return '[]';$this->nativeApplication();$store=$this->nativeStore();$peer=$this->nativePeer($store);$result=$peer->dispatch(1);$effects=new SecretsBackendNativeEffects($store,static fn($effect)=>self::nativeProviderHTTPS($effect));$result[]=$effects->tick();return SecretsBackendCodec::json($result);}
+        try{if(!$this->ReadPropertyBoolean('Enabled')||!$this->nativeInitialized())return '[]';$this->nativeApplication();$store=$this->nativeStore();$peer=$this->nativePeer($store);$result=$peer->dispatch(1);$result[]=(new SecretsBackendNativeHealth($store,$peer))->tick();$effects=new SecretsBackendNativeEffects($store,static fn($effect)=>self::nativeProviderHTTPS($effect));$result[]=$effects->tick();return SecretsBackendCodec::json($result);}
         catch(Throwable $e){$this->debug('request-rejected');return '[{"status":"RECOVERY_REQUIRED"}]';}
         finally{IPS_SemaphoreLeave($lock);}
     }
