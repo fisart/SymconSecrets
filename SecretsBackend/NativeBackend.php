@@ -160,11 +160,12 @@ trait SecretsBackendNativeBackend
         if($FrontendInstanceID!==$this->ReadPropertyInteger('FrontendInstanceID')||IPS_HasChanges($this->InstanceID))throw new RuntimeException('Wrong frontend or pending settings.');
         $this->nativeApplication();
         $cur=$this->nativeStore()->read();$review=SecretsBackendBackupOriginPolicy::upgradeReview($cur['state']);
-        return SecretsBackendCodec::json(['review'=>$review,'digest'=>SecretsBackendNativePeer::digest(['head'=>$cur['head'],'review'=>$review])]);
+        return SecretsBackendCodec::json(['review'=>$review,'consoleApprovalAllowed'=>!in_array(true,$cur['state']['policy']['hardware'],true),'digest'=>SecretsBackendNativePeer::digest(['head'=>$cur['head'],'review'=>$review])]);
     }
     public function ApproveConnectUpgradeFromConsole(int $FrontendInstanceID,string $Digest): bool
     {
         $r=json_decode($this->GetConnectUpgradeReview($FrontendInstanceID),true,32,JSON_THROW_ON_ERROR);
+        if(!$r['consoleApprovalAllowed'])throw new RuntimeException('Hardware policy is enforced. Approve full Magic access at the primary address with an eligible hardware key.');
         if(!hash_equals($r['digest'],$Digest))throw new RuntimeException('The displayed Magic approval changed. Reload the console.');
         $store=$this->nativeStore();$cur=$store->read();$review=$r['review'];
         if(SecretsBackendNativePeer::digest(['head'=>$cur['head'],'review'=>$review])!==$Digest)throw new RuntimeException('Magic approval changed.');

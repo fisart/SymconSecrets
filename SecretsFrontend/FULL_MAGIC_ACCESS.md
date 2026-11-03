@@ -40,7 +40,9 @@ credentials and full permissions and approve with the current administrator's
 passkey. If the primary browser address is unavailable, the independent Symcon
 console offers **Magic URL · approve full access**, displaying the same exact
 credential identities, user handles, public-key fingerprints and permissions.
-Reload and review again if the displayed approval has changed.
+Reload and review again if the displayed approval has changed. If hardware
+enforcement is active, console upgrade is blocked: approve at the primary
+address with an eligible hardware key before relying on Magic for an outage.
 
 This upgrade rotates the origin generation. Existing Magic sessions and pending
 challenges stop working. Sign in again at Magic with an approved existing Magic

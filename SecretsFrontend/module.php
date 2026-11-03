@@ -255,7 +255,8 @@ class SecretsFrontend extends IPSModule
             $form['actions'][]=['type'=>'ExpansionPanel','caption'=>'Magic URL · approve full access','items'=>[
                 ['type'=>'Label','caption'=>'Grant read, write, export and full administration at '.$review['origin'].'. Only the tested credentials listed below are upgraded. Existing Magic sessions expire.'],
                 ['type'=>'Label','caption'=>SecretsFrontendConfiguration::encode($review['credentials'])],
-                ['type'=>'Button','caption'=>'Approve full Magic access','confirm'=>'Approve full administration for exactly these tested Magic credentials?','onClick'=>'SECF_ApproveMagicFullAccess($id, '.var_export($magic['digest'],true).');']
+                ['type'=>'Label','caption'=>'Hardware policy is enforced. Approve this upgrade at the primary address with an eligible hardware key.','visible'=>!$magic['consoleApprovalAllowed']],
+                ['type'=>'Button','caption'=>'Approve full Magic access','enabled'=>$magic['consoleApprovalAllowed'],'confirm'=>'Approve full administration for exactly these tested Magic credentials?','onClick'=>'SECF_ApproveMagicFullAccess($id, '.var_export($magic['digest'],true).');']
             ]];
         }catch(Throwable $ignored){}
         $route=$this->bootstrapNative()['backupOrigin']??null;
