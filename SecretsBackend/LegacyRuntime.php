@@ -15,19 +15,20 @@ trait SecretsBackendLegacyRuntime
             if(($info['InstanceStatus']??0)!==102||strtoupper($info['ModuleInfo']['ModuleID']??'')!==SecretsBackendLegacyImport::MODULE
                 ||IPS_GetProperty($source,'NativeBackendInstanceID')!==$this->InstanceID
                 ||IPS_GetProperty($source,'OperationMode')!==$permission['mode'])throw new RuntimeException('Legacy instance/backend/role binding differs from its approval.');
-        });
+        },$this->InstanceID);
     }
     /** Permission/readiness metadata only: no key names, values, paths or exception text. */
     public function GetLegacyAPIStatus(): string
     {
-        $out=['backend'=>$this->InstanceID,'readAllowed'=>false,'grantPresent'=>false,'grantEnabled'=>false,'readApproved'=>false,'writesFrozen'=>null,'code'=>'BACKEND_UNAVAILABLE'];
+        $out=['backend'=>$this->InstanceID,'readAllowed'=>false,'grantPresent'=>false,'defaultReadAccess'=>false,'grantEnabled'=>false,'readApproved'=>false,'writesFrozen'=>null,'code'=>'BACKEND_UNAVAILABLE'];
         try{
             if(!$this->ReadPropertyBoolean('Enabled'))$out['code']='BACKEND_DISABLED';
             elseif(IPS_HasChanges($this->InstanceID))$out['code']='PENDING_SETTINGS';
             else{
                 $service=$this->legacyService($this->InstanceID);$state=$this->nativeStore()->read()['state'];
-                $p=$state['native']['legacyAccess'][(string)$this->InstanceID]??null;
-                if(is_array($p))$out=array_replace($out,['grantPresent'=>true,'grantEnabled'=>($p['enabled']??false)===true,'readApproved'=>($p['read']??false)===true,'writesFrozen'=>($p['frozen']??true)===true]);
+                $p=SecretsBackendLegacyAPI::access($state,$this->InstanceID,$this->InstanceID);
+                $out['grantPresent']=array_key_exists((string)$this->InstanceID,$state['native']['legacyAccess']??[]);$out['defaultReadAccess']=($p['defaultReadAccess']??false)===true;
+                if(is_array($p))$out=array_replace($out,['grantEnabled'=>($p['enabled']??false)===true,'readApproved'=>($p['read']??false)===true,'writesFrozen'=>($p['frozen']??true)===true]);
                 if(!is_array($p))$out['code']='READ_GRANT_MISSING';
                 elseif(!$out['grantEnabled'])$out['code']='READ_GRANT_DISABLED';
                 elseif(($p['treeId']??'')!==$state['native']['globalTreeId'])$out['code']='GLOBAL_IDENTITY_CHANGED';
@@ -36,7 +37,7 @@ trait SecretsBackendLegacyRuntime
             }
         }catch(Throwable $error){$out['code']='BACKEND_UNAVAILABLE';}
         $out['meaning']=match($out['code']){
-            'READ_ALLOWED'=>'Application read access is approved. An empty successful GetKeys result means no available top-level Global application records; it does not list Local records or count nested values.',
+            'READ_ALLOWED'=>$out['defaultReadAccess']?'Local application reads are enabled by default on this backend. No separate read grant is needed; writes remain frozen.':'Application read access uses the existing explicit grant. An empty successful GetKeys result means no available top-level Global application records; it does not list Local records or count nested values.',
             'READ_GRANT_MISSING'=>'No application read grant is approved for this backend instance. Browser administrator sign-in does not authorize a local PHP script.',
             'READ_GRANT_DISABLED'=>'The application access grant for this backend is disabled.',
             'READ_NOT_APPROVED'=>'The backend access grant does not include reading application secrets.',
@@ -45,7 +46,7 @@ trait SecretsBackendLegacyRuntime
             'PENDING_SETTINGS'=>'Backend settings have unapplied changes.',
             default=>'The native backend could not validate its current storage, runtime or pinned security configuration. No automatic recovery or permission change was attempted.'};
         $out['nextStep']=in_array($out['code'],['READ_GRANT_MISSING','READ_GRANT_DISABLED','READ_NOT_APPROVED','GLOBAL_IDENTITY_CHANGED'],true)
-            ?'In Automation access -> Existing SEC applications, approve this backend ID with Read application secrets. For a read-only script leave write, bulk and protected-page rights off and keep writes frozen.'
+            ?'In Automation access -> Existing SEC applications, select This backend and review its explicit access override. The backend ID is detected automatically. Leave writes frozen for read-only scripts.'
             :($out['code']==='READ_ALLOWED'?'Run the read again. If it warns, the operation failed after this status check; do not treat its fallback [] as an empty vault.':'Check the backend status and applied settings.');
         return SecretsBackendCodec::json($out);
     }

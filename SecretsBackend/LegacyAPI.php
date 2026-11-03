@@ -8,7 +8,7 @@ final class SecretsBackendLegacyAPI
 {
     public const REVIEW_FIELDS=['kind','instance','mode','enabled','read','write','portal','frozen','bulk'];
     public const DATA_METHODS=['GetKeys','GetSecret','GetExplorerFields','SetRecordFields','ExportLocalSecrets','ImportLocalSecrets','EncryptAndSave'];
-    public function __construct(private SecretsBackendNativeStore $store,private int $instance,private $binding) {}
+    public function __construct(private SecretsBackendNativeStore $store,private int $instance,private $binding,private int $backend=0) {}
     private string $output='';
     public function output(): string {return $this->output;}
     public static function review(array $op): array
@@ -18,9 +18,17 @@ final class SecretsBackendLegacyAPI
         foreach(['enabled','read','write','portal','frozen','bulk']as$key)if(!is_bool($op[$key]))throw new InvalidArgumentException('Choose explicit legacy access permissions.');
         return $op;
     }
+    /** Trusted local PHP reads work by default only on this native backend itself. */
+    public static function access(array $state,int $instance,int $backend): ?array
+    {
+        $grants=$state['native']['legacyAccess']??[];
+        if(array_key_exists((string)$instance,$grants))return is_array($grants[(string)$instance])?$grants[(string)$instance]:null;
+        if($backend<=0||$instance!==$backend)return null;
+        return ['kind'=>'nativeLegacyAccess','instance'=>$backend,'mode'=>2,'enabled'=>true,'read'=>true,'write'=>false,'portal'=>false,'frozen'=>true,'bulk'=>false,'treeId'=>$state['native']['globalTreeId'],'defaultReadAccess'=>true];
+    }
     public function permission(array $state,string $right,bool $write=false): array
     {
-        $p=$state['native']['legacyAccess'][(string)$this->instance]??null;
+        $p=self::access($state,$this->instance,$this->backend);
         if(!is_array($p)||($p['treeId']??'')!==$state['native']['globalTreeId']||!$p['enabled']||!($p[$right]??false)||($write&&$p['frozen']))throw new RuntimeException('Legacy application access is disabled, unapproved or frozen.');
         ($this->binding)($p);return $p;
     }

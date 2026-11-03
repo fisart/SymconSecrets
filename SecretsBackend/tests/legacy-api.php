@@ -40,14 +40,20 @@ try{
     $oldCipher=$legacy->values['Vault'];$oldKey=file_get_contents($root.'/old/master.key');
     $ok(SEC_GetSecret(49800,'Hikvision')==='','Unapproved SEC reader exposed a value.');
     $directStatus=json_decode($back->GetLegacyAPIStatus(),true);
-    $ok($directStatus['code']==='READ_GRANT_MISSING'&&!$directStatus['readAllowed'],'Missing direct read grant was not diagnosed.');
-    $warningCount=count($readWarnings);$ok($back->GetKeys()==='[]'&&count($readWarnings)===$warningCount+1,'Refused GetKeys silently looked like an empty vault.');
-    $envelope=json_decode($back->CallLegacyAPI(5101,'GetKeys','[]'),true);$ok(($envelope['error']['code']??'')==='LEGACY_API_REFUSED','Direct dispatcher hid the access refusal.');
+    $ok($directStatus['code']==='READ_ALLOWED'&&$directStatus['readAllowed']&&$directStatus['defaultReadAccess']&&!$directStatus['grantPresent']&&$directStatus['writesFrozen'],'Direct local reads did not work with frozen defaults.');
+    $warningCount=count($readWarnings);$ok($back->GetKeys()!=='[]'&&count($readWarnings)===$warningCount,'Default GetKeys required a separate grant.');
+    $ok(str_contains($back->GetSecret('Hikvision'),'CANARY-LEGACY'),'Default direct record read failed.');
+    $ok(!$back->SetRecordFields('Default blocked',['key'=>'value'],'local'),'Default local reads enabled writes.');
+    $ok(!$back->SetRecordFields('Default blocked',['key'=>'value'],'global')&&!$back->ImportLocalSecrets('{"__LOCAL__":{}}'),'Default reads enabled Global writes or Local replacement.');
+    $ok(str_contains($back->GetSecret('__LOCAL__'),'PRIVATE-CANARY')&&str_contains($back->ExportLocalSecrets(),'PRIVATE-CANARY'),'Default Local application reads failed.');
+    $ok(!$back->IsPortalAuthenticated(),'Default local reads granted browser access.');
+    $envelope=json_decode($back->CallLegacyAPI(5101,'GetKeys','[]'),true);$ok($envelope['error']===null&&$envelope['value']!=='[]','Default dispatcher read was refused.');
+    $ok(!isset($store->read()['state']['native']['legacyAccess']['5101']),'Default read created a persistent grant or approval mutation.');
     $directGrant=['kind'=>'nativeLegacyAccess','instance'=>5101,'mode'=>2,'enabled'=>true,'read'=>true,'write'=>false,'portal'=>false,'frozen'=>true,'bulk'=>false];$approve($directGrant);
     $directStatus=json_decode($back->GetLegacyAPIStatus(),true);$ok($directStatus['code']==='READ_ALLOWED'&&$directStatus['readAllowed']&&$directStatus['writesFrozen'],'Read-only direct backend grant was not diagnosed.');
     $warningCount=count($readWarnings);$ok($back->GetKeys()!=='[]'&&count($readWarnings)===$warningCount,'Approved direct read failed or emitted a refusal warning.');
     $ok(!str_contains($back->GetLegacyAPIStatus(),'CANARY')&&!str_contains($back->GetLegacyAPIStatus(),'Hikvision'),'Diagnostic metadata leaked a value or record name.');
-    foreach([['enabled',false,'READ_GRANT_DISABLED'],['read',false,'READ_NOT_APPROVED']]as[$field,$value,$code]){$candidate=$directGrant;$candidate[$field]=$value;$approve($candidate);$ok(json_decode($back->GetLegacyAPIStatus(),true)['code']===$code,'Wrong disabled/read-right diagnostic.');}
+    foreach([['enabled',false,'READ_GRANT_DISABLED'],['read',false,'READ_NOT_APPROVED']]as[$field,$value,$code]){$candidate=$directGrant;$candidate[$field]=$value;$approve($candidate);$ok(json_decode($back->GetLegacyAPIStatus(),true)['code']===$code,'Wrong disabled/read-right diagnostic.');$warningCount=count($readWarnings);$ok($back->GetKeys()==='[]'&&count($readWarnings)===$warningCount+1,'Defaults bypassed explicit revocation or suppressed its warning.');$envelope=json_decode($back->CallLegacyAPI(5101,'GetKeys','[]'),true);$ok(($envelope['error']['code']??'')==='LEGACY_API_REFUSED','Dispatcher hid an explicit refusal.');}
     $approve($directGrant);
     $savedGlobal=$store->read()['state']['vault']['global'];$current=$store->read();
     $store->change($current['head'],SecretsBackendCodec::uuid(),hash('sha256','empty-read-fixture'),static function(array $s):array{$s['vault']['global']=SecretsBackendTree::parse('{}');return $s;});
@@ -119,7 +125,11 @@ try{
     $compat->ClearVault();$ok($compat->GetSecret('Bulk')===$before,'ClearVault cleared application data instead of only editor state.');
     $native=new ReflectionClass(SecretsBackend::class);$adapter=new ReflectionClass(LegacyReplacementAdapter::class);$old=new ReflectionClass(SecretsManager::class);
     foreach($old->getMethods(ReflectionMethod::IS_PUBLIC)as$m){if($m->getDeclaringClass()->getName()!==SecretsManager::class)continue;foreach([$native,$adapter]as$target){$ok($target->hasMethod($m->name),'Missing API '.$m->name);if(in_array($m->name,['Create','ApplyChanges','RequestAction','GetConfigurationForm'],true))continue;$n=$target->getMethod($m->name);$ok((string)$m->getReturnType()===(string)$n->getReturnType()&&count($m->getParameters())===count($n->getParameters()),'Signature mismatch '.$m->name);foreach($m->getParameters()as$i=>$p)$ok((string)$p->getType()===(string)$n->getParameters()[$i]->getType()&&$p->getName()===$n->getParameters()[$i]->getName(),'Parameter mismatch '.$m->name);}}
+    $directGrant['enabled']=false;$approve($directGrant);
     $back->ApplyChanges();$back->Recover();$ok(!$back->CheckLegacyPortalSession(49800,json_encode($server)),'Restart retained browser session.');
+    $ok(json_decode($back->GetLegacyAPIStatus(),true)['code']==='READ_GRANT_DISABLED'&&$back->GetKeys()==='[]','Restart/upgrade restored explicitly revoked read access.');
+    $currentStore=(new ReflectionMethod(SecretsBackend::class,'nativeStore'))->invoke($back);$cur=$currentStore->read();$currentStore->change($cur['head'],SecretsBackendCodec::uuid(),hash('sha256','fixture-no-override'),static function(array $s):array{unset($s['native']['legacyAccess']['5101']);return $s;});
+    $back->ApplyChanges();$back->Recover();$ok(json_decode($back->GetLegacyAPIStatus(),true)['defaultReadAccess']&&$back->GetKeys()!=='[]','Default local reads required a grant after restart.');
     $back->properties['Enabled']=false;$ok(SEC_GetSecret(49800,'Hikvision')==='','Disabled backend exposed a secret.');$ok(json_decode($back->GetLegacyAPIStatus(),true)['code']==='BACKEND_DISABLED','Disabled backend status was obscured.');
     echo 'PASS '.$checks." legacy API signature, real old/new differential, unchanged SEC dispatch, freeze, roles, local isolation, approved binding, revocation, browser session, expiry and restart checks\n";
 }finally{
