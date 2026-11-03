@@ -8,13 +8,9 @@ trait SecretsBackendLegacyRuntime
     private function legacyService(int $source): SecretsBackendLegacyAPI
     {
         $this->nativeApplication();
+        if($source!==$this->InstanceID)throw new RuntimeException('Old manager contexts are disabled on this native-only branch.');
         return new SecretsBackendLegacyAPI($this->nativeStore(),$source,function(array $permission)use($source):void{
-            if(!IPS_InstanceExists($source)||IPS_HasChanges($source))throw new RuntimeException('Legacy source is unavailable or has unapplied settings.');
-            if($source===$this->InstanceID)return;
-            $info=IPS_GetInstance($source);
-            if(($info['InstanceStatus']??0)!==102||strtoupper($info['ModuleInfo']['ModuleID']??'')!==SecretsBackendLegacyImport::MODULE
-                ||IPS_GetProperty($source,'NativeBackendInstanceID')!==$this->InstanceID
-                ||IPS_GetProperty($source,'OperationMode')!==$permission['mode'])throw new RuntimeException('Legacy instance/backend/role binding differs from its approval.');
+            if(!IPS_InstanceExists($source)||IPS_HasChanges($source))throw new RuntimeException('The native backend is unavailable or has unapplied settings.');
         },$this->InstanceID);
     }
     /** Permission/readiness metadata only: no key names, values, paths or exception text. */
@@ -99,7 +95,6 @@ trait SecretsBackendLegacyRuntime
             if(strlen($ServerJSON)>16384)return false;$server=json_decode($ServerJSON,true,8,JSON_THROW_ON_ERROR);
             $service=$this->legacyService($SourceInstanceID);$service->permission($this->nativeStore()->read()['state'],'portal');
             $origin=$this->legacyOrigin($server);
-            if($SourceInstanceID!==$this->InstanceID&&IPS_GetProperty($SourceInstanceID,'PortalEnabled')!==true)return false;
             return $this->nativeApplication($origin)->portalAuthenticated(['cookie'=>(string)($server['HTTP_COOKIE']??''),'origin'=>$origin]);
         }catch(Throwable $error){return false;}
     }
@@ -110,8 +105,19 @@ trait SecretsBackendLegacyRuntime
         if(!preg_match('~^/hook/[A-Za-z0-9_-]+$~D',$ReturnPath))throw new InvalidArgumentException('Return to one local hook path without query parameters.');
         $service=$this->legacyService($SourceInstanceID);$service->permission($this->nativeStore()->read()['state'],'portal');
         $origin=$this->legacyOrigin($server);
-        if($SourceInstanceID!==$this->InstanceID&&IPS_GetProperty($SourceInstanceID,'PortalEnabled')!==true)throw new RuntimeException('Protected-page access is disabled on this instance.');
         return $origin.'/hook/secrets_frontend_'.$this->ReadPropertyInteger('FrontendInstanceID').'#legacy-return='.rawurlencode($ReturnPath);
+    }
+    /** Native browser-session integration; no old manager or old credential store is involved. */
+    public function IsNativePortalAuthenticated(): bool
+    {
+        try{$this->nativeApplication();$server=json_decode(self::legacyServerJSON(),true,8,JSON_THROW_ON_ERROR);$origin=$this->legacyOrigin($server);return $this->nativeApplication($origin)->portalAuthenticated(['cookie'=>(string)($server['HTTP_COOKIE']??''),'origin'=>$origin]);}catch(Throwable $error){return false;}
+    }
+    public function GetNativePortalLoginURL(string $ReturnPath,string $ServerJSON): string
+    {
+        $this->nativeApplication();if(strlen($ServerJSON)>16384)throw new InvalidArgumentException('Browser context too large.');
+        if($ReturnPath!==''&&(!preg_match('~^/hook/[A-Za-z0-9_-]+$~D',$ReturnPath)||preg_match('~^/hook/secrets(?:_frontend|_peer)?_~',$ReturnPath)))throw new InvalidArgumentException('Choose a plain local application hook.');
+        $server=json_decode($ServerJSON,true,8,JSON_THROW_ON_ERROR);$origin=$this->legacyOrigin($server);
+        return $origin.'/hook/secrets_frontend_'.$this->ReadPropertyInteger('FrontendInstanceID').($ReturnPath===''?'':'#legacy-return='.rawurlencode($ReturnPath));
     }
     public function IsPortalAuthenticated(): bool { return $this->CheckLegacyPortalSession($this->InstanceID,self::legacyServerJSON()); }
     public static function legacyServerJSON(): string

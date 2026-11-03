@@ -7,6 +7,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: PHP syntax and portal resolver regression
         run: |
           php -l libs/SystemPortalNavigation.php
@@ -14,7 +16,4 @@ jobs:
       - name: Existing vault and authentication regression
         run: |
           php -l SecretsManager/module.php
-          php tests/PortalSecurityTest.php
-          php tests/WebAuthnAssertionTest.php
-          php tests/ModuleSecurityRegressionTest.php
-          php tests/ModuleStateTest.php
+          python migration/tests/reference-regression.py

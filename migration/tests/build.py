@@ -8,12 +8,14 @@ import tempfile
 
 source = Path(__file__).resolve().parents[2]
 builder = source/'migration/build-replacement.py'
+from replacement_support import original_source, verify_replacement
+verify_replacement(source)
 with tempfile.TemporaryDirectory(prefix='secrets-replacement-test-') as directory:
     root = Path(directory)
     for relative in ['SecretsManager/module.json','SecretsManager/module.php','migration/templates/SecretsManager.php.txt']:
         path = root/relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes((source/relative).read_bytes())
+        path.write_bytes(original_source(source) if relative == 'SecretsManager/module.php' else (source/relative).read_bytes())
     def git(*args):
         return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
     git('init','-q')

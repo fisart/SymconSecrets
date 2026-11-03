@@ -105,8 +105,9 @@ final class SecretsBackendLegacyAPI
         $parts=array_map('trim',explode('/',$path));if(in_array('',$parts,true))return false;
         $normalized=[];foreach($fields as$k=>$v){$k=trim((string)$k);if($k===''||str_starts_with($k,'__')||is_array($v)||is_object($v))return false;$normalized[$k]=(string)$v;}
         SecretsBackendTree::path($parts);
-        return $this->write(__FUNCTION__,[$path,$normalized,$scope],static function(array $s,array $permission)use($parts,$normalized,$scope):array{
-            if($scope==='global'&&($permission['mode']!==1||!$s['native']['globalWritable']))throw new RuntimeException('Global writes require legacy Master mode and a writable Global vault.');
+        $native=$this->instance===$this->backend;
+        return $this->write(__FUNCTION__,[$path,$normalized,$scope],static function(array $s,array $permission)use($parts,$normalized,$scope,$native):array{
+            if($scope==='global'&&((!$native&&$permission['mode']!==1)||!$s['native']['globalWritable']))throw new RuntimeException('Global writes require legacy Master mode and a writable Global vault.');
             if($scope==='global'&&isset($s['native']['sharedGlobal']))SecretsBackendSharedGlobal::assertPath($s,$parts,false);
             self::setFields($s['vault'][$scope],$parts,$normalized);return $s;
         });
@@ -114,7 +115,7 @@ final class SecretsBackendLegacyAPI
     public function EncryptAndSave(string $jsonInput): void
     {
         $p=$this->permission($this->store->read()['state'],'write',true);
-        if($p['mode']===0){$this->output='Operation not allowed in Slave mode.';return;}
+        if($this->instance!==$this->backend&&$p['mode']===0){$this->output='Operation not allowed in Slave mode.';return;}
         if(!$p['bulk'])throw new RuntimeException('Whole-vault application replacement requires explicit bulk-write approval.');
         if(trim($jsonInput)===''){$this->output='Input empty.';return;}
         if(strlen($jsonInput)>SecretsBackendNativePlatform::budget())throw new RuntimeException('Legacy input exceeds the native budget.');
@@ -125,8 +126,9 @@ final class SecretsBackendLegacyAPI
         $local=self::cleanFolders($decoded['__LOCAL__']??[]);unset($decoded['__LOCAL__']);$global=self::cleanFolders($decoded);
         $global=SecretsBackendTree::parseBounded(json_encode($global?:new stdClass(),JSON_THROW_ON_ERROR),SecretsBackendNativePlatform::budget());
         $local=SecretsBackendTree::parseBounded(json_encode($local?:new stdClass(),JSON_THROW_ON_ERROR),SecretsBackendNativePlatform::budget());
-        $this->write(__FUNCTION__,[$jsonInput],static function(array $s,array $p)use($global,$local):array{
-            if(!$p['bulk']||$p['mode']===0||!$s['native']['globalWritable'])throw new RuntimeException('Whole-vault write is unapproved or Global is frozen.');
+        $native=$this->instance===$this->backend;
+        $this->write(__FUNCTION__,[$jsonInput],static function(array $s,array $p)use($global,$local,$native):array{
+            if(!$p['bulk']||(!$native&&$p['mode']===0)||!$s['native']['globalWritable'])throw new RuntimeException('Whole-vault write is unapproved or Global is frozen.');
             if(isset($s['native']['sharedGlobal']))SecretsBackendSharedGlobal::assertPath($s,[],false);
             $s['vault']['global']=$global;$s['vault']['local']=$local;return $s;
         });$this->output='✅ Saved & Encrypted locally.';

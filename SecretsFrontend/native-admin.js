@@ -67,7 +67,7 @@ function renderLegacyAccess(){
  const list=$('compatAccessList');list.replaceChildren();for(const grant of n.legacyAccess??[])nativeRow(list,'Instance '+grant.instance+' · '+(grant.enabled?'allowed':'disabled'),(grant.read?'read ':'')+(grant.write?'write ':'')+(grant.frozen?'· writes frozen':''),[['Change / revoke',()=>{$('compatTarget').value=String(grant.instance);compatViewKey='';renderLegacyAccess();}]]);
 }
 function renderNative(){overviewStale=false;renderNativeOverview();scheduleGlobalRefresh();const n=snapshot?.native;for(const id of ['nativePeersNav','nativeRecoveryNav','nativeMachinesNav','nativeKeysNav','nativeProvidersNav'])$(id).hidden=!n;if(!n)return;
- renderConnect();renderLegacyImports();
+ renderConnect();if(n.nativeOnlyReplacement){$('nativeImportNav').hidden=true;$('legacyHistory').textContent='Old manager import is disabled in this native-only branch.';}else renderLegacyImports();
  $('nativePeerURL').value=n.peerEndpoint;$('nativeStorageInfo').textContent='Vault '+n.info.vaultId+' · '+Math.ceil(n.info.usedBytes/1024)+' / '+Math.floor(n.info.capacityBytes/1024)+' KiB · '+(n.info.directorySync?'file and directory synchronization':'file synchronization; platform qualification required')+' · standalone full-state rollback detection unavailable.'+(n.storage?' Vault folder: '+n.storage.vaultDirectory+'. Key folder: '+n.storage.keyDirectory+'.':'');
  const scopes=[['global','Global'],['local','Local']];nativeSelect('scope',scopes);nativeSelect('nativeMachineScope',scopes);nativeSelectionChanged();renderTree();renderGlobalConflicts();
  renderPeerConnections();renderPeerWizard();if(typeof pairCoordinatorRender==='function')pairCoordinatorRender();

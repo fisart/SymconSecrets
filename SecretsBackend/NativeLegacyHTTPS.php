@@ -24,27 +24,7 @@ final class SecretsBackendNativeLegacyHTTPS
     public static function proposal(string $endpoint,array $peers=[]): array
     {
         $origin=self::origin($endpoint);$matches=[];
-        if(function_exists('IPS_GetInstanceListByModuleID')&&function_exists('IPS_GetConfiguration'))foreach(IPS_GetInstanceListByModuleID(self::MODULE)as$id){
-            if(IPS_HasChanges($id)||(IPS_GetInstance($id)['InstanceStatus']??0)!==102)continue;
-            $json=IPS_GetConfiguration($id);if(!is_string($json)||strlen($json)>65536)continue;
-            try{$config=json_decode($json,true,16,JSON_THROW_ON_ERROR);}catch(Throwable $ignored){continue;}
-            if(!is_array($config)||(int)($config['OperationMode']??-1)!==1)continue;
-            try{$rows=json_decode($config['SlaveURLs']??'[]',true,16,JSON_THROW_ON_ERROR);}catch(Throwable $ignored){continue;}
-            if(!is_array($rows)||!array_is_list($rows)||count($rows)>64)continue;
-            foreach($rows as$row){
-                if(!is_array($row)||($row['KeyTransport']??'manual')!=='sync'||!is_string($row['Url']??null))continue;
-                try{if(self::origin(trim($row['Url']))!==$origin)continue;}catch(Throwable $ignored){continue;}
-                $mode=$row['TlsMode']??'strict';if(!in_array($mode,['strict','pinned'],true))continue;
-                $policy=['mode'=>$mode];
-                if($mode==='pinned'){
-                    $fp=$row['Fingerprint']??'';if(!is_string($fp))throw new RuntimeException('The old manager has an invalid certificate fingerprint for this platform.');
-                    $policy['fingerprint']=strtolower(preg_replace('/[:\s]/','',$fp));
-                }
-                $policy=self::policy($policy);$matches[json_encode($policy)]=$policy;
-            }
-        }
-        if(count($matches)>1)throw new RuntimeException('The old managers have conflicting HTTPS settings for this platform. Make those settings consistent before pairing.');
-        if($matches)return ['policy'=>array_values($matches)[0],'source'=>'old manager'];
+        // Use native saved peer policy or strict PKI; never inspect old manager settings.
         $retained=[];foreach($peers as$peer){
             if(!isset($peer['httpsPolicy'],$peer['descriptor']['endpoint']))continue;
             if(self::origin($peer['descriptor']['endpoint'])!==$origin)continue;
