@@ -46,6 +46,26 @@ async function refreshNativeOverview(ticket=generation){
  finally{overviewBusy=false;}
 }
 run($('overviewRefresh'),ticket=>refreshNativeOverview(ticket));
+let compatViewKey='';
+function legacyAccessTargets(){
+ const n=snapshot?.native,backend=Number(n?.peerDescriptor?.backend);if(!Number.isSafeInteger(backend)||backend<=0)return [];
+ const mode=(n.legacyAccess??[]).find(p=>p.instance===backend)?.mode??2;
+ const out=new Map([[backend,{instance:backend,mode,name:'This backend (local scripts)'}]]);
+ for(const target of n.legacyTargets??[])if(Number.isSafeInteger(target.instance)&&target.instance>0&&[0,1,2].includes(target.mode))out.set(target.instance,target);
+ for(const p of n.legacyAccess??[])if(!out.has(p.instance))out.set(p.instance,{instance:p.instance,mode:p.mode,name:'Existing approved manager '+p.instance});
+ return [...out.values()];
+}
+function renderLegacyAccess(){
+ const n=snapshot?.native;if(!n)return;const backend=Number(n.peerDescriptor?.backend),targets=legacyAccessTargets();
+ nativeSelect('compatTarget',targets.map(t=>[String(t.instance),t.name]));
+ const target=targets.find(t=>t.instance===Number($('compatTarget').value));$('compatApprove').disabled=!target;
+ if(!target){$('compatTargetInfo').textContent='The backend could not be identified. Refresh the signed-in page.';return;}
+ const explicit=(n.legacyAccess??[]).find(p=>p.instance===target.instance);
+ const p=explicit||(target.instance===backend?(n.legacyDirectAccess??{enabled:true,read:true,write:false,bulk:false,portal:false,frozen:true}):{enabled:false,read:true,write:false,bulk:false,portal:false,frozen:true});
+ const key=JSON.stringify([target,p]);if(compatViewKey!==key){for(const k of ['enabled','read','write','portal','frozen','bulk'])$('compat'+k[0].toUpperCase()+k.slice(1)).checked=p[k]===true;compatViewKey=key;}
+ $('compatTargetInfo').textContent='Detected instance '+target.instance+' · '+(target.instance===backend?'local script access':({0:'receiver',1:'sender',2:'standalone'}[target.mode]||'existing role'))+' · '+(explicit?'existing explicit settings':target.instance===backend?'reads enabled by default; writes frozen':'not yet approved');
+ const list=$('compatAccessList');list.replaceChildren();for(const grant of n.legacyAccess??[])nativeRow(list,'Instance '+grant.instance+' · '+(grant.enabled?'allowed':'disabled'),(grant.read?'read ':'')+(grant.write?'write ':'')+(grant.frozen?'· writes frozen':''),[['Change / revoke',()=>{$('compatTarget').value=String(grant.instance);compatViewKey='';renderLegacyAccess();}]]);
+}
 function renderNative(){overviewStale=false;renderNativeOverview();scheduleGlobalRefresh();const n=snapshot?.native;for(const id of ['nativePeersNav','nativeRecoveryNav','nativeMachinesNav','nativeKeysNav','nativeProvidersNav'])$(id).hidden=!n;if(!n)return;
  renderConnect();renderLegacyImports();
  $('nativePeerURL').value=n.peerEndpoint;$('nativeStorageInfo').textContent='Vault '+n.info.vaultId+' · '+Math.ceil(n.info.usedBytes/1024)+' / '+Math.floor(n.info.capacityBytes/1024)+' KiB · '+(n.info.directorySync?'file and directory synchronization':'file synchronization; platform qualification required')+' · standalone full-state rollback detection unavailable.'+(n.storage?' Vault folder: '+n.storage.vaultDirectory+'. Key folder: '+n.storage.keyDirectory+'.':'');
@@ -53,7 +73,7 @@ function renderNative(){overviewStale=false;renderNativeOverview();scheduleGloba
  renderPeerConnections();renderPeerWizard();if(typeof pairCoordinatorRender==='function')pairCoordinatorRender();
  nativeSelect('nativeTransferPeer',n.peers.filter(p=>p.active).map(p=>[p.id,p.name+' · '+p.id.slice(0,8)]));nativeSelect('nativeTransferTree',[...(n.globalWritable&&!n.sharedGlobal?[[n.globalTreeId,'This vault’s global tree']]:[]),...n.ownedTrees.filter(t=>!t.frozen).map(t=>[t.id,'Owned tree '+t.id.slice(0,8)])]);$('nativeFork').hidden=n.globalWritable;
  const transfers=$('nativeTransferList');transfers.replaceChildren();for(const [id,t]of Object.entries(n.transfers)){const actions=t.direction==='incoming'&&t.state==='PENDING_APPROVAL'?[['Review and accept ownership',()=>review({kind:'nativeTransferAccept',transferId:id},'Accept this exact frozen tree and its listed subscribers. Other local/global trees remain independent.')]]:[];nativeRow(transfers,t.direction+' · '+t.state,'Tree '+t.certificate.treeId+' · new owner '+t.certificate.newOwner.vaultId+' · epoch '+t.certificate.newEpoch,actions);}
- const legacyList=$('compatAccessList');legacyList.replaceChildren();for(const p of n.legacyAccess??[])nativeRow(legacyList,'Instance '+p.instance+' · '+(p.enabled?'enabled':'disabled'),'Role '+p.mode+' · '+(p.read?'read ':'')+(p.write?'write ':'')+(p.portal?'protected pages ':'')+(p.bulk?'replace all application data ':'')+(p.frozen?'· writes frozen':''),[['Change / revoke',()=>{for(const k of ['enabled','read','write','portal','frozen','bulk'])$('compat'+k[0].toUpperCase()+k.slice(1)).checked=p[k];$('compatInstance').value=p.instance;$('compatMode').value=p.mode;}] ]);
+ renderLegacyAccess();
  const machines=$('nativeMachineList');machines.replaceChildren();for(const m of n.machines)nativeRow(machines,m.name+' · '+(m.active?'active':'revoked'),m.scope+' '+JSON.stringify(m.path)+' · '+(m.write?'read/write':'read-only'),m.active?[['Revoke capability',()=>review({kind:'nativeMachineRevoke',id:m.id},'Revoke this exact integration token.')]]:[]);
  $('nativeMachineExample').textContent='SECB_ReadNativeSecret('+n.peerDescriptor.backend+', "YOUR_CAPABILITY_TOKEN", "local", \'["ASK"]\');';
  $('nativeNewAdminLabel').value='Administrator '+(snapshot.credentials.length+1);$('nativeHardwareInfo').textContent='Trust generation '+n.hardwareProfile.version+' · '+Object.keys(n.hardwareProfile.fingerprints).length+' reviewed root certificate(s).';if(!$('nativeHardwareAAGUIDs').value){const candidates=[...new Set(snapshot.credentials.map(c=>c.aaguid).filter(x=>x&&x!=='0'.repeat(32)))];$('nativeHardwareAAGUIDs').value=(n.hardwareProfile.aaguids.length?n.hardwareProfile.aaguids:candidates).join('\n');}
@@ -209,4 +229,8 @@ window.addEventListener('pagehide',()=>clearTimeout(globalRefreshTimer));
 
 run($('connectUpgrade'),ticket=>review({kind:'nativeConnectUpgrade'},'Grant full administration to the displayed tested Magic credentials. Existing Magic sessions will expire. Sign in again afterwards.',ticket));
 
-run($('compatApprove'),()=>review({kind:'nativeLegacyAccess',instance:Number($('compatInstance').value),mode:Number($('compatMode').value),enabled:$('compatEnabled').checked,read:$('compatRead').checked,write:$('compatWrite').checked,portal:$('compatPortal').checked,frozen:$('compatFrozen').checked,bulk:$('compatBulk').checked},'Authorize exactly this existing instance and role. Read access covers application Global and Local secrets. This does not activate the replacement branch.'));
+$('compatTarget').addEventListener('change',()=>{compatViewKey='';renderLegacyAccess();});
+run($('compatApprove'),()=>{
+ const target=legacyAccessTargets().find(t=>t.instance===Number($('compatTarget').value));if(!target)throw Error('The selected backend/manager is unavailable. Refresh the page.');
+ return review({kind:'nativeLegacyAccess',instance:target.instance,mode:target.mode,enabled:$('compatEnabled').checked,read:$('compatRead').checked,write:$('compatWrite').checked,portal:$('compatPortal').checked,frozen:$('compatFrozen').checked,bulk:$('compatBulk').checked},'Change application access for the automatically detected instance. Local scripts may read application Global and Local secrets. This does not switch existing applications.');
+});
