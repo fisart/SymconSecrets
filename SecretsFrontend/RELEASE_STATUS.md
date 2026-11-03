@@ -376,3 +376,10 @@ conflicting versions appear only in Conflicts. Folder reads omit conflicting
 entries while serving unaffected entries. Automatic signed resynchronization
 repairs sequence gaps. Background UI metadata refresh does not extend sessions.
 This section supersedes the manual upgrade instructions in earlier entries.
+
+
+## Legacy application API compatibility (3 November 2026)
+
+Application reads/writes, Local export/import, explicitly approved bulk replacement and existing protected-page authentication now have a native compatibility implementation. See `../SecretsBackend/LEGACY_API_COMPATIBILITY.md` for the exact coverage, security boundaries and replacement builder. The old module GUID/SEC interface can be retained by the separately prepared replacement branch; the ordinary development source still leaves the 33 original blobs unchanged. Compatibility is disabled until exact instance/role/rights approval; writes default frozen. Legacy credential-administration and master/slave transport are explicitly unavailable through this adapter. All original public method signatures are present; full behavioral equivalence is not claimed.
+
+Tests include the real old encrypted-vault implementation, unchanged SEC dispatch through the replacement template, direct native signatures, primary/Magic authentication, freeze/expiry/revocation, encrypted peer propagation and Local isolation. Migration/deployment acceptance, backups/restore rehearsal and actual inventoried applications remain pending. No installation has been switched or migrated.

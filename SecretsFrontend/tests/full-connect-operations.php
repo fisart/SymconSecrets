@@ -9,6 +9,12 @@ $magicApproved(['kind'=>'rename','scope'=>'global','path'=>['Magic folder'],'new
 $magicApproved(['kind'=>'save','scope'=>'global','path'=>['Renamed folder','Password'],'mode'=>'create','json'=>'"FULL-MAGIC-VALUE"','revision'=>$invoke('session')['data']['revision']]);
 $cap=$magicApproved(['kind'=>'nativeMachineGrant','name'=>'Magic app','scope'=>'global','path'=>['Renamed folder'],'write'=>true]);secExpect(isset($cap['capabilityToken']),'Magic cannot issue application capabilities.');
 $magicApproved(['kind'=>'nativeMachineRevoke','id'=>$cap['machineId']]);
+// Legacy protected pages must validate the Magic cookie locally; no primary contact is needed.
+$magicApproved(['kind'=>'nativeLegacyAccess','instance'=>$back->InstanceID,'mode'=>1,'enabled'=>true,'read'=>true,'write'=>false,'portal'=>true,'frozen'=>true,'bulk'=>false]);
+secExpect(str_contains($back->GetSecret('Renamed folder'),'FULL-MAGIC-VALUE'),'Direct native legacy signature did not read application data.');
+$legacyServer=['HTTP_HOST'=>parse_url($origin,PHP_URL_HOST),'HTTP_COOKIE'=>$request['cookie'],'REMOTE_ADDR'=>'127.0.0.1'];
+secExpect($back->CheckLegacyPortalSession($back->InstanceID,json_encode($legacyServer)),'Approved Magic legacy page access failed.');
+secExpect(str_starts_with($back->GetLegacyLoginURL($back->InstanceID,'/hook/library',json_encode($legacyServer)),$origin.'/'),'Legacy Magic login redirected to primary.');
 $invoke('legacySources');$invoke('connectDiscovery');$invoke('nativePairingStatus');$invoke('nativeGlobalStatus');
 $invitation=$magicApproved(['kind'=>'nativeInvite']);$decoded=SecretsBackendNativePeer::readInvitation($invitation['invitation']);secExpect(str_starts_with($decoded['issuer']['endpoint'],$origin.'/'),'Magic invitation points to primary.');
 $export=$magicApproved(['kind'=>'nativeBackup']);secExpect(isset($export['backup'],$export['recoveryKey']),'Magic cannot export an encrypted backup.');
