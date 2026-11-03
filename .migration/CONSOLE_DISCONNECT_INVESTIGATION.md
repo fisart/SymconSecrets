@@ -7,7 +7,7 @@ the user reported that the console stayed connected. This implicates the
 replacement workload; it does not establish a kernel restart or prove the
 particular connection timeout mechanism.
 
-## Reproduced regression
+## Initial reproduced regression
 
 At commit `5685e15547182b363098c4543fb47a3f99f11826`, a bound `SEC_GetSecret`
 call invoked the full `SECB_GetNativeInfo` diagnostic before its real data
@@ -32,7 +32,7 @@ measurements do not reproduce the live browser disconnection itself. Repeated
 vault work and exclusive lock contention are a plausible cause under frequent
 RemoteSync/application reads. Audited writes still have a cost.
 
-## Correction
+## First correction (b138db5)
 
 The adapter keeps its automatic backend/vault binding, but checks the expected
 vault identity inside the actual backend operation. It no longer calls the
@@ -76,3 +76,31 @@ intervals. If the console still disconnects, capture the disconnect timestamp,
 kernel start/uptime, ScriptEngine workload and console connection error; do not
 classify the issue as resolved based solely on these local tests. The old-manager
 diagnostic branch remains available for comparison.
+
+## Current correction: local application reads do not write the vault
+
+The live ten-minute recording covered a further console disconnect with an
+unchanged kernel start, uninterrupted ten-second samples, and only 0–4 of 50
+workers active at sample times. It does not support sustained worker exhaustion;
+CPU/disk pressure and brief stalls were not measured. The disconnection remains
+unresolved. The user explicitly approved removing whole-vault writes caused
+solely by successful local application reads.
+
+SEC and SECB compatibility methods GetKeys, GetSecret, GetExplorerFields and
+ExportLocalSecrets now use fresh snapshot/owner/runtime/permission validation
+without appending read telemetry or marking the journal dirty. No secret values
+or permissions are cached across calls. Expected vault binding, access revocation,
+Global conflicts, disabled backends and pending settings retain their checks.
+This deliberately removes durable per-read history for these local calls.
+
+Secret writes, security administration and browser reveals retain their existing
+durable records. Capability-token APIs retain their existing rate limiting and
+auditing; this change targets the compatibility calls used by existing modules.
+No separate read log or new background timer is introduced.
+
+Regression tests compare journal file names and hashes across all four read
+methods through both preserved SEC instances and direct SECB calls. Store tests
+verify stale snapshot rejection, revoked permissions, runtime replacement during
+validation, no read-side writes, and continued durable audited authorization.
+The load test now requires zero snapshot writes for successful reads. Its --ref
+option can reproduce either earlier implementation for comparison.

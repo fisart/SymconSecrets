@@ -52,5 +52,5 @@ with tempfile.TemporaryDirectory(prefix='sec-read-load-') as directory:
     measurement = json.loads(result.stdout)
     if not args.ref:
         assert measurement['snapshotLoads'] <= 4 * args.reads, measurement
-        assert measurement['snapshotWrites'] == args.reads, 'Each successful read must retain its authorization audit'
+        assert measurement['snapshotWrites'] == 0, 'Successful local application reads must not publish vault snapshots'
     print(json.dumps({'implementation': args.ref or 'working-tree', **measurement}))

@@ -51,6 +51,16 @@ try{
         $info=json_decode($m->GetReplacementInfo(),true);$ok($info['engine']==='native-only'&&!$info['oldImplementationEnabled']&&!$info['oldStorageUsed']&&$info['ready'],'Replacement metadata suggested a legacy fallback.');
         $ok(!SEC_SetRecordFields($id,'blocked',['key'=>'value'],'global'),'Default replacement writes were not frozen.');
     }
+    // Both preserved SEC IDs and direct SECB compatibility reads leave journal bytes unchanged.
+    $journalFingerprint=static function()use($root):array{$out=[];foreach(glob($root.'/data/*')?:[]as$f)if(is_file($f))$out[basename($f)]=hash_file('sha256',$f);ksort($out);return $out;};
+    $beforeReads=$journalFingerprint();
+    foreach([$GLOBALS['instances'][49800],$GLOBALS['instances'][59597],$back]as$reader){
+        $ok(json_decode($reader->GetKeys(),true)===['Hikvision'],'Read-only key enumeration failed.');
+        $ok(str_contains($reader->GetSecret('Hikvision'),'NATIVE-ONLY-CANARY'),'Read-only record access failed.');
+        $ok(count($reader->GetExplorerFields('Hikvision'))===2,'Read-only field access failed.');
+        $ok(str_contains($reader->ExportLocalSecrets(),'NATIVE-LOCAL-CANARY'),'Read-only Local export failed.');
+    }
+    $ok($journalFingerprint()===$beforeReads,'Successful SEC/SECB application reads changed the encrypted journal.');
     $a=$GLOBALS['instances'][49800];$infoCalls=$back->infoCalls;$parentApplies=$a->parentApplies;
     for($i=0;$i<10;$i++)$ok(str_contains(SEC_GetSecret(49800,'Hikvision'),'NATIVE-ONLY-CANARY'),'Repeated bound read failed.');
     $ok($back->infoCalls===$infoCalls&&$a->parentApplies===$parentApplies,'Application reads performed full metadata scans or lifecycle updates.');

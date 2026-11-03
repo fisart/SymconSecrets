@@ -36,7 +36,7 @@ final class SecretsBackendLegacyAPI
     private function read(callable $get,string $method)
     {
         $c=$this->snapshot();
-        $this->store->authorize('legacy-read',hash('sha256',$method.':'.$this->instance),$c,function(array $checked):void{$this->permission($checked['state'],'read');},['action'=>'legacy-read','actor'=>(string)$this->instance,'target'=>$method]);
+        $this->store->authorizeApplicationRead($c,function(array $checked):void{$this->permission($checked['state'],'read');});
         return $get($c['state']);
     }
     private static function value(array $node)

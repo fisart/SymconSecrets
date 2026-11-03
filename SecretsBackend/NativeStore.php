@@ -336,6 +336,18 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
             $this->frame['state'] = $state; $this->frame['head'] = $head; $this->ordinaryChange = $changed && !$maintenance; $this->dirty = true; return $head;
         });
     }
+    /** Trusted local application read: fresh authorization without persistent read telemetry.
+     * Mutations, browser reveals and administrative approvals retain authorize()/change().
+     */
+    public function authorizeApplicationRead(array $validated, callable $validate): array
+    {
+        return $this->locked(function () use ($validated, $validate): array {
+            $this->active(); $current = $this->current();
+            if (!SecretsBackendCodec::same($current['head'], $validated['head']) || !SecretsBackendCodec::same($current['owner'], $validated['owner'])) throw new RuntimeException('Authorization state changed; repeat full verification.');
+            $validate($current); $this->trip('before_authorize'); $this->active();
+            return ['result' => ['status' => 'AUTHORIZED', 'head' => $current['head']], 'head' => $current['head'], 'owner' => $current['owner']];
+        });
+    }
     public function authorize(string $kind, string $actionDigest, array $validated, callable $validate, array $audit = []): array
     {
         return $this->locked(function () use ($kind, $actionDigest, $validated, $validate, $audit): array {
