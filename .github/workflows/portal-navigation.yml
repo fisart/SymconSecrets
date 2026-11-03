@@ -16,4 +16,4 @@ jobs:
       - name: Existing vault and authentication regression
         run: |
           php -l SecretsManager/module.php
-          python migration/tests/reference-regression.py
+          python .migration/tests/reference-regression.py

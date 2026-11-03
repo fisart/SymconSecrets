@@ -4,8 +4,28 @@ import sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
+# Module Control ignores dot folders and these documented support directories.
+# Any other top-level folder is a module and must contain module.json.
+def missing_module_metadata(directory):
+    support = {"libs", "docs", "imgs", "tests", "actions"}
+    return sorted(p.name for p in directory.iterdir()
+                  if p.is_dir() and not p.name.startswith(".")
+                  and p.name not in support and not (p / "module.json").is_file())
+
+assert not missing_module_metadata(root), "Symcon module.json missing in: " + ", ".join(missing_module_metadata(root))
+# Reproduce the reported packaging failure, and verify the corrected dot folder.
+import tempfile
+with tempfile.TemporaryDirectory(prefix="symcon-layout-") as temporary:
+    fixture = Path(temporary)
+    (fixture / "migration").mkdir()
+    assert missing_module_metadata(fixture) == ["migration"]
+    (fixture / "migration").rename(fixture / ".migration")
+    for support in ["libs", "docs", "imgs", "tests", "actions"]:
+        (fixture / support).mkdir()
+    assert missing_module_metadata(fixture) == []
+print("PASS Symcon library layout: every module folder has module.json; dot/support folders ignored")
 baseline = json.loads((Path(__file__).parent / "baseline-files.json").read_text())
-sys.path.insert(0,str(root/'migration/tests'))
+sys.path.insert(0,str(root/'.migration/tests'))
 from replacement_support import verify_replacement, original_source, manifest
 import subprocess
 replacement_files=manifest(root).get("replacementBaselineFiles",{})

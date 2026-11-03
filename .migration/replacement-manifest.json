@@ -11,6 +11,6 @@
   "oldSyncEnabled": false,
   "rollback": "Restore source branch AND saved configuration/state before re-enabling old synchronization. Saved old vault/key files remain inactive. New writes are not copied back.",
   "replacementBaselineFiles": {
-    ".github/workflows/portal-navigation.yml": "de740f6e0dece679f43b881eecd28a746764839636b618bbf0fc07bc3569f4e8"
+    ".github/workflows/portal-navigation.yml": "b06232f618066d6763d338ca91d4f1fd15ee189ca5e34ffb12239cfb5d0baa8b"
   }
 }

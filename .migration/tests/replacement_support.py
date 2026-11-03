@@ -7,7 +7,7 @@ import subprocess
 
 
 def manifest(root):
-    return json.loads((Path(root)/'migration/replacement-manifest.json').read_text(encoding='utf-8'))
+    return json.loads((Path(root)/'.migration/replacement-manifest.json').read_text(encoding='utf-8'))
 
 
 def original_source(root):
@@ -29,7 +29,7 @@ def verify_replacement(root):
     assert metadata['id'] == m['guid'] == '{7C5A3841-3F7B-4D2A-9E1C-5B6D8F9A0E12}'
     assert metadata['prefix'] == m['prefix'] == 'SEC'
     actual = (root/'SecretsManager/module.php').read_bytes()
-    assert actual == (root/'migration/templates/SecretsManager.php.txt').read_bytes()
+    assert actual == (root/'.migration/templates/SecretsManager.php.txt').read_bytes()
     assert hashlib.sha256(actual).hexdigest() == m['adapterSHA256']
     assert m['oldImplementationEnabled'] is False and m['oldStorageUsed'] is False and m['oldSyncEnabled'] is False
     original_source(root)
