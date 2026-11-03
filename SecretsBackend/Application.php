@@ -49,9 +49,9 @@ final class SecretsBackendApplication
     {
         if (!is_string($request['csrf'] ?? null) || !hash_equals($session['csrf'], $request['csrf'])) throw new RuntimeException('CSRF verification failed.');
     }
-    private function credential(array $credential, array $challenge, array $assertion): int
+    private function credential(array $credential, array $challenge, array $assertion,bool $login=false): int
     {
-        $this->routeCredential($this->store->read()['state'], $credential);
+        $this->routeCredential($this->store->read()['state'], $credential,$login);
         if (($challenge['origin'] ?? $this->primaryOrigin()) !== $this->settings['origin'] || ($challenge['originGeneration'] ?? '') !== $this->originGeneration($this->store->read()['state'])) throw new RuntimeException('Challenge origin changed.');
         self::exact($assertion, ['type', 'rawId', 'response']);
         $response = $assertion['response']; self::exact($response, ['clientDataJSON', 'authenticatorData', 'signature', 'userHandle']);
@@ -71,7 +71,7 @@ final class SecretsBackendApplication
     }
     private function challenge(array $current, array $credentials, bool $hardware, string $kind, array $context): array
     {
-        $ids = []; foreach ($credentials as $credential) if ($credential['active'] && $this->eligibleOrigin($current['state'], $credential) && (!$hardware || ($credential['hardware'] && $credential['trustVersion'] === ($this->settings['hardwareTrustVersion'] ?? 'none')))) $ids[] = $credential['id'];
+        $ids = []; foreach ($credentials as $credential) if ($credential['active'] && $this->eligibleOrigin($current['state'], $credential,$kind==='login') && (!$hardware || ($credential['hardware'] && $credential['trustVersion'] === ($this->settings['hardwareTrustVersion'] ?? 'none')))) $ids[] = $credential['id'];
         if (!$ids) throw new RuntimeException('No eligible administrator key. Use independent recovery if all keys are lost.');
         $verifier = $this->webauthn(); $args = $verifier->getGetArgs(array_map([SecretsBackendCodec::class, 'unb64'], $ids), 120, true, true, true, true, true, true);
         $id = SecretsBackendCodec::b64(random_bytes(32));
@@ -171,7 +171,7 @@ final class SecretsBackendApplication
         $key=SecretsBootstrapVerifier::publicKey($data['key']);
         $bytes="SECF.ADDKEY.SUBMIT.1\n".$this->settings['origin']."\n".$data['prepare']."\n".$p['context']['challenge']."\n".$key['digest']."\n".SecretsBootstrapVerifier::digest($data['credential'])."\n";
         SecretsBootstrapVerifier::verifySignature($bytes,$data['signature'],$data['key']);
-        $entry=SecretsBootstrapVerifier::registration($data['credential'],$p['context']);$entry['label']=$p['settings']['label'];
+        $entry=SecretsBootstrapVerifier::registration($data['credential'],$p['context']);$entry['label']=$p['settings']['label'];$entry['origin']=$this->settings['origin'];$entry['originGeneration']=$this->originGeneration($current['state']);if($entry['origin']!==$this->primaryOrigin())$entry['rights']=SecretsBackendBackupOriginPolicy::FULL_RIGHTS;
         $entry['hardware']=$p['settings']['hardware'];$entry['trustVersion']=$this->settings['hardwareTrustVersion']??'none';
         if($entry['hardware']){
             if($entry['backupEligible'])throw new RuntimeException('Hardware candidates cannot be backup eligible.');
@@ -216,7 +216,7 @@ final class SecretsBackendApplication
             $id = $data['credential']['rawId'] ?? ''; $entry = $current['state']['identity']['credentials'][$id] ?? null;
             if (!is_array($entry) || !$entry['active']) throw new RuntimeException('Credential is not an administrator.');
             $this->rejectionContext = $this->audit('login', $id, 'session');
-            $counter = $this->credential($entry, $challenge, $data['credential']);
+            $counter = $this->credential($entry, $challenge, $data['credential'],true);
             $committed = $this->store->change($challenge['head'], SecretsBackendCodec::uuid(), hash('sha256', $data['challengeId']), static function (array $state) use ($id, $counter): array { $state['identity']['credentials'][$id]['counter'] = $counter; $state['identity']['credentials'][$id]['tested'] = true; return $state; }, $this->audit('login', $id, 'session'));
             $current = $this->store->read();
             if (!SecretsBackendCodec::same($current['head'], $committed)) throw new RuntimeException('Login state changed before authorization.');
@@ -234,7 +234,7 @@ final class SecretsBackendApplication
         if ($native instanceof SecretsBackendNativeOperations) $native->bindSession($session['hash']);
         $this->rejectionContext = $this->audit('request', $session['credential'], 'management');
         if ($action !== 'session') $this->requireCsrf($request, $session);
-        if ($this->settings['origin'] !== $this->primaryOrigin() && !in_array($action,['session','list','sessionReveal','sessionTimeout','prepare','approve','logout'],true)) throw new RuntimeException('Use the primary address for setup and integration management.');
+        if ($this->settings['origin'] !== $this->primaryOrigin() && !SecretsBackendBackupOriginPolicy::credentialFull($current['state'],$current['state']['identity']['credentials'][$session['credential']]) && !in_array($action,['session','list','sessionReveal','sessionTimeout','prepare','approve','logout'],true)) throw new RuntimeException('Use the primary address for setup and integration management.');
         if ($action === 'connectCandidateReview') { self::exact($data,['candidate']); $c=$this->connectCandidate($data['candidate'],$current['state']); return ['data'=>['candidate'=>$data['candidate'],'digest'=>SecretsBootstrapVerifier::digest($c),'label'=>$c['entry']['label'],'origin'=>$c['origin'],'administrator'=>$c['entry']['administrator'],'rights'=>$c['rights'],'fingerprint'=>hash('sha256',$c['entry']['publicKey'])]]; }
         if ($action === 'connectDiscovery') { self::exact($data, []); return ['data'=>['permitted'=>true]]; }
         if ($native instanceof SecretsBackendNativeOperations && in_array($action, ['nativeGlobalStatus','nativePairingStatus','nativeRetryPeerDelivery','legacySources','legacyPreview','nativeUploadBegin','nativeUploadChunk','nativeUploadFinish','nativeOperationStatus'], true)) return ['data' => $native->request($action, $data)];
@@ -284,7 +284,7 @@ final class SecretsBackendApplication
         if ($action === 'prepare') {
             self::exact($data, ['operation']); $operation = $this->operation($data['operation'], $current['state']);
             $this->rejectionContext = $this->audit($operation['kind'], $session['credential'], SecretsBackendCodec::json(array_intersect_key($operation, array_flip(['kind', 'scope', 'path', 'credentialId']))));
-            if ($this->settings['origin'] !== $this->primaryOrigin() && !in_array($operation['kind'],['save','delete','rename','reveal','nativeReveal','nativeGlobalReveal','nativeGlobalResolve','nativeBackup'],true)) throw new RuntimeException('Use the primary address for administrator changes.');
+            if ($this->settings['origin'] !== $this->primaryOrigin() && !SecretsBackendBackupOriginPolicy::credentialFull($current['state'],$current['state']['identity']['credentials'][$session['credential']]) && !in_array($operation['kind'],['save','delete','rename','reveal','nativeReveal','nativeGlobalReveal','nativeGlobalResolve','nativeBackup'],true)) throw new RuntimeException('Use the primary address for administrator changes.');
             $class = str_starts_with($operation['kind'], 'native') && $native instanceof SecretsBackendNativeOperations ? SecretsBackendNativeOperations::actionClass($operation['kind']) : (in_array($operation['kind'], ['save', 'delete', 'rename'], true) ? 'write' : ($operation['kind'] === 'reveal' ? 'reveal' : 'identity'));
             $hardware = $class === 'identity' ? in_array(true, $current['state']['policy']['hardware'], true) : $current['state']['policy']['hardware'][$class];
             if ($operation['kind'] === 'policy' && in_array(true, $operation['hardware'], true)) $hardware = true;
@@ -394,7 +394,7 @@ final class SecretsBackendApplication
             }
         } elseif ($operation['kind'] === 'revoke') {
             $state['identity']['credentials'][$operation['credentialId']]['active'] = false;
-            $active = array_filter($state['identity']['credentials'], fn($credential) => $credential['active'] && ($credential['origin']??$state['policy']['origin'])===$state['policy']['origin'] && (!isset($state['native'])||($credential['tested']??false)===true));
+            $active = array_filter($state['identity']['credentials'], fn($credential) => $credential['active'] && (!isset($state['native'])||SecretsBackendBackupOriginPolicy::credentialFull($state,$credential)) && (!isset($state['native'])||($credential['tested']??false)===true));
             if (!$active || (in_array(true, $state['policy']['hardware'], true) && !array_filter($active, fn($credential) => $credential['hardware'] && $credential['trustVersion']===($this->settings['hardwareTrustVersion']??'none')))) throw new RuntimeException('Cannot revoke the last eligible administrator.');
             $state['identity']['revocation'] = SecretsBackendCodec::increment($state['identity']['revocation']);
         } elseif ($operation['kind'] === 'configuration') {
@@ -402,7 +402,7 @@ final class SecretsBackendApplication
             $state['policy']['version'] = SecretsBackendCodec::increment($state['policy']['version']);
         } elseif ($operation['kind'] === 'policy') {
             $eligible = array_filter($state['identity']['credentials'], fn($credential) => $credential['active'] && $credential['hardware'] && $credential['trustVersion'] === ($this->settings['hardwareTrustVersion'] ?? 'none'));
-            if (($this->settings['nativeOps'] ?? null) instanceof SecretsBackendNativeOperations) $eligible = array_filter($eligible, static fn($c) => ($c['tested'] ?? false) === true && ($c['origin']??$state['policy']['origin'])===$state['policy']['origin']);
+            if (($this->settings['nativeOps'] ?? null) instanceof SecretsBackendNativeOperations) $eligible = array_filter($eligible, static fn($c) => ($c['tested'] ?? false) === true && SecretsBackendBackupOriginPolicy::credentialFull($state,$c));
             if (in_array(true, $operation['hardware'], true) && count($eligible) < 2) throw new RuntimeException('Enroll and test two separate approved hardware credentials before enforcement.');
             $state['policy']['hardware'] = $operation['hardware']; $state['policy']['version'] = SecretsBackendCodec::increment($state['policy']['version']);
         }

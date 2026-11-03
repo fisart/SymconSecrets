@@ -31,11 +31,12 @@ final class SecretsBackendNativeOperations
     {
         if($stored){$seal=$op['_nativeSeal']??'';unset($op['_nativeSeal']);if(!is_string($seal)||!hash_equals($this->store->opaque('native-operation:'.SecretsBackendNativeStore::canonical($op)),$seal))throw new RuntimeException('Native reviewed operation was changed.');$op['_nativeSeal']=$seal;return $op;}
         $kind=$op['kind']??'';
-        if(in_array($kind,['nativeConnectStage','nativeConnectActivate','nativeConnectRevoke'],true)){
+        if(in_array($kind,['nativeConnectStage','nativeConnectActivate','nativeConnectRevoke','nativeConnectUpgrade'],true)){
             $session=$this->store->get($this->session,'session');
-            if($session['origin']!==$state['policy']['origin'])throw new RuntimeException('Approve backup access at the primary address.');
+            if($session['origin']!==$state['policy']['origin']&&!SecretsBackendBackupOriginPolicy::credentialFull($state,$state['identity']['credentials'][$session['credential']]))throw new RuntimeException('Approve backup access at the primary address.');
         }
         switch($kind){
+            case 'nativeConnectUpgrade':SecretsBackendNativePeer::exact($op,['kind']);$op['review']=SecretsBackendBackupOriginPolicy::upgradeReview($state);$op['generation']=bin2hex(random_bytes(32));break;
             case 'nativeGlobalResolve':
                 SecretsBackendNativePeer::exact($op,['kind','path','digest','choices']);SecretsBackendSharedGlobal::resolve($state,$op['path'],$op['digest'],$op['choices']);break;
             case 'nativeGlobalReveal':
@@ -58,7 +59,7 @@ final class SecretsBackendNativeOperations
                 $c=$this->store->get($op['candidate'],'connect-candidate');
                 if(!hash_equals(SecretsBootstrapVerifier::digest($c),$op['digest'])||!SecretsBackendCodec::same($c['head'],$this->store->head())||$c['expires']<time())throw new RuntimeException('Exact backup candidate changed or expired.');
                 SecretsBackendBackupOriginPolicy::requireRoute($state,$c['origin'],$c['generation'],'register-options');
-                if($state['policy']['backupOrigin']['status']!=='pending'||$c['entry']['administrator']!==$session['administrator']||$c['rights']!==['read','write','export'])throw new RuntimeException('Backup administrator authority differs.');
+                if($state['policy']['backupOrigin']['status']!=='pending'||$c['entry']['administrator']!==$session['administrator']||$c['rights']!==SecretsBackendBackupOriginPolicy::rights($state['policy']['backupOrigin']))throw new RuntimeException('Backup administrator authority differs.');
                 $op['candidateRecord']=$c;break;
             case 'nativeInvite':SecretsBackendNativePeer::exact($op,['kind']);$op['invitation']=$this->peer->invitation(true);break;
             case 'nativePair':SecretsBackendNativePeer::exact($op,['kind','invitation','name']);$op=$this->peer->pairOperation($op['invitation'],$op['name']);if($op['pair']['scope']===SecretsBackendSharedGlobal::SCOPE)SecretsBackendSharedGlobal::enable($state);elseif(isset($state['native']['sharedGlobal']))throw new RuntimeException('Use a new shared Global invitation from the updated module.');$op['httpsReview']=SecretsBackendNativeLegacyHTTPS::proposal($op['pair']['a']['endpoint'],$state['pairing']['peers']);break;
@@ -125,6 +126,7 @@ final class SecretsBackendNativeOperations
     public function apply(array $op,array $s): array
     {
         $kind=$op['kind'];
+        if($kind==='nativeConnectUpgrade')return SecretsBackendBackupOriginPolicy::upgrade($s,$op['review'],$op['generation']);
         if($kind==='nativeGlobalResolve')return SecretsBackendNativePeer::queueGlobal(SecretsBackendSharedGlobal::resolve($s,$op['path'],$op['digest'],$op['choices']));
         if($kind==='nativeLegacyImport'){
             $c=$this->legacyCandidate($op['candidate'],$op['digest'],$s);
@@ -154,14 +156,14 @@ final class SecretsBackendNativeOperations
         }elseif($kind==='nativeConnectStage'){
             SecretsBackendBackupOriginPolicy::stage($s,$op['origin']);$s['policy']['backupOrigin']=$op['policy'];
         }elseif($kind==='nativeConnectRevoke'){
-            $s=SecretsBackendBackupOriginPolicy::revoke($s,$op['origin'],$op['generation']);
+            $s=SecretsBackendBackupOriginPolicy::revoke($s,$op['origin'],$op['generation']);$s['native']['routeRevision']=SecretsBackendCodec::increment($s['native']['routeRevision']??'0');
         }elseif($kind==='nativeConnectActivate'){
             $c=$this->store->get($op['candidate'],'connect-candidate');
             if($c['expires']<time()||!hash_equals(SecretsBootstrapVerifier::digest($c),$op['digest'])||SecretsBootstrapVerifier::digest($c)!==SecretsBootstrapVerifier::digest($op['candidateRecord']))throw new RuntimeException('Backup candidate expired or changed.');
             SecretsBackendBackupOriginPolicy::requireRoute($s,$c['origin'],$c['generation'],'register-options');
-            if($s['policy']['backupOrigin']['status']!=='pending'||isset($s['identity']['credentials'][$c['entry']['id']])||$c['entry']['administrator']!==$s['identity']['ownerId']||$c['rights']!==['read','write','export']||!$c['entry']['tested'])throw new RuntimeException('Backup authority changed.');
+            if($s['policy']['backupOrigin']['status']!=='pending'||isset($s['identity']['credentials'][$c['entry']['id']])||$c['entry']['administrator']!==$s['identity']['ownerId']||$c['rights']!==SecretsBackendBackupOriginPolicy::rights($s['policy']['backupOrigin'])||!$c['entry']['tested'])throw new RuntimeException('Backup authority changed.');
             if(in_array(true,$s['policy']['hardware'],true)&&(!$c['entry']['hardware']||$c['entry']['trustVersion']!==$s['policy']['management']['settings']['HardwareTrustVersion']))throw new RuntimeException('Current hardware policy requires a verified backup key.');
-            $s['identity']['credentials'][$c['entry']['id']]=$c['entry'];$s['policy']['backupOrigin']['status']='active';
+            $s['identity']['credentials'][$c['entry']['id']]=$c['entry'];$s['policy']['backupOrigin']['status']='active';$s['native']['routeRevision']=SecretsBackendCodec::increment($s['native']['routeRevision']??'0');
         }elseif($kind==='nativeEnrollment'){
             $candidate=$this->store->get($op['candidate'],'key-candidate');
             if($op['expires']<time()||$candidate['session']!==$this->session||!hash_equals(SecretsBootstrapVerifier::digest($candidate),$op['digest'])||isset($s['identity']['credentials'][$op['entry']['id']]))throw new RuntimeException('The reviewed key candidate expired, changed or already exists.');
@@ -309,7 +311,7 @@ final class SecretsBackendNativeOperations
     }
     public function summary(array $op): array
     {
-        $out=['kind'=>$op['kind']];
+        $out=['kind'=>$op['kind']];if($op['kind']==='nativeConnectUpgrade')$out+=$op['review']+['effect'=>'Grant full administrator access to exactly these tested Magic credentials. Old Magic sessions and challenges become invalid.'];
         if($op['kind']==='nativeGlobalResolve')$out+=['path'=>$op['path'],'choices'=>$op['choices'],'effect'=>'Resolve exactly these Global versions and synchronize the chosen result. Versions not selected are removed from the live Global vault.'];
         if(in_array($op['kind'],['nativeInvite','nativePair','nativeAcceptPair'],true))$out['sharing']='One shared Global vault. Both platforms may edit all Global secrets and share them with their approved Global partners. Local stays private. Concurrent changes preserve all versions. Existing application permissions keep their approved paths.';
         if($op['kind']==='nativeLegacyImport')$out+=$op['review'];
@@ -400,7 +402,7 @@ final class SecretsBackendNativeOperations
         $peers=array_values(array_map(static fn($p)=>$p+['comparison'=>SecretsBackendNativePeer::comparison($p['pair']),'delivery'=>$delivery[$p['id']]??null],$state['pairing']['peers']));
         foreach($peers as&$peer){try{$peer['connectionDebug']=$this->store->get('peer-tls-debug:'.$peer['pairingId'],'peer-tls-debug');}catch(Throwable $ignored){}}unset($peer);
         $sent=[];foreach($state['native']['deliveryReceipts']as$id=>$receipt)$sent[]=['peerId'=>$id]+array_intersect_key($receipt,array_flip(['pairingId','requestKind','status','treeId','revision']));
-        return ['sharedGlobalSupported'=>true,'globalConflictCount'=>count(SecretsBackendSharedGlobal::metadata($state)['conflicts']??[]),'serverTime'=>time(),'peers'=>$peers,'pairingReceived'=>$received,'pairingSent'=>$sent,'globalTreeId'=>$state['native']['globalTreeId'],'globalRevision'=>$state['stream']['globalRevision'],'remoteHttpsAvailable'=>SecretsBackendNativeLegacyHTTPS::available(),'remoteHttpsTransport'=>'php-streams','peerTransportVersion'=>'php-streams-ye2-1','globalWritable'=>$state['native']['globalWritable'],
+        return ['fullAdministrator'=>$this->session!==''&&SecretsBackendBackupOriginPolicy::credentialFull($state,$state['identity']['credentials'][$this->store->get($this->session,'session')['credential']]??[]),'sharedGlobalSupported'=>true,'globalConflictCount'=>count(SecretsBackendSharedGlobal::metadata($state)['conflicts']??[]),'serverTime'=>time(),'peers'=>$peers,'pairingReceived'=>$received,'pairingSent'=>$sent,'globalTreeId'=>$state['native']['globalTreeId'],'globalRevision'=>$state['stream']['globalRevision'],'remoteHttpsAvailable'=>SecretsBackendNativeLegacyHTTPS::available(),'remoteHttpsTransport'=>'php-streams','peerTransportVersion'=>'php-streams-ye2-1','globalWritable'=>$state['native']['globalWritable'],
             'outbox'=>array_values(array_map(static fn($j)=>array_intersect_key($j,array_flip(['id','receiverId','kind','sequence','status'])),$state['outbox']['jobs']))];
     }
     public function metadata(array $state): array
@@ -409,7 +411,7 @@ final class SecretsBackendNativeOperations
         $owned=[];foreach($state['native']['trees']as$id=>$r)$owned[]=['id'=>$id,'owner'=>$r['owner'],'epoch'=>$r['epoch'],'revision'=>$r['revision'],'frozen'=>$r['frozen'],'entries'=>SecretsBackendTree::listing($r['node'])];
         $machines=[];foreach($state['native']['machines']as$m){unset($m['hash']);$machines[]=$m;}
         $progress=$this->pairingStatus($state);
-        return ['sharedGlobalSupported'=>true,'globalConflictCount'=>$progress['globalConflictCount'],'legacyImports'=>array_values($state['native']['legacyImports']??[]),'backupOrigin'=>$state['policy']['backupOrigin']??null,'primaryOrigin'=>$state['policy']['origin'],'info'=>$this->store->metadata(),'storage'=>$this->store->storagePaths(),'peerEndpoint'=>$this->peer->descriptor()['endpoint'],'peerDescriptor'=>$this->peer->descriptor(),
+        return ['fullAdministrator'=>$this->session!==''&&SecretsBackendBackupOriginPolicy::credentialFull($state,$state['identity']['credentials'][$this->store->get($this->session,'session')['credential']]??[]),'sharedGlobalSupported'=>true,'globalConflictCount'=>$progress['globalConflictCount'],'legacyImports'=>array_values($state['native']['legacyImports']??[]),'backupOrigin'=>$state['policy']['backupOrigin']??null,'primaryOrigin'=>$state['policy']['origin'],'info'=>$this->store->metadata(),'storage'=>$this->store->storagePaths(),'peerEndpoint'=>$this->peer->descriptor()['endpoint'],'peerDescriptor'=>$this->peer->descriptor(),'peerRoutes'=>$this->peer->ownRoutes($state),'routeRevision'=>$state['native']['routeRevision']??'0',
             'sharedGlobal'=>SecretsBackendSharedGlobal::metadata($state),'globalTreeId'=>$state['native']['globalTreeId'],'globalWritable'=>$state['native']['globalWritable'],'ownedTrees'=>$owned,'transfers'=>array_map(static fn($t)=>array_diff_key($t,['node'=>true]),$state['native']['transfers']),
             'serverTime'=>$progress['serverTime'],'peers'=>$progress['peers'],'pairingReceived'=>$progress['pairingReceived'],'pairingSent'=>$progress['pairingSent'],'globalRevision'=>$progress['globalRevision'],'remoteHttpsAvailable'=>$progress['remoteHttpsAvailable'],'remoteHttpsTransport'=>$progress['remoteHttpsTransport'],'peerTransportVersion'=>$progress['peerTransportVersion'],'received'=>$received,'machines'=>$machines,'queuedJobs'=>count($state['outbox']['jobs']),
             'providers'=>array_values(array_map(static fn($p)=>SecretsBackendNativeEffects::targetWritable($state,$p)?$p:array_replace($p,['status'=>'OWNER_CHANGED']),$state['native']['providers'])),'effects'=>array_map(static fn($e)=>array_intersect_key($e,array_flip(['id','providerId','state','reason','createdAt','httpStatus','attempts'])),$state['native']['effects']),

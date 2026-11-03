@@ -14,18 +14,18 @@ trait SecretsBackendConnectEnrollment
         $restricted=in_array($action,['status','connectOptions','connectSubmit','connectProof','connectStatus'],true);
         SecretsBackendBackupOriginPolicy::requireRoute($state,$this->settings['origin'],$p['generation']??'',$restricted?'register-options':'authenticate');
     }
-    private function eligibleOrigin(array $state,array $credential): bool
+    private function eligibleOrigin(array $state,array $credential,bool $allowUntested=false): bool
     {
         if($this->settings['origin']===$this->primaryOrigin())return ($credential['origin']??$this->primaryOrigin())===$this->primaryOrigin();
-        try { SecretsBackendBackupOriginPolicy::requireCredential($state,$credential,$this->settings['origin'],$this->originGeneration($state));return true; }catch(Throwable $e){return false;}
+        try { SecretsBackendBackupOriginPolicy::requireCredential($state,$credential,$this->settings['origin'],$this->originGeneration($state),$allowUntested);return true; }catch(Throwable $e){return false;}
     }
-    private function routeCredential(array $state,array $credential): void { if(!$this->eligibleOrigin($state,$credential))throw new RuntimeException('Credential belongs to another or revoked origin.'); }
+    private function routeCredential(array $state,array $credential,bool $allowUntested=false): void { if(!$this->eligibleOrigin($state,$credential,$allowUntested))throw new RuntimeException('Credential belongs to another or revoked origin.'); }
     private function connectCandidate(string $id,array $state): array
     {
         if(!($this->store instanceof SecretsBackendNativeStore)||$this->settings['origin']!==$this->primaryOrigin())throw new RuntimeException('Review backup enrollment at the primary address.');
         $c=$this->store->get($id,'connect-candidate');
         SecretsBackendBackupOriginPolicy::requireRoute($state,$c['origin'],$c['generation'],'register-options');
-        if(!SecretsBackendCodec::same($c['head'],$this->store->head())||$c['expires']<time()||$c['rights']!==['read','write','export']||$c['entry']['administrator']!==$state['identity']['ownerId'])throw new RuntimeException('Candidate policy or administrator changed. Start enrollment again.');
+        if(!SecretsBackendCodec::same($c['head'],$this->store->head())||$c['expires']<time()||$c['rights']!==SecretsBackendBackupOriginPolicy::rights($state['policy']['backupOrigin'])||$c['entry']['administrator']!==$state['identity']['ownerId'])throw new RuntimeException('Candidate policy or administrator changed. Start enrollment again.');
         return $c;
     }
     private function connectEnrollment(string $action,array $data,array $current): array
@@ -76,8 +76,8 @@ trait SecretsBackendConnectEnrollment
         if($r['generation']!==$p['generation']||!SecretsBackendCodec::same($r['head'],$current['head']))throw new RuntimeException('Backup enrollment changed.');
         $bytes=implode("\n",['SECF.CONNECT.TEST.1',$p['origin'],$p['generation'],$data['test'],$r['keyDigest'],SecretsBootstrapVerifier::digest($data['credential'])])."\n";
         SecretsBootstrapVerifier::verifySignature($bytes,$data['signature'],$r['key']);
-        $entry=$r['entry'];$entry['counter']=SecretsBootstrapVerifier::assertion($entry,$data['credential'],$r['challenge'],$p['origin']);$entry['tested']=true;$entry['origin']=$p['origin'];$entry['originGeneration']=$p['generation'];
-        $id=SecretsBackendCodec::b64(random_bytes(32));$candidate=['entry'=>$entry,'origin'=>$p['origin'],'generation'=>$p['generation'],'head'=>$current['head'],'keyDigest'=>$r['keyDigest'],'key'=>$r['key'],'rights'=>['read','write','export'],'expires'=>time()+300];
+        $entry=$r['entry'];$entry['counter']=SecretsBootstrapVerifier::assertion($entry,$data['credential'],$r['challenge'],$p['origin']);$entry['tested']=true;$entry['origin']=$p['origin'];$entry['originGeneration']=$p['generation'];$entry['rights']=SecretsBackendBackupOriginPolicy::rights($p);
+        $id=SecretsBackendCodec::b64(random_bytes(32));$candidate=['entry'=>$entry,'origin'=>$p['origin'],'generation'=>$p['generation'],'head'=>$current['head'],'keyDigest'=>$r['keyDigest'],'key'=>$r['key'],'rights'=>SecretsBackendBackupOriginPolicy::rights($p),'expires'=>time()+300];
         $this->store->put($id,'connect-candidate',$candidate,$candidate['expires']);
         return ['candidate'=>$id,'digest'=>SecretsBootstrapVerifier::digest($candidate),'fingerprint'=>hash('sha256',$entry['publicKey'])];
     }

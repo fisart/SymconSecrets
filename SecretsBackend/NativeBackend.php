@@ -58,7 +58,7 @@ trait SecretsBackendNativeBackend
         if($origin!==$active['AdminOrigin']){ $p=$current['state']['policy']['backupOrigin']??null; SecretsBackendBackupOriginPolicy::requireRoute($current['state'],$origin,$p['generation']??'','register-options'); }
         return new SecretsBackendApplication($store, ['origin' => $origin, 'primaryOrigin'=>$active['AdminOrigin'], 'frontend' => $active['FrontendInstanceID'], 'backend' => $this->InstanceID,
             'hardwareRoots' => $active['HardwareRootsDirectory'], 'hardwareAAGUIDs' => json_decode($active['HardwareAAGUIDs'], true, 8, JSON_THROW_ON_ERROR),
-            'hardwareTrustVersion' => $active['HardwareTrustVersion'], 'managementProfile' => $profile, 'candidateProfile' => fn() => $this->nativeProfile(), 'nativeOps' => new SecretsBackendNativeOperations($store, $this->nativePeer($store), function(array $approved):void{foreach(SecretsBackendSecurityConfiguration::HARDWARE as$key)IPS_SetProperty($this->InstanceID,$key,$approved['settings'][$key]);IPS_ApplyChanges($this->InstanceID);$this->Recover();})]);
+            'hardwareTrustVersion' => $active['HardwareTrustVersion'], 'managementProfile' => $profile, 'candidateProfile' => fn() => $this->nativeProfile(), 'nativeOps' => new SecretsBackendNativeOperations($store, $this->nativePeer($store,$origin), function(array $approved):void{foreach(SecretsBackendSecurityConfiguration::HARDWARE as$key)IPS_SetProperty($this->InstanceID,$key,$approved['settings'][$key]);IPS_ApplyChanges($this->InstanceID);$this->Recover();})]);
     }
     private function nativeApply(): void
     {
@@ -155,6 +155,21 @@ trait SecretsBackendNativeBackend
             return true;
         });
     }
+    public function GetConnectUpgradeReview(int $FrontendInstanceID): string
+    {
+        if($FrontendInstanceID!==$this->ReadPropertyInteger('FrontendInstanceID')||IPS_HasChanges($this->InstanceID))throw new RuntimeException('Wrong frontend or pending settings.');
+        $this->nativeApplication();
+        $cur=$this->nativeStore()->read();$review=SecretsBackendBackupOriginPolicy::upgradeReview($cur['state']);
+        return SecretsBackendCodec::json(['review'=>$review,'digest'=>SecretsBackendNativePeer::digest(['head'=>$cur['head'],'review'=>$review])]);
+    }
+    public function ApproveConnectUpgradeFromConsole(int $FrontendInstanceID,string $Digest): bool
+    {
+        $r=json_decode($this->GetConnectUpgradeReview($FrontendInstanceID),true,32,JSON_THROW_ON_ERROR);
+        if(!hash_equals($r['digest'],$Digest))throw new RuntimeException('The displayed Magic approval changed. Reload the console.');
+        $store=$this->nativeStore();$cur=$store->read();$review=$r['review'];
+        if(SecretsBackendNativePeer::digest(['head'=>$cur['head'],'review'=>$review])!==$Digest)throw new RuntimeException('Magic approval changed.');
+        $generation=bin2hex(random_bytes(32));$store->change($cur['head'],SecretsBackendCodec::uuid(),$Digest,static fn($s)=>SecretsBackendBackupOriginPolicy::upgrade($s,$review,$generation),['action'=>'console-magic-upgrade','actor'=>'independent-console','target'=>$review['origin']]);return true;
+    }
     /** Privileged console snapshot; a policy change invalidates recovery at identity commit. */
     public function GetBootstrapRecoveryInfo(int $FrontendInstanceID): string
     {
@@ -175,8 +190,11 @@ trait SecretsBackendNativeBackend
             if($j->read('decision-'.hash('sha256',$a['intent']))!==null||SECF_BootstrapRuntime($FrontendInstanceID)!==$a['runtime'])throw new RuntimeException('Recovery was cancelled, decided or restarted.');
             $currentInfo=json_decode($this->GetBootstrapRecoveryInfo($FrontendInstanceID),true);
             if(SecretsBootstrapVerifier::digest($currentInfo)!==SecretsBootstrapVerifier::digest($a['recovery']))throw new RuntimeException('Recovery snapshot or policy changed.');
-            if($a['registrationContext']['owner']!==$currentInfo['owner']||$a['registrationContext']['origin']!==$this->ReadPropertyString('AdminOrigin'))throw new RuntimeException('Recovery identity binding failed.');
-            $entry=SecretsBootstrapVerifier::registration($a['registration'],$a['registrationContext']);$entry['counter']=SecretsBootstrapVerifier::assertion($entry,$a['assertion'],$a['challenge'],$this->ReadPropertyString('AdminOrigin'));$entry['tested']=true;
+            $intent=$j->read('intent-'.hash('sha256',$a['intent']));$origin=$a['registrationContext']['origin'];
+            if(!$intent||$intent['frontend']!==$FrontendInstanceID||$intent['vault']!==$currentInfo['vault']||$intent['origin']!==$origin||$a['registrationContext']['owner']!==$currentInfo['owner'])throw new RuntimeException('Recovery identity binding failed.');
+            $state=$this->nativeStore()->read()['state'];$generation='';
+            if($origin!==$this->ReadPropertyString('AdminOrigin')){if(!SecretsBackendBackupOriginPolicy::full($state)||$state['policy']['backupOrigin']['origin']!==$origin)throw new RuntimeException('Recovery route was removed.');$generation=$state['policy']['backupOrigin']['generation'];}
+            $entry=SecretsBootstrapVerifier::registration($a['registration'],$a['registrationContext']);$entry['counter']=SecretsBootstrapVerifier::assertion($entry,$a['assertion'],$a['challenge'],$origin);$entry['tested']=true;$entry['origin']=$origin;$entry['originGeneration']=$generation;if($generation!=='')$entry['rights']=SecretsBackendBackupOriginPolicy::FULL_RIGHTS;
             $store=$this->nativeStore();$store->change($currentInfo['head'],$a['operation'],SecretsBootstrapVerifier::digest($a),static function(array $state)use($entry,$currentInfo):array{
                 if(in_array(true,$state['policy']['hardware'],true)||SecretsBootstrapVerifier::digest($state['policy'])!==$currentInfo['policyDigest']||isset($state['identity']['credentials'][$entry['id']]))throw new RuntimeException('Recovery rights or policy changed.');
                 $state['identity']['credentials'][$entry['id']]=$entry;$state['identity']['revocation']=SecretsBackendCodec::increment($state['identity']['revocation']);return $state;

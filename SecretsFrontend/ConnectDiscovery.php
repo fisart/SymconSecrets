@@ -27,6 +27,10 @@ final class SecretsFrontendConnectDiscovery
      * never administrator authority. Local service/relay isolation is a stated
      * deployment requirement; untrusted local proxies must not expose this hop.
      */
+    public static function secureRoute(array $server,string $origin,array $trusted,array $connect): bool
+    {
+        return in_array($server['HTTPS']??'', ['on','1'],true)||(in_array($server['REMOTE_ADDR']??'',$trusted,true)&&($server['HTTP_X_FORWARDED_PROTO']??'')==='https')||self::loopbackRelay($server,$origin,$connect);
+    }
     public static function loopbackRelay(array $server,string $approvedOrigin,array $connect): bool
     {
         if(($connect['available']??false)!==true||($connect['origin']??null)!==$approvedOrigin

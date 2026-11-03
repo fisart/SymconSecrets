@@ -37,9 +37,11 @@ trait SecretsFrontendBootstrap
     {
         return $this->bootstrapLock(function()use($Address,$ProxyIPs,$Recovery,$JournalStorageConfirmed):string{
             if(IPS_HasChanges($this->InstanceID))throw new RuntimeException('Apply or discard pending edits first.');
-            if(($this->bootstrapNative()['initialized']??false)&&!$Recovery)return $this->GetWizardURL();
-            $recovery=$Recovery?json_decode(SECB_GetBootstrapRecoveryInfo($this->backend(),$this->InstanceID),true,32,JSON_THROW_ON_ERROR):null;
             $origin=$Address!==''?SecretsFrontendCommissioning::address($Address):$this->settings()['AdminOrigin'];
+            $native=$this->bootstrapNative();$initialized=($native['initialized']??false)===true;
+            if($initialized&&$origin!==$this->settings()['AdminOrigin']){$p=$native['backupOrigin']??null;if(($p['version']??0)!==2||($p['status']??'')!=='active'||($p['origin']??'')!==$origin)throw new RuntimeException('Use an approved full-access HTTPS address.');}
+            if($initialized&&!$Recovery)return $origin.$this->path();
+            $recovery=$Recovery?json_decode(SECB_GetBootstrapRecoveryInfo($this->backend(),$this->InstanceID),true,32,JSON_THROW_ON_ERROR):null;
             if($origin==='')throw new RuntimeException('Enter your trusted Symcon HTTPS address.');
             $proxies=$ProxyIPs!==''?SecretsFrontendCommissioning::proxies($ProxyIPs):$this->settings()['TrustedHTTPSProxyIPs'];
             $storage=$this->bootstrapStorageRequirements();
@@ -56,7 +58,7 @@ trait SecretsFrontendBootstrap
             }
             if($recovery!==null)$roster=[(string)$recovery['backend']=>$recovery];
             if(count($roster)>32)throw new RuntimeException('Too many eligible backends.');
-            foreach(['Enabled'=>true,'AdminOrigin'=>$origin,'TrustedHTTPSProxyIPs'=>SecretsFrontendConfiguration::encode($proxies)]as$k=>$v)IPS_SetProperty($this->InstanceID,$k,$v);
+            foreach(['Enabled'=>true,'AdminOrigin'=>$Recovery?$this->settings()['AdminOrigin']:$origin,'TrustedHTTPSProxyIPs'=>SecretsFrontendConfiguration::encode($proxies)]as$k=>$v)IPS_SetProperty($this->InstanceID,$k,$v);
             $this->WriteAttributeBoolean('GuidedV2Only',true);IPS_ApplyChanges($this->InstanceID);
             $s=['intent'=>SecretsBackendCodec::b64(random_bytes(32)),'runtime'=>$this->BootstrapRuntime(),'origin'=>$origin,'frontend'=>$this->ReadAttributeString('BootstrapIdentity'),
                 'mode'=>$Recovery?'recovery':'initial','recovery'=>$recovery,'expires'=>time()+900,'lastClock'=>time(),'frontDigest'=>SecretsBootstrapVerifier::digest($this->settings()),'roster'=>$roster,'vault'=>$recovery['vault']??SecretsBackendCodec::uuid(),
@@ -64,7 +66,7 @@ trait SecretsFrontendBootstrap
                 'resumeKey'=>SecretsBackendCodec::b64(random_bytes(32)),'prepares'=>[],'candidates'=>[]];
             $journal->locked(fn()=>$journal->write('intent-'.hash('sha256',$s['intent']),['intent'=>$s['intent'],'frontend'=>$this->InstanceID,'origin'=>$origin,'vault'=>$s['vault']]));
             $this->bootstrapSave($s);if(!$this->Refresh())throw new RuntimeException('The setup hook could not be registered.');
-            return $this->GetWizardURL();
+            return $origin.$this->path();
         });
     }
     public function OpenRecoveryBootstrap(): string { return $this->OpenBootstrap('', '', true); }
@@ -115,11 +117,11 @@ trait SecretsFrontendBootstrap
     }
     private function bootstrapCookieName(): string
     {
-        return '__Host-SECFB_'.str_replace('-','',$this->ReadAttributeString('BootstrapIdentity')).'_'.substr(hash('sha256',$this->settings()['AdminOrigin']),0,16);
+        return '__Host-SECFB_'.str_replace('-','',$this->ReadAttributeString('BootstrapIdentity')).'_'.substr(hash('sha256',$this->bootstrapState()['origin']??$this->settings()['AdminOrigin']),0,16);
     }
     private function bootstrapContext(array $r,array $ctx): void
     {
-        if($r['origin']!==$this->settings()['AdminOrigin']||!hash_equals($ctx['csrf'],$r['csrf']))throw new RuntimeException('Bootstrap CSRF binding failed.');
+        if($r['origin']!==($this->bootstrapState()['origin']??$this->settings()['AdminOrigin'])||!hash_equals($ctx['csrf'],$r['csrf']))throw new RuntimeException('Bootstrap CSRF binding failed.');
         preg_match_all('/(?:^|;\s*)'.preg_quote($this->bootstrapCookieName(),'/').'=([A-Za-z0-9_-]{43})(?=;|$)/',$r['cookie'],$m);
         if(count($m[1])!==1||!hash_equals($ctx['cookieHash'],hash('sha256',$m[1][0])))throw new RuntimeException('Bootstrap cookie binding failed.');
     }

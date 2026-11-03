@@ -229,6 +229,12 @@ class SecretsFrontend extends IPSModule
         $lines = array_filter(explode("\n", (string)$this->GetValue('Debug'))); $lines[] = gmdate('Y-m-d H:i:s') . ' UTC | ' . $code;
         $this->SetValue('Debug', implode("\n", array_slice($lines, -50)));
     }
+    public function ApproveMagicFullAccess(string $Digest): void
+    {
+        if(IPS_HasChanges($this->InstanceID))throw new RuntimeException('Apply pending settings first.');
+        if(!SECB_ApproveConnectUpgradeFromConsole($this->backend(),$this->InstanceID,$Digest))throw new RuntimeException('Magic access could not be upgraded.');
+        $this->SetValue('Status','Full Magic access approved. Sign in again at the Magic address.');$this->ReloadForm();
+    }
     public function RefreshBootstrapForm(): void { $this->ReloadForm(); }
     public function GetConfigurationForm(): string
     {
@@ -240,11 +246,26 @@ class SecretsFrontend extends IPSModule
             if(($element['name']??'')==='OpenRecoveryBootstrap')$element['enabled']=$recoveryAvailable;
             if(($element['name']??'')==='RecoveryAvailability')$element['visible']=!$recoveryAvailable;
             if(($element['name']??'')==='BootstrapJournalStorage'){$element['visible']=$requirements['confirmationRequired']&&!$this->ReadAttributeBoolean('BootstrapJournalConfirmed');$element['value']=$this->ReadAttributeBoolean('BootstrapJournalConfirmed');$element['caption']='I verified private access and persistence across container replacement for setup records: '.$requirements['data'].' and keys: '.$requirements['keys'];}
-            if(($element['name']??'')==='SetupAddress'){$element['value']=$origin;$element['visible']=$url==='';}
+            if(($element['name']??'')==='SetupAddress'){$element['value']=$origin;$element['visible']=true;}
             if(($element['name']??'')==='OpenBootstrap')$element['enabled']=$url!=='';
             if(($element['name']??'')==='SetupAddressStatus')$element['caption']=$preview['message'];
             if(($element['name']??'')==='WizardURL')$element['value']=$url;
         }unset($element);
+        try{$magic=json_decode(SECB_GetConnectUpgradeReview($this->backend(),$this->InstanceID),true,32,JSON_THROW_ON_ERROR);$review=$magic['review'];
+            $form['actions'][]=['type'=>'ExpansionPanel','caption'=>'Magic URL · approve full access','items'=>[
+                ['type'=>'Label','caption'=>'Grant read, write, export and full administration at '.$review['origin'].'. Only the tested credentials listed below are upgraded. Existing Magic sessions expire.'],
+                ['type'=>'Label','caption'=>SecretsFrontendConfiguration::encode($review['credentials'])],
+                ['type'=>'Button','caption'=>'Approve full Magic access','confirm'=>'Approve full administration for exactly these tested Magic credentials?','onClick'=>'SECF_ApproveMagicFullAccess($id, '.var_export($magic['digest'],true).');']
+            ]];
+        }catch(Throwable $ignored){}
+        $route=$this->bootstrapNative()['backupOrigin']??null;
+        if(($route['version']??0)===2&&($route['status']??'')==='active'){
+            $form['actions'][]=['type'=>'ExpansionPanel','caption'=>'Magic URL','items'=>[
+                ['type'=>'ValidationTextBox','caption'=>'Full administration address','value'=>$route['origin'].$this->path(),'enabled'=>false],
+                ['type'=>'Button','caption'=>'Open Magic URL','onClick'=>'echo SECF_OpenBootstrapFromConsole($id, '.var_export($route['origin'],true).', false, false);'],
+                ['type'=>'Button','caption'=>'Recover administrator access using Magic','onClick'=>'echo SECF_OpenBootstrapFromConsole($id, '.var_export($route['origin'],true).', false, true);']
+            ]];
+        }
         $approvals=[];
         try{$views=json_decode($this->GetBootstrapConsoleView(),true);foreach($views as$v){
             $literal=static fn(string $text)=>var_export($text,true);

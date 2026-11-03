@@ -1,3 +1,4 @@
+function fullAdministration(){return snapshot?.native?.fullAdministrator===true||boot.origin===(snapshot?.native?.primaryOrigin||boot.origin);}
 'use strict';
 let nativeSensitiveTimer=null,nativeProviderId='';
 function nativeClearSecrets(){clearTimeout(nativeSensitiveTimer);for(const id of ['nativeSensitiveValue','nativeInvitation','nativeRecoveryKey'])if($(id))$(id).value='';for(const id of ['nativeSensitiveDialog'])if($(id)?.open)$(id).close();}
@@ -59,17 +60,18 @@ $('nativeMachineScope').addEventListener('change',()=>{const scope=$('nativeMach
 
 run($('nativeRecoveryEnrollment'),()=>{tab('setup');message('In the trusted Symcon console, open Recover administrator access. Then prepare and compare your replacement passkey here. Hardware policies remain enforced.');});
 
-let connectPopup=null,connectCandidate=null,connectPendingMessage=null,connectEnrollmentStatus=null,connectStatusTimer=null;
+let connectPopup=null,connectCandidate=null,connectPendingMessage=null,connectEnrollmentStatus=null,connectStatusTimer=null,connectRouteTimer=null;
 function renderConnect(){
- const p=snapshot?.native?.backupOrigin,primary=boot.origin===(snapshot?.native?.primaryOrigin||boot.origin);
- $('connectWizard').hidden=!primary;
+ const p=snapshot?.native?.backupOrigin,primary=fullAdministration();
+ clearTimeout(connectRouteTimer);$('connectWizard').hidden=!primary;
  if(!primary)return;
  if(p&&p.status!=='revoked')$('connectOrigin').value=p.origin;
- const pending=p?.status==='pending',active=p?.status==='active';
+ const pending=p?.status==='pending',active=p?.status==='active';const routePending=(snapshot.native.peers||[]).filter(peer=>peer.active&&peer.routeReceipt!==(snapshot.native.routeRevision||'0')).length;$('connectUpgrade').hidden=!(active&&p.version===1);$('connectAdminURL').value=p?.origin?new URL(boot.path,p.origin).href:'';
  $('connectAllow').disabled=pending||active||!$('connectOrigin').value;
  $('connectOpen').disabled=!pending;$('connectApprove').disabled=!pending||!connectCandidate;
  $('connectRevoke').hidden=!pending&&!active;
- $('connectState').textContent=active?'Backup access is active. Save the Connect address and test a fresh sign-in.':pending?'Step 3 of 4 · Create the backup passkey, then approve it here.':'Step 1 of 4 · Find your Connect address.';
+ $('connectState').textContent=active?p.version===2?routePending?'Full Magic access is active. Publishing its address to '+routePending+' connected platform(s)…':'Full Magic access is active. Both addresses provide the same functions.':'Limited Magic access is active. Approve full access below.':pending?'Step 3 of 4 · Create the backup passkey, then approve it here.':'Step 1 of 4 · Find your Connect address.';
+ if(active&&p.version===2&&routePending)connectRouteTimer=setTimeout(async()=>{if(!pageActive||document.hidden||!snapshot?.native)return;try{const progress=await api('nativePairingStatus');Object.assign(snapshot.native,progress);renderConnect();}catch{message('Refresh connection status to check Magic address delivery.',true);}},5000);
  for(let i=1;i<=4;i++)$('connectStep'+i).classList.toggle('active',i===(active?4:pending?connectCandidate?4:3:$('connectOrigin').value?2:1));
 }
 run($('nativeDiscoverConnect'),async ticket=>{const result=await api('connectDiscovery',{},ticket);if(result.available){$('connectOrigin').value=result.origin;$('nativeConnectDiscovery').textContent='Address found. Continue with 2 · Allow backup setup.';renderConnect();}else $('nativeConnectDiscovery').textContent=result.message;});
@@ -89,7 +91,7 @@ window.addEventListener('focus',connectReviewIncoming);document.addEventListener
 run($('connectApprove'),ticket=>{if(!connectCandidate)throw Error('Complete Step 3 first.');return review({kind:'nativeConnectActivate',candidate:connectCandidate.candidate,digest:connectCandidate.digest},'Compare this exact credential fingerprint with the backup window: '+connectCandidate.fingerprint+'. Grant the displayed administrator access at '+connectCandidate.origin+'.',ticket);});
 run($('connectRevoke'),ticket=>{const p=snapshot.native.backupOrigin;connectCandidate=null;return review({kind:'nativeConnectRevoke',origin:p.origin,generation:p.generation},'Remove this backup route and invalidate all its sessions, challenges and pending setup. Your primary address remains available.',ticket);});
 run($('connectCreate'),async ticket=>{
- clearTimeout(connectStatusTimer);connectEnrollmentStatus=null;$('connectEnrollmentStep').textContent='Backup access · Step 3 of 4';$('connectFinish').hidden=true;$('connectFinish').disabled=true;$('connectReturnPrimary').hidden=true;
+ clearTimeout(connectStatusTimer);clearTimeout(connectRouteTimer);connectEnrollmentStatus=null;$('connectEnrollmentStep').textContent='Backup access · Step 3 of 4';$('connectFinish').hidden=true;$('connectFinish').disabled=true;$('connectReturnPrimary').hidden=true;
  const ctx=await bootstrapKey(),p=await api('connectOptions',{key:ctx.key},ticket);
  const cred=await ceremony('create',options(p.options,true),ticket);
  const credential={type:cred.type,rawId:encoded(cred.rawId),response:{clientDataJSON:encoded(cred.response.clientDataJSON),attestationObject:encoded(cred.response.attestationObject)}};
@@ -121,15 +123,15 @@ async function connectCheckStatus(ticket=generation){
 run($('connectReturnPrimary'),()=>{if(window.opener&&!window.opener.closed)window.opener.focus();else message('Return to your usual Secrets address and approve Step 4. Keep this backup window open.');});
 $('connectFinish').addEventListener('click',async()=>{
  $('connectFinish').disabled=true;const ticket=generation;if(!await connectCheckStatus(ticket))return;
- clearTimeout(connectStatusTimer);connectEnrollmentStatus=null;boot.backupEnrollment=false;document.body.classList.remove('connectPending');tab('overview');
+ clearTimeout(connectStatusTimer);clearTimeout(connectRouteTimer);connectEnrollmentStatus=null;boot.backupEnrollment=false;document.body.classList.remove('connectPending');tab('overview');
  $('login').hidden=false;$('signin').disabled=false;$('readiness').textContent='Backup access is approved. Sign in with your backup passkey.';
 });
-window.addEventListener('pagehide',()=>{clearTimeout(connectStatusTimer);connectEnrollmentStatus=null;});
+window.addEventListener('pagehide',()=>{clearTimeout(connectStatusTimer);clearTimeout(connectRouteTimer);connectEnrollmentStatus=null;});
 document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(connectStatusTimer);else connectScheduleStatus();});
 
 let legacyReviewContext=null;
 function legacySetStep(step){for(let n=1;n<=4;n++)$('legacyStep'+n).hidden=n!==step;[...$('legacySteps').children].forEach((node,i)=>{node.classList.toggle('active',i+1===step);node.classList.toggle('complete',i+1<step);});}
-function renderLegacyImports(){const n=snapshot?.native;if(!n)return;$('nativeImportNav').hidden=boot.origin!==(n.primaryOrigin||boot.origin);const holder=$('legacyHistory');holder.replaceChildren();for(const record of n.legacyImports||[]){nativeRow(holder,record.source.name+' · imported '+record.at,'Old key folder: '+record.source.legacyKeyFolder+' · vault folder: '+(record.storage?.vaultDirectory||'kept current')+' · key folder: '+(record.storage?.keyDirectory||'kept current')+' · connections inactive.');for(const proposal of record.source.connections||[])nativeRow(holder,proposal.name,proposal.legacyEndpoint+' · needs new pairing');}if(!holder.childNodes.length)holder.textContent='No source settings imported yet.';}
+function renderLegacyImports(){const n=snapshot?.native;if(!n)return;$('nativeImportNav').hidden=!fullAdministration();const holder=$('legacyHistory');holder.replaceChildren();for(const record of n.legacyImports||[]){nativeRow(holder,record.source.name+' · imported '+record.at,'Old key folder: '+record.source.legacyKeyFolder+' · vault folder: '+(record.storage?.vaultDirectory||'kept current')+' · key folder: '+(record.storage?.keyDirectory||'kept current')+' · connections inactive.');for(const proposal of record.source.connections||[])nativeRow(holder,proposal.name,proposal.legacyEndpoint+' · needs new pairing');}if(!holder.childNodes.length)holder.textContent='No source settings imported yet.';}
 run($('legacyDiscover'),async ticket=>{const result=await api('legacySources',{},ticket);const select=$('legacySource');select.replaceChildren();const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent=result.sources.length?'Choose the old vault…':'No old PasswordSafe instances found';select.append(placeholder);for(const source of result.sources){const option=document.createElement('option');option.value=String(source.id);option.disabled=!source.ready;option.textContent=source.name+' · '+source.id+(source.ready?'':' · inactive or unapplied settings');select.append(option);}const ready=result.sources.filter(s=>s.ready);if(ready.length===1)select.value=String(ready[0].id);legacyReviewContext=null;legacySetStep(1);});
 function legacyParagraph(parent,label,value){const p=document.createElement('p'),strong=document.createElement('strong');strong.textContent=label+': ';p.append(strong,document.createTextNode(String(value)));parent.append(p);}
 run($('legacyPreview'),async ticket=>{const source=Number($('legacySource').value);if(!Number.isInteger(source)||source<=0)throw Error('Choose an active old vault.');legacyReviewContext=null;const result=await api('legacyPreview',{source,policy:$('legacyPolicy').value,vaultLocation:$('legacyVaultLocation').value,keyLocation:$('legacyKeyLocation').value,persistenceConfirmed:$('legacyPersistence').checked,privateACLConfirmed:$('legacyACL').checked},ticket);legacyReviewContext=result;const r=result.review,holder=$('legacyReview');holder.replaceChildren();legacyParagraph(holder,'Source',r.source.name+' · '+r.source.id+' · '+r.source.role);for(const scope of ['global','local']){const stats=r.summary[scope];legacyParagraph(holder,scope==='global'?'Global secrets':'Local secrets',stats.added+' new entries, '+stats.unchanged+' unchanged, '+stats.kept+' conflicting values kept, '+stats.replaced+' conflicting values replaced');if(stats.conflicts.length)legacyParagraph(holder,'Conflicting paths',stats.conflicts.map(p=>p.join(' / ')).join('; '));}legacyParagraph(holder,'Old vault location',r.source.legacyVaultLocation);legacyParagraph(holder,'Old key folder',r.source.legacyKeyFolder);legacyParagraph(holder,'Existing new-vault peers',String(r.activeRecipients??0)+' active recipients; global imports follow current sharing. Local secrets remain local.');legacyParagraph(holder,'Current vault folder',r.storage.current?.vaultDirectory||r.storage.vaultDirectory);legacyParagraph(holder,'Current key folder',r.storage.current?.keyDirectory||r.storage.keyDirectory);legacyParagraph(holder,'Selected vault folder',r.storage.vaultDirectory);legacyParagraph(holder,'Selected key folder',r.storage.keyDirectory);legacyParagraph(holder,'Storage choice',r.storage.action==='use-selected'?'Move the new vault to the selected folders. The old PasswordSafe files stay in place. Retained copies of the new vault are fenced against further writes.':'Keep current locations.');legacyParagraph(holder,'Excluded internal areas',r.excluded.join(', ')||'None');for(const warning of r.source.warnings)legacyParagraph(holder,'Review note',warning);for(const connection of r.source.connections)legacyParagraph(holder,'Inactive connection proposal',connection.name+' · '+connection.legacyEndpoint);legacySetStep(2);});
@@ -161,10 +163,12 @@ function renderGlobalConflicts(){
 
 let globalRefreshTimer=null;
 function scheduleGlobalRefresh(){clearTimeout(globalRefreshTimer);if(!snapshot?.native||!pageActive||!window.document)return;globalRefreshTimer=setTimeout(async()=>{
- try{if(document.hidden||boot.origin!==snapshot.native.primaryOrigin||($('secrets').hidden&&$('conflicts').hidden)||$('review').open||!$('browserForm').hidden||!$('revealed').hidden||$('nativeSensitiveDialog').open)return;
+ try{if(document.hidden||!fullAdministration()||($('secrets').hidden&&$('conflicts').hidden)||$('review').open||!$('browserForm').hidden||!$('revealed').hidden||$('nativeSensitiveDialog').open)return;
  const ticket=generation,r=await api('nativeGlobalStatus',{},ticket);if(r.revision===snapshot.revision)return;
  snapshot.revision=r.revision;revision=r.revision;snapshot.global=r.global;snapshot.local=r.local;snapshot.native.sharedGlobal=r.sharedGlobal;clearSecrets();renderTree();renderGlobalConflicts();
  }catch(error){if(error.name!=='AbortError')message('Sign in or refresh to update secrets.',true);}finally{scheduleGlobalRefresh();}
  },10000);}
 
 window.addEventListener('pagehide',()=>clearTimeout(globalRefreshTimer));
+
+run($('connectUpgrade'),ticket=>review({kind:'nativeConnectUpgrade'},'Grant full administration to the displayed tested Magic credentials. Existing Magic sessions will expire. Sign in again afterwards.',ticket));

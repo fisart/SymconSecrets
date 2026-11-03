@@ -27,7 +27,7 @@ function secBootstrapCandidate(SecretsFrontend $front,array &$request,array $key
     $prepared=$gateway->invoke($front,['action'=>'bootstrapPrepare','data'=>$reuse?['reuse'=>true]:[]]+$request);
     // Use one prepare and its exact cookie; an earlier candidate cannot replace it.
     $p=json_decode(json_encode($prepared['data']),true);$request['cookie']=explode(';',$prepared['cookie'])[0];$request['csrf']=$p['csrf'];
-    $browser=secKey();$jwk=secJwk($browser);$keyDigest=SecretsBootstrapVerifier::publicKey($jwk)['digest'];$credential=$reuse?secAssertion($key,$p['options']['challenge'],1):secRegistration($key,$p['options']['challenge']);
+    $browser=secKey();$jwk=secJwk($browser);$keyDigest=SecretsBootstrapVerifier::publicKey($jwk)['digest'];$credential=$reuse?secAssertion($key,$p['options']['challenge'],1,$request['origin']):secRegistration($key,$p['options']['challenge'],$request['origin']);
     $bytes=implode("\n",[$reuse?'SECF.BOOTSTRAP.REUSE.1':'SECF.BOOTSTRAP.SUBMIT.1',$request['origin'],'/hook/secrets_frontend_'.$front->InstanceID,$p['frontend'],$p['intent'],$p['prepare'],$p['options']['challenge'],$keyDigest,SecretsBootstrapVerifier::digest($credential)])."\n";
     $c=$invoke('bootstrapSubmit',['prepare'=>$p['prepare'],'key'=>$jwk,'credential'=>$credential,'signature'=>secRawSign($browser,$bytes)])['data'];
     return $c+['browser'=>$browser,'frontend'=>$p['frontend'],'intent'=>$p['intent'],'operation'=>'-'];
@@ -49,5 +49,5 @@ function secBootstrapInitialize(SecretsFrontend $front,array &$request,array $ke
     secBootstrapProof($front,$request,$ctx,'candidateStatus');
     $plan=secBootstrapProof($front,$request,$ctx,'planPreview',$choice)['data'];
     $begin=json_decode(json_encode(secBootstrapProof($front,$request,$ctx,'applyOptions',['planDigest'=>$plan['planDigest']])['data']),true);
-    return secBootstrapProof($front,$request,$ctx,'applyVerify',['planDigest'=>$plan['planDigest'],'credential'=>secAssertion($key,$begin['options']['challenge'],1)]);
+    return secBootstrapProof($front,$request,$ctx,'applyVerify',['planDigest'=>$plan['planDigest'],'credential'=>secAssertion($key,$begin['options']['challenge'],1,$request['origin'])]);
 }

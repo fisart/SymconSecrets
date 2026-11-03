@@ -29,7 +29,7 @@ trait SecretsFrontendGuidedSetup
     private function gateway(array $request): array
     {
         $action=$request['action'];
-        if(str_starts_with($action,'bootstrap')&&$request['origin']!==$this->settings()['AdminOrigin'])return ['status'=>403,'data'=>['error'=>'Use the primary address for initial setup and recovery.'],'cookie'=>''];
+        if(str_starts_with($action,'bootstrap')&&$request['origin']!==($this->bootstrapState()['origin']??$this->settings()['AdminOrigin']))return ['status'=>403,'data'=>['error'=>'Use the primary address for initial setup and recovery.'],'cookie'=>''];
         if(in_array($action,['bootstrapPrepare','bootstrapSubmit','bootstrapProof','bootstrapResumeOptions'],true)){
             try{return ['status'=>200]+$this->bootstrapRequest($request);}catch(Throwable $e){return ['status'=>403,'data'=>['error'=>$e->getMessage()],'cookie'=>''];}
         }

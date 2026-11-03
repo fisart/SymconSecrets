@@ -4,7 +4,7 @@ declare(strict_types=1);
 /** Reachable-owner transfer: freeze -> explicitly accept -> scoped signed ownership chain. */
 trait SecretsBackendNativeTransfer
 {
-    public static function authority(array $descriptor): string { unset($descriptor['treeId']);return self::digest($descriptor); }
+    public static function authority(array $descriptor): string { unset($descriptor['treeId'],$descriptor['endpoint']);return self::digest($descriptor); }
     public function ownerOffer(array $state,string $treeId,string $targetId): array
     {
         $target=$state['pairing']['peers'][$targetId]??null;if(!is_array($target)||!$target['active'])throw new RuntimeException('Pair the intended new owner before transferring a tree.');

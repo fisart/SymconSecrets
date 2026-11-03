@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/NativeStore.php';
 require_once __DIR__ . '/Tree.php';
 require_once __DIR__ . '/SharedGlobal.php';
+require_once __DIR__ . '/BackupOriginPolicy.php';
 require_once __DIR__ . '/NativeTransfer.php';
 require_once __DIR__ . '/NativeLegacyHTTPS.php';
 require_once __DIR__ . '/../SecretsFrontend/Configuration.php';
@@ -140,7 +141,7 @@ final class SecretsBackendNativePeer
         self::exact($m,['format','kind','sender','receiver','pairingId','epoch','id','sequence','payload','signature']);
         foreach(['sender','receiver','pairingId','id']as$key){if(!is_string($m[$key]))throw new RuntimeException('Invalid peer identity.');self::uuid($m[$key]);}
         self::decimal($m['epoch']);self::decimal($m['sequence']);
-        if($m['format']!=='SECB.Peer.1'||$m['receiver']!==$this->descriptor()['vaultId']||!in_array($m['kind'],['GLOBAL_ENABLE','PAIR_REQUEST','PAIR_ACCEPT','SYNC','STATUS','RESYNC','REVOKE','OWNER_OFFER','TREE_SYNC'],true))throw new RuntimeException('Wrong native peer purpose or recipient.');
+        if($m['format']!=='SECB.Peer.1'||$m['receiver']!==$this->descriptor()['vaultId']||!in_array($m['kind'],['ROUTES','GLOBAL_ENABLE','PAIR_REQUEST','PAIR_ACCEPT','SYNC','STATUS','RESYNC','REVOKE','OWNER_OFFER','TREE_SYNC'],true))throw new RuntimeException('Wrong native peer purpose or recipient.');
         if($m['kind']==='TREE_SYNC')return $this->receiveOwnedTree($m);
         $current=$this->store->read();$peer=$current['state']['pairing']['peers'][$m['sender']]??null;
         if($m['kind']!=='PAIR_REQUEST'){
@@ -151,7 +152,7 @@ final class SecretsBackendNativePeer
         $digest=self::logical($m,$payload);
         if($m['kind']==='PAIR_REQUEST'){
             self::exact($payload,['invitationId','expires','pair','proof']);$pair=$payload['pair'];self::pairCheck($pair);
-            if(self::digest($pair['a'])!==self::digest($this->descriptor())||$pair['b']['vaultId']!==$m['sender']||$pair['id']!==$m['pairingId']||$pair['epoch']!==$m['epoch']||$m['sequence']!=='0')throw new RuntimeException('Pairing descriptor was swapped.');
+            if((!hash_equals(self::authority($pair['a']),self::authority($this->descriptor()))||$pair['a']['treeId']!==$this->descriptor()['treeId']||!in_array($pair['a']['endpoint'],$this->ownRoutes($current['state']),true))||$pair['b']['vaultId']!==$m['sender']||$pair['id']!==$m['pairingId']||$pair['epoch']!==$m['epoch']||$m['sequence']!=='0')throw new RuntimeException('Pairing descriptor was swapped.');
             self::verify($m,$pair['b']['signKey']);$invite=$current['state']['native']['invites'][$payload['invitationId']]??null;
             if($peer!==null&&($peer['requestDigest']??'')===$digest){$target=$peer['descriptor'];$status=$peer['state'];}
             else{
@@ -171,6 +172,15 @@ final class SecretsBackendNativePeer
                 },['action'=>'peer-request','actor'=>$m['sender'],'target'=>$pair['id']]);
             }
             return $this->reply($m,$target,$digest,['status'=>$status,'pairDigest'=>self::digest($pair)]);
+        }
+        if($m['kind']==='ROUTES'){
+            self::exact($payload,['revision','endpoints']);self::decimal($payload['revision']);
+            if(!is_array($payload['endpoints'])||!array_is_list($payload['endpoints'])||count($payload['endpoints'])<1||count($payload['endpoints'])>2||count(array_unique($payload['endpoints']))!==count($payload['endpoints']))throw new RuntimeException('Invalid approved routes.');
+            foreach($payload['endpoints']as$endpoint){self::endpoint($endpoint);if(parse_url($endpoint,PHP_URL_PATH)!=='/hook/secrets_peer_'.$peer['descriptor']['backend'])throw new RuntimeException('Route changed backend identity.');}
+            $old=$peer['routes']??null;
+            if($old!==null&&(self::compare($payload['revision'],$old['revision'])<0||($payload['revision']===$old['revision']&&self::digest($payload)!==self::digest($old))))throw new RuntimeException('Stale or conflicting routes.');
+            if($old!==$payload)$this->store->change($current['head'],$m['id'],$digest,static function($s)use($m,$payload){$s['pairing']['peers'][$m['sender']]['routes']=$payload;return $s;},['action'=>'peer-routes','actor'=>$m['sender'],'target'=>$m['pairingId']]);
+            return $this->reply($m,$peer['descriptor'],$digest,['status'=>'ROUTES_ACCEPTED','revision'=>$payload['revision']]);
         }
         if($m['kind']==='GLOBAL_ENABLE'){
             self::exact($payload,['mode']);if($payload['mode']!==SecretsBackendSharedGlobal::SCOPE||!$peer['active'])throw new RuntimeException('Shared Global requires an active connection.');
@@ -245,13 +255,14 @@ final class SecretsBackendNativePeer
     {
         $target=$peer['descriptor'];$m=$this->envelope($target,$kind,$peer['pairingId'],$peer['epoch'],$id,$sequence,$payload);$bytes=SecretsBackendCodec::json($m);
         if($this->transport===null)throw new SecretsBackendNativePeerDeliveryFailure('transport');
-        $response=($this->transport)($target,$bytes,$peer['httpsPolicy']??['mode'=>'strict']);
-        try{$reply=SecretsFrontendConfiguration::decodeBounded($response,65536,32);self::exact($reply,['format','kind','sender','receiver','pairingId','epoch','id','sequence','payload','signature']);
+        $routes=$peer['routes']['endpoints']??[$target['endpoint']];$failure=null;foreach($routes as$endpoint){$route=$target;$route['endpoint']=$endpoint;
+        $responded=false;try{$policy=SecretsBackendNativeLegacyHTTPS::origin($endpoint)===SecretsBackendNativeLegacyHTTPS::origin($target['endpoint'])?($peer['httpsPolicy']??['mode'=>'strict']):['mode'=>'strict'];$response=($this->transport)($route,$bytes,$policy);$responded=true;
+$reply=SecretsFrontendConfiguration::decodeBounded($response,65536,32);self::exact($reply,['format','kind','sender','receiver','pairingId','epoch','id','sequence','payload','signature']);
         if($reply['format']!=='SECB.Peer.1'||$reply['kind']!=='REPLY'||$reply['sender']!==$target['vaultId']||$reply['receiver']!==$this->descriptor()['vaultId']||$reply['pairingId']!==$peer['pairingId']||$reply['epoch']!==$peer['epoch']||$reply['id']!==$id||$reply['sequence']!==$sequence)throw new RuntimeException('Peer reply was misbound.');
         self::verify($reply,$target['signKey']);$body=SecretsFrontendConfiguration::decode($this->store->openPeer($reply['payload']));
         if(($body['requestId']??'')!==$id||($body['requestKind']??'')!==$kind||($body['requestDigest']??'')!==self::logical($m,$payload))throw new RuntimeException('Peer acknowledgement does not match the immutable request.');
         return $body;
-        }catch(Throwable $e){throw new SecretsBackendNativePeerDeliveryFailure('invalid-reply');}
+        }catch(Throwable $e){$failure=$e instanceof SecretsBackendNativePeerDeliveryFailure?$e:new SecretsBackendNativePeerDeliveryFailure($responded?'invalid-reply':'unconfirmed');}}throw $failure??new SecretsBackendNativePeerDeliveryFailure('transport');
     }
     private function recoverGlobalGap(array $peer,array $job): void
     {
@@ -265,6 +276,22 @@ final class SecretsBackendNativePeer
             $payload=self::globalPayload($s,$p,$cursor['nodeDigest'])+['challenge'=>$cursor['challenge']];$s['stream']['next'][$p['id']]=$seq;$s['stream']['queuedDigest'][$p['id']]=$payload['nodeDigest'];$s['outbox']['jobs'][]=self::job($p,'RESYNC',$payload,$seq);return $s;
         },['action'=>'global-resynchronize','actor'=>'background','target'=>$peer['pairingId']]);
     }
+    public function ownRoutes(array $state): array
+    {
+        $primary=$this->store->identity()['binding']['origin'].'/hook/secrets_peer_'.$this->descriptor()['backend'];$routes=[];
+        if(SecretsBackendBackupOriginPolicy::full($state))$routes[]=$state['policy']['backupOrigin']['origin'].'/hook/secrets_peer_'.$this->descriptor()['backend'];
+        $routes[]=$primary;return array_values(array_unique($routes));
+    }
+    private function queueRoutes(): void
+    {
+        $cur=$this->store->read();$payload=['revision'=>$cur['state']['native']['routeRevision']??'0','endpoints'=>$this->ownRoutes($cur['state'])];
+        foreach($cur['state']['pairing']['peers']as$p){
+            if(!$p['active']||($p['routeReceipt']??null)===$payload['revision'])continue;
+            foreach($cur['state']['outbox']['jobs']as$j)if($j['receiverId']===$p['id']&&$j['kind']==='ROUTES')continue 2;
+            if(count($cur['state']['outbox']['jobs'])>=128)return;
+            $this->store->change($cur['head'],SecretsBackendCodec::uuid(),self::digest($payload),static function($s)use($p,$payload){$s['outbox']['jobs'][]=self::job($p,'ROUTES',$payload);return $s;},['action'=>'peer-routes-queued','actor'=>'background','target'=>$p['pairingId']]);return;
+        }
+    }
     private function queueAutomaticGlobal(): void
     {
         $cur=$this->store->read();foreach($cur['state']['pairing']['peers']as$p){
@@ -276,7 +303,7 @@ final class SecretsBackendNativePeer
     }
     public function dispatch(int $maximum=2,?string $onlyPeer=null,bool $retryNow=false,?string $onlyPairing=null): array
     {
-        if($this->automaticGlobal)$this->queueAutomaticGlobal();
+        if($this->automaticGlobal){$this->queueAutomaticGlobal();$this->queueRoutes();}
         $results=[];
         for($n=0;$n<$maximum;++$n){$current=$this->store->read();$job=null;
             $seen=[];foreach($current['state']['outbox']['jobs']as$item){if(($onlyPeer!==null&&$item['receiverId']!==$onlyPeer)||($onlyPairing!==null&&$item['pairingId']!==$onlyPairing)||isset($seen[$item['receiverId']]))continue;$seen[$item['receiverId']]=true;
@@ -287,11 +314,12 @@ final class SecretsBackendNativePeer
             if(!is_array($peer)||$peer['pairingId']!==$job['pairingId']||$peer['epoch']!==$job['epoch']||(!$peer['active']&&!in_array($job['kind'],['PAIR_REQUEST','REVOKE'],true)))break;
             try{$reply=$this->exchange($peer,$job['kind'],$job['payload'],$job['id'],$job['sequence']);
                 if($this->automaticGlobal&&$job['kind']==='SYNC'&&($reply['status']??'')==='RESYNC_REQUIRED'){$this->recoverGlobalGap($peer,$job);$results[]=['id'=>$job['id'],'status'=>'RESYNCHRONIZING'];continue;}
-                $expected=match($job['kind']){'GLOBAL_ENABLE'=>['GLOBAL_ENABLED'],'PAIR_REQUEST'=>['PENDING_APPROVAL','ACTIVE'],'PAIR_ACCEPT'=>['ACTIVE'],'SYNC','RESYNC'=>['APPLIED'],'REVOKE'=>['REVOKED'],'OWNER_OFFER'=>['OFFER_RECEIVED'],'TREE_SYNC'=>['TREE_APPLIED'],default=>[]};
+                $expected=match($job['kind']){'ROUTES'=>['ROUTES_ACCEPTED'],'GLOBAL_ENABLE'=>['GLOBAL_ENABLED'],'PAIR_REQUEST'=>['PENDING_APPROVAL','ACTIVE'],'PAIR_ACCEPT'=>['ACTIVE'],'SYNC','RESYNC'=>['APPLIED'],'REVOKE'=>['REVOKED'],'OWNER_OFFER'=>['OFFER_RECEIVED'],'TREE_SYNC'=>['TREE_APPLIED'],default=>[]};
                 if(!in_array($reply['status']??'',$expected,true))throw new RuntimeException('Peer did not acknowledge the expected operation.');
                 if(in_array($job['kind'],['SYNC','RESYNC','TREE_SYNC'],true)&&(($reply['treeId']??'')!==($job['payload']['treeId']??$job['payload']['tree']['treeId'])||($reply['revision']??'')!==($job['payload']['revision']??$job['payload']['tree']['revision'])||($reply['sequence']??'')!==$job['sequence']||($reply['nodeDigest']??'')!==($job['payload']['nodeDigest']??$job['payload']['tree']['nodeDigest'])))throw new RuntimeException('Peer receipt names another snapshot.');
                 $latest=$this->store->read();$this->store->change($latest['head'],$job['ackId'],self::digest($reply),static function($s)use($job,$reply){
                     $s['outbox']['jobs']=array_values(array_filter($s['outbox']['jobs'],static fn($x)=>$x['id']!==$job['id']));
+                    if($job['kind']==='ROUTES'){if(($reply['revision']??null)!==$job['payload']['revision'])throw new RuntimeException('Wrong route receipt.');$p=$s['pairing']['peers'][$job['receiverId']]??null;if(!$p||!$p['active']||$p['pairingId']!==$job['pairingId'])throw new RuntimeException('Connection changed during route publication.');$s['pairing']['peers'][$job['receiverId']]['routeReceipt']=$reply['revision'];return $s;}
                     if($job['kind']==='GLOBAL_ENABLE'){$p=$s['pairing']['peers'][$job['receiverId']]??null;if(!$p||!$p['active']||$p['pairingId']!==$job['pairingId'])throw new RuntimeException('Connection changed during automatic Global setup.');if(($reply['mode']??'')!==SecretsBackendSharedGlobal::SCOPE)throw new RuntimeException('Peer does not support shared Global.');$s['pairing']['peers'][$job['receiverId']]['globalMode']=SecretsBackendSharedGlobal::SCOPE;return self::queueGlobal(SecretsBackendSharedGlobal::enable($s),$job['receiverId']);}
                     $s['native']['deliveryReceipts'][$job['receiverId']]=array_replace($reply,['pairingId'=>$job['pairingId']]);return $s;
                 },['action'=>'peer-receipt','actor'=>$job['receiverId'],'target'=>$job['id']]);$results[]=['id'=>$job['id'],'status'=>'ACKNOWLEDGED'];

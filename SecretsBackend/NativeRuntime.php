@@ -2,12 +2,13 @@
 declare(strict_types=1);
 require_once __DIR__ . '/NativePeer.php';
 require_once __DIR__ . '/NativeLegacyHTTPS.php';
+require_once __DIR__.'/../SecretsFrontend/ConnectDiscovery.php';
 
 trait SecretsBackendNativeRuntime
 {
-    private function nativePeer(?SecretsBackendNativeStore $store=null): SecretsBackendNativePeer
+    private function nativePeer(?SecretsBackendNativeStore $store=null,?string $origin=null): SecretsBackendNativePeer
     {
-        return new SecretsBackendNativePeer($store??$this->nativeStore(),$this->ReadPropertyString('AdminOrigin').'/hook/secrets_peer_'.$this->InstanceID,
+        return new SecretsBackendNativePeer($store??$this->nativeStore(),($origin??$this->ReadPropertyString('AdminOrigin')).'/hook/secrets_peer_'.$this->InstanceID,
             function(array $target,string $bytes,array $policy=['mode'=>'strict']):string{
                 $id=(int)$target['backend'];
                 if(function_exists('SECB_GetNativePublicDescriptor')&&function_exists('SECB_ReceiveNativePeer')&&IPS_InstanceExists($id)
@@ -62,19 +63,29 @@ trait SecretsBackendNativeRuntime
         }finally{IPS_SemaphoreLeave($lock);}
     }
     // Symcon generates an untyped HookInstance override, so this signature stays untyped.
-    private function nativePairingPage(): string
+    private function nativePairingPage(?string $host=null): string
     {
         if(!$this->ReadPropertyBoolean('Enabled')||!$this->nativeInitialized())throw new RuntimeException('Native peer receiver is disabled.');
         $this->nativeApplication();$id=$this->ReadPropertyInteger('FrontendInstanceID');if($id<=0)throw new RuntimeException('No paired frontend.');
-        return $this->ReadPropertyString('AdminOrigin').'/hook/secrets_frontend_'.$id;
+                $origin=$this->ReadPropertyString('AdminOrigin');if($host!==null){$candidate=SecretsFrontendConfiguration::origin('https://'.$host);$s=$this->nativeStore()->read()['state'];if($candidate!==$origin){$p=$s['policy']['backupOrigin']??null;if(!SecretsBackendBackupOriginPolicy::full($s)||$candidate!==$p['origin'])throw new RuntimeException('Unknown peer landing origin.');$origin=$candidate;}}
+        return $origin.'/hook/secrets_frontend_'.$id;
+    }
+    private function nativePeerTransportOrigin(array $server): string
+    {
+        $ips=json_decode(IPS_GetProperty($this->ReadPropertyInteger('FrontendInstanceID'),'TrustedHTTPSProxyIPs'),true,8,JSON_THROW_ON_ERROR);$proxy=in_array($server['REMOTE_ADDR']??'',$ips,true);$host=$proxy&&isset($server['HTTP_X_FORWARDED_HOST'])?$server['HTTP_X_FORWARDED_HOST']:($server['HTTP_HOST']??'');
+        $origin=SecretsFrontendConfiguration::origin('https://'.$host);$primary=$this->ReadPropertyString('AdminOrigin');
+        if($origin===$primary)return $origin;
+        $s=$this->nativeStore()->read()['state'];$p=$s['policy']['backupOrigin']??null;
+        if(!SecretsBackendBackupOriginPolicy::full($s)||$origin!==$p['origin'])throw new RuntimeException('Unknown or revoked peer origin.');
+        if(!SecretsFrontendConnectDiscovery::secureRoute($server,$origin,$ips,SecretsFrontendConnectDiscovery::local()))throw new RuntimeException('Magic peer transport is unverified.');return $origin;
     }
     protected function ProcessHookData()
     {
         header('Content-Type: application/json; charset=utf-8');header('Cache-Control: no-store');header('X-Content-Type-Options: nosniff');
         try{
-            $path='/hook/secrets_peer_'.$this->InstanceID;$uri=(string)($_SERVER['REQUEST_URI']??$path);
+            $transportOrigin=$this->nativePeerTransportOrigin($_SERVER);$path='/hook/secrets_peer_'.$this->InstanceID;$uri=(string)($_SERVER['REQUEST_URI']??$path);
             if(in_array($_SERVER['REQUEST_METHOD']??'', ['GET','HEAD'],true)&&parse_url($uri,PHP_URL_PATH)===$path&&($_SERVER['QUERY_STRING']??'')===''){
-                header('Location: '.$this->nativePairingPage());http_response_code(303);return;
+                header('Location: '.$this->nativePairingPage(substr($transportOrigin,8)));http_response_code(303);return;
             }
             if(($_SERVER['REQUEST_METHOD']??'GET')!=='POST'||parse_url($uri,PHP_URL_PATH)!==$path||($_SERVER['QUERY_STRING']??'')!=='')throw new RuntimeException('Only the fixed native POST endpoint is supported.');
             $types=[];foreach(['CONTENT_TYPE','HTTP_CONTENT_TYPE']as$key){$value=trim((string)($_SERVER[$key]??''));if($value!=='')$types[strtolower(trim(explode(';',$value,2)[0]))]=true;}

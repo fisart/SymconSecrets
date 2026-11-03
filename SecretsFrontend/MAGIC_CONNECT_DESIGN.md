@@ -7,6 +7,14 @@ revocation, and verification of the deployed Connect transport and outage path.
 The requirements below incorporate the full audit and developer acceptance
 tests, including MC01–MC03. The implementation has not itself been independently audited.
 
+## Full administration update
+
+The current implementation extends this original limited-backup contract. See
+[FULL_MAGIC_ACCESS.md](FULL_MAGIC_ACCESS.md) for policy version 2, explicit
+version-1 upgrades, complete administration, peer routing and outage verification.
+The limited-session description below applies only to existing version-1 grants;
+new enrollment explicitly approves full administration.
+
 ## Goal and existing behavior
 
 One initialized native vault must remain accessible at its current primary HTTPS

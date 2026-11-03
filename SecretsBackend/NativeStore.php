@@ -276,7 +276,7 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
         // entire frame, including these fields, remains AEAD-authenticated.
         unset($state['operations'], $state['outbox']);
         unset($state['native']['deliveryReceipts'], $state['stream']['next'], $state['stream']['queuedDigest']);
-        foreach ($state['pairing']['peers'] as &$peer) unset($peer['lastSync']);
+        foreach ($state['pairing']['peers'] as &$peer) unset($peer['lastSync'],$peer['routeReceipt']);
         unset($peer);
         return hash('sha256', 'SECB.Native.State:' . self::canonical($state));
     }
