@@ -17,6 +17,38 @@ trait SecretsBackendLegacyRuntime
                 ||IPS_GetProperty($source,'OperationMode')!==$permission['mode'])throw new RuntimeException('Legacy instance/backend/role binding differs from its approval.');
         });
     }
+    /** Permission/readiness metadata only: no key names, values, paths or exception text. */
+    public function GetLegacyAPIStatus(): string
+    {
+        $out=['backend'=>$this->InstanceID,'readAllowed'=>false,'grantPresent'=>false,'grantEnabled'=>false,'readApproved'=>false,'writesFrozen'=>null,'code'=>'BACKEND_UNAVAILABLE'];
+        try{
+            if(!$this->ReadPropertyBoolean('Enabled'))$out['code']='BACKEND_DISABLED';
+            elseif(IPS_HasChanges($this->InstanceID))$out['code']='PENDING_SETTINGS';
+            else{
+                $service=$this->legacyService($this->InstanceID);$state=$this->nativeStore()->read()['state'];
+                $p=$state['native']['legacyAccess'][(string)$this->InstanceID]??null;
+                if(is_array($p))$out=array_replace($out,['grantPresent'=>true,'grantEnabled'=>($p['enabled']??false)===true,'readApproved'=>($p['read']??false)===true,'writesFrozen'=>($p['frozen']??true)===true]);
+                if(!is_array($p))$out['code']='READ_GRANT_MISSING';
+                elseif(!$out['grantEnabled'])$out['code']='READ_GRANT_DISABLED';
+                elseif(($p['treeId']??'')!==$state['native']['globalTreeId'])$out['code']='GLOBAL_IDENTITY_CHANGED';
+                elseif(!$out['readApproved'])$out['code']='READ_NOT_APPROVED';
+                else{$service->permission($state,'read');$out['readAllowed']=true;$out['code']='READ_ALLOWED';}
+            }
+        }catch(Throwable $error){$out['code']='BACKEND_UNAVAILABLE';}
+        $out['meaning']=match($out['code']){
+            'READ_ALLOWED'=>'Application read access is approved. An empty successful GetKeys result means no available top-level Global application records; it does not list Local records or count nested values.',
+            'READ_GRANT_MISSING'=>'No application read grant is approved for this backend instance. Browser administrator sign-in does not authorize a local PHP script.',
+            'READ_GRANT_DISABLED'=>'The application access grant for this backend is disabled.',
+            'READ_NOT_APPROVED'=>'The backend access grant does not include reading application secrets.',
+            'GLOBAL_IDENTITY_CHANGED'=>'The grant belongs to a different Global tree identity and needs a fresh exact approval.',
+            'BACKEND_DISABLED'=>'The new backend is disabled.',
+            'PENDING_SETTINGS'=>'Backend settings have unapplied changes.',
+            default=>'The native backend could not validate its current storage, runtime or pinned security configuration. No automatic recovery or permission change was attempted.'};
+        $out['nextStep']=in_array($out['code'],['READ_GRANT_MISSING','READ_GRANT_DISABLED','READ_NOT_APPROVED','GLOBAL_IDENTITY_CHANGED'],true)
+            ?'In Automation access -> Existing SEC applications, approve this backend ID with Read application secrets. For a read-only script leave write, bulk and protected-page rights off and keep writes frozen.'
+            :($out['code']==='READ_ALLOWED'?'Run the read again. If it warns, the operation failed after this status check; do not treat its fallback [] as an empty vault.':'Check the backend status and applied settings.');
+        return SecretsBackendCodec::json($out);
+    }
     public function CallLegacyAPI(int $SourceInstanceID,string $Method,string $ArgumentsJSON): string
     {
         if(!in_array($Method,SecretsBackendLegacyAPI::DATA_METHODS,true))throw new RuntimeException('This legacy administration operation requires its native approved workflow.');
@@ -24,17 +56,21 @@ trait SecretsBackendLegacyRuntime
         $args=json_decode($ArgumentsJSON,true,32,JSON_THROW_ON_ERROR);if(!is_array($args)||!array_is_list($args))throw new InvalidArgumentException('Legacy arguments must be a positional array.');
         $counts=['GetKeys'=>0,'GetSecret'=>1,'GetExplorerFields'=>1,'SetRecordFields'=>3,'ExportLocalSecrets'=>0,'ImportLocalSecrets'=>1,'EncryptAndSave'=>1];
         if(count($args)!==$counts[$Method])throw new InvalidArgumentException('Legacy argument count differs.');
-        try{$service=$this->legacyService($SourceInstanceID);$value=$service->{$Method}(...$args);$output=$service->output();}
+        $failure=null;
+        try{$service=$this->legacyService($SourceInstanceID);$value=$service->{$Method}(...$args);$output=$service->output();$this->SetBuffer('LegacyAPILastError','');}
         catch(Throwable $error){
             $output=$Method==='EncryptAndSave'?'❌ Error: Encryption failed.':'';
+            $failure=['code'=>'LEGACY_API_REFUSED','meaning'=>'The read/write request failed authorization or backend validation. The fallback value does not prove an empty vault.'];
             $this->SetBuffer('LegacyAPILastError','Legacy '.$Method.' refused; check approved access, binding, freeze, Global conflicts and backend readiness.');
             $value=match($Method){'GetKeys'=>'[]','GetExplorerFields'=>[],'SetRecordFields','ImportLocalSecrets'=>false,'EncryptAndSave'=>null,default=>''};
         }
-        return SecretsBackendCodec::json(['value'=>$value,'output'=>$output??'']);
+        return SecretsBackendCodec::json(['value'=>$value,'output'=>$output??'','error'=>$failure]);
     }
     private function legacyValue(string $method,array $args)
     {
-        $result=json_decode($this->CallLegacyAPI($this->InstanceID,$method,SecretsBackendCodec::json($args)),true,32,JSON_THROW_ON_ERROR);if(($result['output']??'')!=='')echo $result['output'];return $result['value'];
+        $result=json_decode($this->CallLegacyAPI($this->InstanceID,$method,SecretsBackendCodec::json($args)),true,32,JSON_THROW_ON_ERROR);if(($result['output']??'')!=='')echo $result['output'];
+        if(($result['error']??null)!==null&&in_array($method,['GetKeys','GetSecret','GetExplorerFields','ExportLocalSecrets'],true))trigger_error('SecretsBackend: legacy read refused. Run SECB_GetLegacyAPIStatus('.$this->InstanceID.') for permission and backend diagnostics; the fallback value is not evidence of an empty vault.',E_USER_WARNING);
+        return $result['value'];
     }
     public function GetKeys(): string { return $this->legacyValue(__FUNCTION__,[]); }
     public function GetSecret(string $ident): string { return $this->legacyValue(__FUNCTION__,[$ident]); }
