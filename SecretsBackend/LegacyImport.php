@@ -86,13 +86,18 @@ final class SecretsBackendLegacyImport
         if(count($stats['conflicts'])>=200)throw new RuntimeException('More than 200 conflicts; split the migration before importing.');
         $stats['conflicts'][]=$path;if($policy==='replace'){$stats['replaced']++;return $incoming;}$stats['kept']++;return $target;
     }
-    public static function plan(array $state,array $source,string $policy,int $limit): array
+    public static function plan(array $state,array $source,string $policy,int $limit,string $importScope='all'): array
     {
         if(!in_array($policy,['keep','replace'],true))throw new RuntimeException('Choose how to handle existing values.');
-        $trees=[];$stats=[];foreach(['global','local']as$scope){$stats[$scope]=['added'=>0,'replaced'=>0,'kept'=>0,'unchanged'=>0,'conflicts'=>[]];$trees[$scope]=self::merge($state['vault'][$scope],$source[$scope],$policy,$stats[$scope]);
+        if(!in_array($importScope,['all','local'],true))throw new RuntimeException('Choose Local secrets only or Global and Local secrets.');
+        $trees=[];$stats=[];foreach(['global','local']as$scope){
+            $stats[$scope]=['added'=>0,'replaced'=>0,'kept'=>0,'unchanged'=>0,'conflicts'=>[],'skipped'=>$importScope==='local'&&$scope==='global'];
+            // Preserve the exact Global tree, including conflicted native versions, without merging old Global data.
+            if($stats[$scope]['skipped']){$trees[$scope]=$state['vault'][$scope];continue;}
+            $trees[$scope]=self::merge($state['vault'][$scope],$source[$scope],$policy,$stats[$scope]);
             // Enforce the native limits on the complete merged hierarchy before approval.
             SecretsBackendTree::parseBounded(SecretsBackendCodec::json(SecretsBackendTree::value($trees[$scope])),$limit);
         }
-        return ['trees'=>$trees,'summary'=>$stats];
+        return ['trees'=>$trees,'summary'=>$stats,'scope'=>$importScope];
     }
 }

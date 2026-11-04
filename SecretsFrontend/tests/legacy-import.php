@@ -31,6 +31,47 @@ try{
  $pathsBefore=((new ReflectionMethod(SecretsBackend::class,'nativeStore'))->invoke($back))->read()['state']['policy']['management']['settings'];
  $sources=$invoke('legacySources')['data'];secExpect($sources['sources'][0]['id']===6000,'Old vault discovery failed.');
  $cookie=$request['cookie'];$request['cookie']='';$readCount=$GLOBALS['legacyReadCount'];secReject(static fn()=>$invoke('legacyPreview',['source'=>6000,'policy'=>'keep']),'Unauthenticated import preview was accepted.');secExpect($GLOBALS['legacyReadCount']===$readCount,'Unauthenticated preview read legacy bytes.');$request['cookie']=$cookie;
+ // Local-only preparation on a system joining an existing Global vault.
+ $store=(new ReflectionMethod(SecretsBackend::class,'nativeStore'))->invoke($back);
+ $approved(['kind'=>'save','scope'=>'local','path'=>['LocalOnly'],'revision'=>$invoke('session')['data']['revision'],'mode'=>'create','json'=>'{"Token":"CURRENT-LOCAL"}']);
+ $modelBeforeLocal=$store->read()['state']['native']['sharedGlobal']??null;
+ $current=$store->read();$store->change($current['head'],SecretsBackendCodec::uuid(),hash('sha256','local-import-readonly-global'),static function($s){$s=SecretsBackendSharedGlobal::enable($s);$s['native']['globalWritable']=false;return $s;});
+ $globalState=static fn($s)=>[$s['vault']['global'],$s['stream'],$s['native']['sharedGlobal'],$s['native']['globalTreeId'],$s['native']['globalWritable'],$s['pairing'],$s['outbox']];
+ $globalBefore=$globalState($store->read()['state']);
+ foreach(['global','invalid','',null,[]]as$invalid){$reads=$GLOBALS['legacyReadCount'];secReject(static fn()=>$invoke('legacyPreview',['source'=>6000,'policy'=>'keep','scope'=>$invalid]),'Invalid scope accepted.');secExpect($reads===$GLOBALS['legacyReadCount'],'Invalid scope read source bytes.');}
+ foreach(['keep','replace']as$policy){
+     $preview=$invoke('legacyPreview',['source'=>6000,'policy'=>$policy,'scope'=>'local'])['data'];$review=$preview['review'];
+     secExpect($review['scope']==='local'&&$review['summary']['global']['skipped']&&$review['summary']['global']['conflicts']===[],'Local-only preview did not exclude Global.');
+     secExpect($review['summary']['local'][$policy==='keep'?'kept':'replaced']===1,'Local-only conflict policy not reviewed.');
+     secExpect(!str_contains(json_encode($review),'IMPORT-VALUE-CANARY')&&!str_contains(json_encode($review),'LOCAL-VALUE-CANARY')&&!str_contains(json_encode($review),'Existing'),'Local preview exposed secret values or Global conflict paths.');
+     $op=['kind'=>'nativeLegacyImport','candidate'=>$preview['candidate'],'digest'=>$preview['digest']];
+     secReject(static fn()=>$approved($op+['scope'=>'all']),'Approval allowed overriding the bound Local scope.');
+     secReject(static fn()=>$approved(array_replace($op,['digest'=>str_repeat('0',64)])),'Local candidate digest tampering accepted.');
+     $result=$approved($op);$state=$store->read()['state'];
+     secExpect($result['scope']==='local'&&$result['verified'],'Import result lost its Local-only scope.');
+     secExpect($globalState($state)===$globalBefore,'Local-only import changed Global tree, revision, versions, trust or queued sharing.');
+     secExpect(SecretsBackendTree::value($state['vault']['local'])->LocalOnly->Token===($policy==='keep'?'CURRENT-LOCAL':'LOCAL-VALUE-CANARY'),'Local-only keep/replace failed.');
+     secExpect($state['native']['legacyImports']['6000']['scope']==='local','Import history lost the selected scope.');
+     $backup=SecretsBackendNativeBackup::decrypt($result['backup'],$result['recoveryKey'],4*1024*1024);
+     secExpect(SecretsBackendTree::value($backup['state']['vault']['local'])->LocalOnly->Token==='CURRENT-LOCAL','Local import backup did not preserve the pre-import value.');
+     secExpect(count($state['identity']['credentials'])===1&&!isset(SecretsBackendTree::value($state['vault']['local'])->__AUTH__),'Local import included old authentication.');
+ }
+ // An empty Local area is a no-op for application data, never a fallback to Global.
+ $GLOBALS['legacyCipher']=legacyCipher((object)['UnrelatedGlobal'=>'GLOBAL-ONLY-CANARY'],$keyHex);
+ $beforeNoLocal=$store->read()['state'];$preview=$invoke('legacyPreview',['source'=>6000,'policy'=>'replace','scope'=>'local'])['data'];
+ secExpect($preview['review']['summary']['local']['added']===0,'Empty Local import claimed new values.');
+ $approved(['kind'=>'nativeLegacyImport','candidate'=>$preview['candidate'],'digest'=>$preview['digest']]);
+ $afterNoLocal=$store->read()['state'];secExpect($afterNoLocal['vault']===$beforeNoLocal['vault']&&$globalState($afterNoLocal)===$globalBefore,'Empty Local import erased data or imported Global.');$GLOBALS['legacyCipher']=$before;
+ // The source fingerprint still guards the entire encrypted snapshot through approval.
+ $preview=$invoke('legacyPreview',['source'=>6000,'policy'=>'keep','scope'=>'local'])['data'];
+ $op=['kind'=>'nativeLegacyImport','candidate'=>$preview['candidate'],'digest'=>$preview['digest']];$prepared=$invoke('prepare',['operation'=>$op])['data'];
+ $GLOBALS['legacyCipher']=legacyCipher((object)['__LOCAL__'=>(object)['Changed'=>'LATE-LOCAL']],$keyHex);
+ secReject(static fn()=>$invoke('approve',['challengeId'=>$prepared['challengeId'],'credential'=>secAssertion($key,$prepared['options']['challenge'],++$counter)]),'Changed Local source committed after review.');$GLOBALS['legacyCipher']=$before;
+ secExpect($globalState($store->read()['state'])===$globalBefore,'Rejected Local import changed Global.');
+ // Full import remains explicit and cannot bypass non-writable Global restrictions.
+ secReject(static fn()=>$invoke('legacyPreview',['source'=>6000,'policy'=>'keep','scope'=>'all']),'Full import bypassed non-writable Global.');
+ $current=$store->read();$store->change($current['head'],SecretsBackendCodec::uuid(),hash('sha256','restore-global-writable'),static function($s)use($modelBeforeLocal){$s['native']['globalWritable']=true;if($modelBeforeLocal===null)unset($s['native']['sharedGlobal']);else $s['native']['sharedGlobal']=$modelBeforeLocal;return $s;});
+ // Omitted scope preserves existing API callers' full-import behavior below.
  $preview=$invoke('legacyPreview',['source'=>6000,'policy'=>'keep'])['data'];$json=json_encode($preview);secExpect(!str_contains($json,'IMPORT-VALUE-CANARY')&&!str_contains($json,'LOCAL-VALUE-CANARY')&&!str_contains($json,'DO-NOT-IMPORT-AUTH-CANARY')&&!str_contains($json,'QUERY-CANARY'),'Import preview disclosed values or legacy credentials.');secExpect($preview['review']['summary']['global']['kept']===1,'Default conflict policy did not preserve the existing value.');secExpect($preview['review']['storage']['vaultDirectory']===$pathsBefore['DataDirectory']&&$preview['review']['storage']['keyDirectory']===$pathsBefore['KeyDirectory'],'Import proposed silently changing active storage.');
  $op=['kind'=>'nativeLegacyImport','candidate'=>$preview['candidate'],'digest'=>$preview['digest']];
  secReject(static fn()=>$approved(array_replace($op,['digest'=>str_repeat('0',64)])),'Changed import digest accepted.');
@@ -96,5 +137,5 @@ try{
  // Simulate a restart with the last durable binding/configuration handoff unacknowledged.
  $lastMove=$store->read()['state']['native']['storageMove'];$binding=json_decode($back->attributes['StorageBinding'],true);$binding['paths']=['vault'=>$lastMove['from']['vaultDirectory'],'keys'=>$lastMove['from']['keyDirectory']];$back->attributes['StorageBinding']=SecretsBackendCodec::json($binding);$back->properties['DataDirectory']=$lastMove['from']['vaultDirectory'];$back->properties['KeyDirectory']=$lastMove['from']['keyDirectory'];$back->properties['HardwareRootsDirectory']=$lastMove['from']['keyDirectory'].'/'.$hardwareVersion;
  $back->ApplyChanges();secExpect($back->Recover(),'Restart after import failed: '.($back->values['Status']??''));secExpect(SecretsBackendTree::value(((new ReflectionMethod(SecretsBackend::class,'nativeStore'))->invoke($back))->read()['state']['vault']['global'])->ASK->Password==='IMPORT-VALUE-CANARY','Restart lost imported secrets.');
- echo "PASS legacy import: real encrypted source, typed scopes, masked preview, conflicts, source-change rejection, preserved old files, pre-import backup, independent storage choices, interrupted moves, stale-worker routing, current authority and restart\n";
+ echo "PASS legacy import: Local-only keep/replace, immutable Global/revisions/versions/sharing, bound scope, empty Local, invalid scope rejection, full-import compatibility, real encrypted source, typed scopes, masked preview, conflicts, source-change rejection, preserved old files, pre-import backup, independent storage choices, interrupted moves, stale-worker routing, current authority and restart\n";
 }finally{$remove=static function($p)use(&$remove){if(is_dir($p)&&!is_link($p)){foreach(scandir($p)as$n)if($n!=='.'&&$n!=='..')$remove($p.'/'.$n);rmdir($p);}elseif(file_exists($p)||is_link($p))unlink($p);};if(is_dir($root))$remove($root);}

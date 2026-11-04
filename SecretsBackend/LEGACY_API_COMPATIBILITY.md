@@ -52,8 +52,8 @@ After reviewing and committing this development change, use a **clean disposable
 
 ```sh
 git switch -c migration/legacy-sec-replacement
-python migration/build-replacement.py .
-git diff -- SecretsManager/module.php migration/replacement-manifest.json
+python .migration/build-replacement.py .
+git diff -- SecretsManager/module.php .migration/replacement-manifest.json
 ```
 
 The builder changes only the original module implementation and adds a manifest of the source commit, original SHA-256 and preserved identity. It does not connect to Symcon or activate anything. Commit the result to that dedicated branch only after migration preparation. Do not run the old implementation's unchanged-file or state-machine test suites against the replacement implementation: those suites verify the original implementation. The application differential suite in the development source loads the real original implementation and the exact replacement template together and tests unchanged `SEC_*` dispatch against both.

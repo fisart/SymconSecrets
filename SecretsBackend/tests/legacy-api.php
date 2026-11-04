@@ -10,7 +10,7 @@ class IPSModuleStrict extends IPSModule
     protected function GetIDForIdent($ident): int {return 0;}
 }
 require_once __DIR__.'/../../SecretsManager/module.php';
-$adapterSource=file_get_contents(__DIR__.'/../../migration/templates/SecretsManager.php.txt');
+$adapterSource=file_get_contents(__DIR__.'/../../.migration/templates/SecretsManager.php.txt');
 eval(str_replace(['<?php','class SecretsManager extends'],['','class LegacyReplacementAdapter extends'],$adapterSource));
 function SECB_CallLegacyAPI(int $id,int $source,string $method,string $arguments): string {return $GLOBALS['instances'][$id]->CallLegacyAPI($source,$method,$arguments);}
 function SECB_CheckLegacyPortalSession(int $id,int $source,string $server): bool {return $GLOBALS['instances'][$id]->CheckLegacyPortalSession($source,$server);}

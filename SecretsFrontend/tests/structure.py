@@ -19,3 +19,7 @@ for file in [root / "SecretsFrontend/page.html", root / "SecretsFrontend/module.
     assert "localStorage" not in text and "sessionStorage" not in text
     assert "SEC_GetSecret" not in text and "SEC_EncryptAndSave" not in text
 print(f"PASS {len(baseline)} original repository blobs unchanged; distinct new module IDs, valid JSON and no legacy secret forwarding/browser storage")
+
+# Visible helper directories are treated as modules by Symcon.
+assert not (root / "migration").exists(), "Migration helpers must not appear as a module without module.json"
+assert (root / ".migration/build-replacement.py").is_file()
