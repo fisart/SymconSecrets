@@ -38,4 +38,20 @@ const {fixture,tick}=require('./ui-native.cjs');
   assert.equal(f.errors.length,0);
   console.log('PASS Local-only import UI: default, discovery, scoped preview, scope-change invalidation, full-import option, bound approval and result');
  } finally { f.dom.window.close(); }
+ // A slow full-import preview must not reappear after the user selects Local-only.
+ let release;const pending=new Promise(resolve=>{release=resolve;});
+ const slow=await fixture({legacyPreviewWait:pending});
+ try {
+  slow.$('login').click();await tick();await tick();
+  slow.dom.window.document.querySelector('[data-tab="nativeImport"]').click();await tick();
+  slow.$('legacyScope').value='all';slow.$('legacyScope').dispatchEvent(new slow.dom.window.Event('change'));
+  slow.$('legacyPreview').click();await tick();
+  slow.$('legacyScope').value='local';slow.$('legacyScope').dispatchEvent(new slow.dom.window.Event('change'));
+  release();await tick();await tick();
+  assert.equal(slow.$('legacyStep1').hidden,false,'Stale broader preview replaced the selected Local scope');
+  assert.equal(slow.$('legacyStep2').hidden,true);
+  slow.$('legacyApprove').click();await tick();
+  assert.equal(slow.calls.filter(r=>r.action==='prepare').length,0);
+  console.log('PASS in-flight scope change: late broader preview cannot restore an approvable candidate');
+ } finally { slow.dom.window.close(); }
 })().catch(error=>{console.error(error);process.exitCode=1;});
