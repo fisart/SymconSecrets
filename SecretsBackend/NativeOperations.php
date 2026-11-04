@@ -44,7 +44,11 @@ final class SecretsBackendNativeOperations
                 SecretsBackendNativePeer::exact($op,['kind','path','digest','versionId']);if(!is_string($op['versionId']))throw new RuntimeException('Select a conflict version.');$conflict=SecretsBackendSharedGlobal::conflict($state,$op['path'],$op['digest']);if($op['versionId']!==''&&!in_array($op['versionId'],array_column($conflict['versions'],'id'),true))throw new RuntimeException('Select a current conflict version.');break;
 
             case 'nativeLegacyImport':
-                throw new RuntimeException('Old vault import is disabled on the native-only replacement branch.');
+                SecretsBackendNativePeer::exact($op,['kind','candidate','digest']);$c=$this->legacyCandidate($op['candidate'],$op['digest'],$state);
+                $fresh=SecretsBackendLegacyImport::read($c['source']['source']['id'],$this->legacyLimit());
+                if(!hash_equals($fresh['fingerprint'],$c['source']['fingerprint']))throw new RuntimeException('The old vault or its settings changed. Review a new import.');
+                $op['review']=$this->legacyReview($c,$state);$op['backupKey']=SecretsBackendCodec::b64(random_bytes(32));$op['backup']=SecretsBackendNativeBackup::encrypt($this->store,$op['backupKey'],$this->store->read());break;
+
             case 'nativeConnectStage':
                 SecretsBackendNativePeer::exact($op,['kind','origin']);
                 if(!is_string($op['origin']))throw new RuntimeException('Choose an exact Connect address.');
@@ -128,7 +132,30 @@ final class SecretsBackendNativeOperations
         if($kind==='nativeConnectUpgrade')return SecretsBackendBackupOriginPolicy::upgrade($s,$op['review'],$op['generation']);
         if($kind==='nativeGlobalResolve')return SecretsBackendNativePeer::queueGlobal(SecretsBackendSharedGlobal::resolve($s,$op['path'],$op['digest'],$op['choices']));
         if($kind==='nativeLegacyImport'){
-            throw new RuntimeException('Old vault import is disabled on the native-only replacement branch.');
+            $c=$this->legacyCandidate($op['candidate'],$op['digest'],$s);
+            if($this->legacyCommitSource===null||!hash_equals($this->legacyCommitSource['fingerprint'],$c['source']['fingerprint']))throw new RuntimeException('Import source is not locked and verified.');
+            $plan=SecretsBackendLegacyImport::plan($s,$c['source'],$c['policy'],$this->legacyLimit(),$c['scope']??'all');
+            $changed=false;foreach(['global','local']as$scope){
+                if(SecretsBackendNativeStore::canonical($s['vault'][$scope])!==SecretsBackendNativeStore::canonical($plan['trees'][$scope])){
+                    if($scope==='global'&&!$s['native']['globalWritable'])throw new RuntimeException('This vault does not own the global tree. Import into its owner.');
+                    $s['vault'][$scope]=$plan['trees'][$scope];$changed=true;
+                    if($scope==='global'){$s['stream']['globalRevision']=SecretsBackendCodec::increment($s['stream']['globalRevision']);$s=SecretsBackendNativePeer::queueGlobal($s);}
+                }
+                if(SecretsBackendNativeStore::canonical($s['vault'][$scope])!==SecretsBackendNativeStore::canonical($plan['trees'][$scope]))throw new RuntimeException('Imported tree verification failed.');
+            }
+            if($changed)$s['vault']['revision']=SecretsBackendCodec::increment($s['vault']['revision']);
+            $storage=$c['storage'];$settings=&$s['policy']['management']['settings'];
+            $checked=$this->store->reviewStorageMove($storage['to'],IPS_GetKernelDir(),$storage['legacyParent']);
+            if($checked['from']!==$storage['from']||$checked['to']!==$storage['to'])throw new RuntimeException('Storage locations changed after review.');
+            if($storage['from']!==$storage['to']){
+                $s['native']['storageMove']=$storage;
+                $settings['DataDirectory']=$storage['to']['vaultDirectory'];$settings['KeyDirectory']=$storage['to']['keyDirectory'];
+                $roots=$settings['HardwareRootsDirectory'];
+                if($roots!==''&&SecretsBackendNativePlatform::contains($storage['from']['keyDirectory'],$roots))$settings['HardwareRootsDirectory']=$storage['to']['keyDirectory'].substr($roots,strlen($storage['from']['keyDirectory']));
+                $s['policy']['version']=SecretsBackendCodec::increment($s['policy']['version']);
+            }
+            unset($settings);
+            $source=$c['source']['source'];$s['native']['legacyImports'][(string)$source['id']]=['source'=>$source,'summary'=>$plan['summary'],'scope'=>$plan['scope'],'at'=>gmdate('c'),'revision'=>$s['vault']['revision'],'excluded'=>$c['source']['excluded'],'storageAction'=>$storage['from']===$storage['to']?'keep-current':'use-selected','storage'=>$storage['to'],'connectionsActive'=>false];
         }elseif($kind==='nativeConnectStage'){
             SecretsBackendBackupOriginPolicy::stage($s,$op['origin']);$s['policy']['backupOrigin']=$op['policy'];
         }elseif($kind==='nativeConnectRevoke'){
@@ -284,7 +311,7 @@ final class SecretsBackendNativeOperations
             return $this->pairingStatus($this->store->read()['state'])+['deliveryAttempted'=>$result!==[]];
         }
         if($action==='legacySources'){SecretsBackendNativePeer::exact($data,[]);return ['sources'=>SecretsBackendLegacyImport::sources()];}
-        if($action==='legacyPreview')throw new RuntimeException('Old vault import is disabled on the native-only replacement branch.');
+        if($action==='legacyPreview')return $this->legacyPreview($data);
         if($action==='nativeUploadBegin'){SecretsBackendNativePeer::exact($data,['length','digest']);if(!is_int($data['length'])||!is_string($data['digest']))throw new RuntimeException('Invalid upload metadata.');return $this->uploads()->begin($data['length'],$data['digest']);}
         if($action==='nativeUploadChunk'){SecretsBackendNativePeer::exact($data,['uploadId','index','chunk']);if(!is_string($data['uploadId'])||!is_int($data['index'])||!is_string($data['chunk']))throw new RuntimeException('Invalid upload chunk.');return $this->uploads()->chunk($data['uploadId'],$data['index'],$data['chunk']);}
         if($action==='nativeUploadFinish'){SecretsBackendNativePeer::exact($data,['uploadId']);return $this->uploads()->finish($data['uploadId']);}
@@ -322,23 +349,24 @@ final class SecretsBackendNativeOperations
     private function legacyCandidate(string $id,string $digest,array $state): array
     {
         $c=$this->store->get($id,'legacy-import');
-        if($c['session']!==$this->session||$c['expires']<time()||!hash_equals($this->store->opaque('legacy-import:'.SecretsBackendNativeStore::canonical($c)),$digest)||!SecretsBackendCodec::same($c['head'],$this->store->head()))throw new RuntimeException('Import review expired or the destination changed. Review again.');
+        if(($c['importFormat']??'')!=='NativeRetainedImport.1'||$c['session']!==$this->session||$c['expires']<time()||!hash_equals($this->store->opaque('legacy-import:'.SecretsBackendNativeStore::canonical($c)),$digest)||!SecretsBackendCodec::same($c['head'],$this->store->head()))throw new RuntimeException('Import review expired or the destination changed. Review again.');
         return $c;
     }
     private function legacyReview(array $c,array $state): array
     {
-        $plan=SecretsBackendLegacyImport::plan($state,$c['source'],$c['policy'],$this->legacyLimit());
+        $plan=SecretsBackendLegacyImport::plan($state,$c['source'],$c['policy'],$this->legacyLimit(),$c['scope']??'all');
         if(!$state['native']['globalWritable']&&SecretsBackendNativeStore::canonical($plan['trees']['global'])!==SecretsBackendNativeStore::canonical($state['vault']['global']))throw new RuntimeException('Import global secrets at the vault that owns this tree.');
-        return ['source'=>$c['source']['source'],'excluded'=>$c['source']['excluded'],'summary'=>$plan['summary'],'conflictPolicy'=>$c['policy'],
+        return ['source'=>$c['source']['source'],'excluded'=>$c['source']['excluded'],'summary'=>$plan['summary'],'scope'=>$plan['scope'],'conflictPolicy'=>$c['policy'],
             'storage'=>['action'=>$c['storage']['from']===$c['storage']['to']?'keep-current':'use-selected','choices'=>$c['storage']['choices'],'current'=>$c['storage']['from']]+$c['storage']['to'],
-            'activeRecipients'=>count(array_filter($state['pairing']['peers'],static fn($peer)=>$peer['active'])),'connections'=>'Imported as inactive proposals; new pairing is required. Global imports follow existing active new-vault sharing.','authority'=>'Retain current administrators, keys, grants and peer trust.'];
+            'activeRecipients'=>count(array_filter($state['pairing']['peers'],static fn($peer)=>$peer['active'])),'connections'=>$plan['scope']==='local'?'Imported as inactive proposals; new pairing is required. Global secrets and Global sharing state are unchanged.':'Imported as inactive proposals; new pairing is required. Global imports follow existing active new-vault sharing.','authority'=>'Retain current administrators, keys, grants and peer trust.'];
     }
     private function legacyPreview(array $data): array
     {
-        $data+=['vaultLocation'=>'current','keyLocation'=>'current','privateACLConfirmed'=>false,'persistenceConfirmed'=>false];
-        SecretsBackendNativePeer::exact($data,['source','policy','vaultLocation','keyLocation','privateACLConfirmed','persistenceConfirmed']);if(!is_int($data['source'])||!is_string($data['policy']))throw new RuntimeException('Select the old vault and conflict policy.');
+        $data+=['scope'=>'all','vaultLocation'=>'current','keyLocation'=>'current','privateACLConfirmed'=>false,'persistenceConfirmed'=>false];
+        SecretsBackendNativePeer::exact($data,['source','policy','scope','vaultLocation','keyLocation','privateACLConfirmed','persistenceConfirmed']);if(!is_int($data['source'])||!is_string($data['policy']))throw new RuntimeException('Select the old vault and conflict policy.');
+        if(!is_string($data['scope'])||!in_array($data['scope'],['all','local'],true))throw new RuntimeException('Choose Local secrets only or Global and Local secrets.');
         $current=$this->store->read();$source=SecretsBackendLegacyImport::read($data['source'],$this->legacyLimit());
-        $plan=SecretsBackendLegacyImport::plan($current['state'],$source,$data['policy'],$this->legacyLimit());
+        $plan=SecretsBackendLegacyImport::plan($current['state'],$source,$data['policy'],$this->legacyLimit(),$data['scope']);
         foreach(['vaultLocation','keyLocation'] as $choice)if(!in_array($data[$choice],['current','imported'],true))throw new RuntimeException('Choose current or imported locations.');
         foreach(['privateACLConfirmed','persistenceConfirmed'] as $confirmation)if(!is_bool($data[$confirmation]))throw new RuntimeException('Invalid storage confirmation.');
         if(IPS_HasChanges((int)$this->store->identity()['binding']['backend']))throw new RuntimeException('Apply or discard pending backend console edits before importing.');
@@ -355,7 +383,7 @@ final class SecretsBackendNativeOperations
         }
         $storage=$checked+['id'=>SecretsBackendCodec::uuid(),'kernel'=>IPS_GetKernelDir(),'legacyParent'=>$parents,'choices'=>['vault'=>$data['vaultLocation'],'keys'=>$data['keyLocation']]];
         $expected=$this->store->opaque('legacy-result:'.SecretsBackendNativeStore::canonical($plan['trees']));
-        $c=['session'=>$this->session,'head'=>$current['head'],'source'=>$source,'policy'=>$data['policy'],'storage'=>$storage,'expected'=>$expected,'expires'=>time()+300];$review=$this->legacyReview($c,$current['state']);
+        $c=['importFormat'=>'NativeRetainedImport.1','session'=>$this->session,'head'=>$current['head'],'source'=>$source,'policy'=>$data['policy'],'scope'=>$data['scope'],'storage'=>$storage,'expected'=>$expected,'expires'=>time()+300];$review=$this->legacyReview($c,$current['state']);
         $id=SecretsBackendCodec::b64(random_bytes(32));$digest=$this->store->opaque('legacy-import:'.SecretsBackendNativeStore::canonical($c));$this->store->put($id,'legacy-import',$c,$c['expires']);
         return ['candidate'=>$id,'digest'=>$digest,'review'=>$review];
     }
@@ -365,13 +393,17 @@ final class SecretsBackendNativeOperations
         $actual=array_intersect_key($validated['state']['vault'],array_flip(['global','local']));
         if(!hash_equals($c['expected'],$this->store->opaque('legacy-result:'.SecretsBackendNativeStore::canonical($actual))))throw new RuntimeException('Import committed but verification needs review. Do not repeat blindly.');
         $this->store->delete($op['candidate']);
-        return ['legacyImported'=>true,'verified'=>true,'summary'=>$op['review']['summary'],'storage'=>$c['storage']['to'],'backup'=>$op['backup'],'recoveryKey'=>$op['backupKey']];
+        return ['legacyImported'=>true,'verified'=>true,'scope'=>$op['review']['scope']??'all','summary'=>$op['review']['summary'],'storage'=>$c['storage']['to'],'backup'=>$op['backup'],'recoveryKey'=>$op['backupKey']];
     }
-    /** Refuse pending old-import operations, including reviews made before this branch. */
+    /** Keep the old vault read lock until the destination's durable commit finishes. */
     public function commit(array $op,callable $commit): array
     {
-        if($op['kind']==='nativeLegacyImport')throw new RuntimeException('Old vault import is disabled on the native-only replacement branch.');
-        return $commit();
+        if($op['kind']!=='nativeLegacyImport')return $commit();
+        $current=$this->store->read();$c=$this->legacyCandidate($op['candidate'],$op['digest'],$current['state']);
+        return SecretsBackendLegacyImport::withSnapshot($c['source']['source']['id'],$this->legacyLimit(),function(array $source)use($c,$commit):array{
+            if(!hash_equals($source['fingerprint'],$c['source']['fingerprint']))throw new RuntimeException('The old vault changed after review. Review a new import.');
+            $this->legacyCommitSource=$source;try{return $commit();}finally{$this->legacyCommitSource=null;}
+        });
     }
     /** Counts only; never includes secret names, values or credential material. */
     private function overviewStatus(array $state): array
@@ -410,7 +442,7 @@ final class SecretsBackendNativeOperations
         $progress=$this->pairingStatus($state);$backend=(int)$this->peer->descriptor()['backend'];
         return ['overview'=>$this->overviewStatus($state),'fullAdministrator'=>$this->session!==''&&SecretsBackendBackupOriginPolicy::credentialFull($state,$state['identity']['credentials'][$this->store->get($this->session,'session')['credential']]??[]),'sharedGlobalSupported'=>true,'globalConflictCount'=>$progress['globalConflictCount'],'legacyImports'=>array_values($state['native']['legacyImports']??[]),'backupOrigin'=>$state['policy']['backupOrigin']??null,'primaryOrigin'=>$state['policy']['origin'],'info'=>$this->store->metadata(),'storage'=>$this->store->storagePaths(),'peerEndpoint'=>$this->peer->descriptor()['endpoint'],'peerDescriptor'=>$this->peer->descriptor(),'peerRoutes'=>$this->peer->ownRoutes($state),'routeRevision'=>$state['native']['routeRevision']??'0',
             'sharedGlobal'=>SecretsBackendSharedGlobal::metadata($state),'globalTreeId'=>$state['native']['globalTreeId'],'globalWritable'=>$state['native']['globalWritable'],'ownedTrees'=>$owned,'transfers'=>array_map(static fn($t)=>array_diff_key($t,['node'=>true]),$state['native']['transfers']),
-            'serverTime'=>$progress['serverTime'],'peers'=>$progress['peers'],'pairingReceived'=>$progress['pairingReceived'],'pairingSent'=>$progress['pairingSent'],'globalRevision'=>$progress['globalRevision'],'remoteHttpsAvailable'=>$progress['remoteHttpsAvailable'],'remoteHttpsTransport'=>$progress['remoteHttpsTransport'],'peerTransportVersion'=>$progress['peerTransportVersion'],'received'=>$received,'machines'=>$machines,'nativeOnlyReplacement'=>true,'legacyAccess'=>isset($state['native']['legacyAccess'][(string)$backend])?[$state['native']['legacyAccess'][(string)$backend]]:[],'legacyDirectAccess'=>SecretsBackendLegacyAPI::access($state,$backend,$backend),'legacyTargets'=>$this->legacyTargets($state,$backend),'queuedJobs'=>count($state['outbox']['jobs']),
+            'serverTime'=>$progress['serverTime'],'peers'=>$progress['peers'],'pairingReceived'=>$progress['pairingReceived'],'pairingSent'=>$progress['pairingSent'],'globalRevision'=>$progress['globalRevision'],'remoteHttpsAvailable'=>$progress['remoteHttpsAvailable'],'remoteHttpsTransport'=>$progress['remoteHttpsTransport'],'peerTransportVersion'=>$progress['peerTransportVersion'],'received'=>$received,'machines'=>$machines,'nativeOnlyReplacement'=>true,'legacyImportAvailable'=>true,'legacyAccess'=>isset($state['native']['legacyAccess'][(string)$backend])?[$state['native']['legacyAccess'][(string)$backend]]:[],'legacyDirectAccess'=>SecretsBackendLegacyAPI::access($state,$backend,$backend),'legacyTargets'=>$this->legacyTargets($state,$backend),'queuedJobs'=>count($state['outbox']['jobs']),
             'providers'=>array_values(array_map(static fn($p)=>SecretsBackendNativeEffects::targetWritable($state,$p)?$p:array_replace($p,['status'=>'OWNER_CHANGED']),$state['native']['providers'])),'effects'=>array_map(static fn($e)=>array_intersect_key($e,array_flip(['id','providerId','state','reason','createdAt','httpStatus','attempts'])),$state['native']['effects']),
             'hardwareProfile'=>['version'=>$state['policy']['management']['settings']['HardwareTrustVersion'],'fingerprints'=>$state['policy']['management']['files']['HardwareRoots'],'aaguids'=>json_decode($state['policy']['management']['settings']['HardwareAAGUIDs'],true)],
             'outbox'=>array_map(static fn($j)=>array_intersect_key($j,array_flip(['id','receiverId','kind','sequence','status'])),$state['outbox']['jobs'])];

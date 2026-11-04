@@ -18,6 +18,7 @@ function SECB_CallBoundLegacyAPI(int $id,string $vault,string $method,string $ar
 function SECB_IsNativePortalAuthenticated(int $id): bool {return $GLOBALS['instances'][$id]->IsNativePortalAuthenticated();}
 function SECB_GetNativePortalLoginURL(int $id,string $path,string $server): string {return $GLOBALS['instances'][$id]->GetNativePortalLoginURL($path,$server);}
 function SECB_GetLegacyAPIStatus(int $id): string {return $GLOBALS['instances'][$id]->GetLegacyAPIStatus();}
+function IPS_GetName(int $id): string { return 'Retained instance '.$id; }
 function IPS_LogMessage(string $sender,string $message): void {$GLOBALS['apiLogs'][]=['sender'=>$sender,'message'=>$message];}
 function SEC_GetKeys(int $id): string {return $GLOBALS['instances'][$id]->GetKeys();}
 function SEC_GetSecret(int $id,string $ident): string {return $GLOBALS['instances'][$id]->GetSecret($ident);}
@@ -94,7 +95,7 @@ try{
     [$status]=$callHook(['portal'=>'1','return'=>'//evil.invalid']);$ok($status===403,'Replacement accepted an external return address.');
     [$status]=$callHook([],'POST');$ok($status===403,'Replacement accepted old synchronization traffic.');
     foreach(['SyncSlaves','SaveAuthToken','InitializeSlaveSecretStore']as$method){secReject(static function()use($a,$method):void{if($method==='SyncSlaves')$a->$method();else $a->$method('retired-token');},'A retired synchronization operation ran.');++$checks;}
-    $ok(SecretsBackendLegacyImport::sources()===[],'Retired managers were discovered as import sources.');
+    $ok(count(SecretsBackendLegacyImport::sources())===2,'Retained instances were not discoverable for explicit administrator import.');
     secReject(static fn()=>SecretsBackendLegacyImport::read(49800,65536),'Retired vault files were read.');++$checks;
     $policy=SecretsBackendNativeLegacyHTTPS::proposal('https://new-peer.example.test/hook/secrets_peer_99');$ok($policy['policy']===['mode'=>'strict'],'Peer transport depended on retired manager configuration.');
     $grant['enabled']=false;$approve($grant);$ok(SEC_GetKeys(49800)==='[]','Replacement bypassed an explicit native read revocation.');
