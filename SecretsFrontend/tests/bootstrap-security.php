@@ -16,6 +16,8 @@ $fixture=static function()use(&$next):array{
 $gateway=static fn($front,$request,$data,$action='bootstrapProof')=>(new ReflectionMethod(SecretsFrontend::class,'gateway'))->invoke($front,['action'=>$action,'data'=>$data]+$request);
 
 [$front,$back,$request,$choice]=$fixture();
+// Match an installed Symcon kernel so Windows can resolve its canonical directory.
+mkdir(IPS_GetKernelDir(),0700,true);
 $configuration=json_decode($back->ExportConfiguration(),true,16,JSON_THROW_ON_ERROR);
 $configuration['configuration']['Enabled']=true;
 $ok($back->ImportConfiguration(SecretsBackendCodec::json($configuration)), 'Fresh native backend configuration import refused its default storage paths.');
