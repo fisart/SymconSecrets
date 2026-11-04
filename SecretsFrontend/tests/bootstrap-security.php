@@ -16,6 +16,15 @@ $fixture=static function()use(&$next):array{
 $gateway=static fn($front,$request,$data,$action='bootstrapProof')=>(new ReflectionMethod(SecretsFrontend::class,'gateway'))->invoke($front,['action'=>$action,'data'=>$data]+$request);
 
 [$front,$back,$request,$choice]=$fixture();
+$configuration=json_decode($back->ExportConfiguration(),true,16,JSON_THROW_ON_ERROR);
+$configuration['configuration']['Enabled']=true;
+$ok($back->ImportConfiguration(SecretsBackendCodec::json($configuration)), 'Fresh native backend configuration import refused its default storage paths.');
+$ok(!$back->properties['Enabled'] && !is_dir($back->properties['DataDirectory']), 'Native settings import enabled or initialized the vault.');
+$invalid=$configuration;$invalid['configuration']['DataDirectory']=rtrim(IPS_GetKernelDir(),'/').'/webfront/unsafe';
+$before=$back->properties;
+$no(fn()=>$back->ImportConfiguration(SecretsBackendCodec::json($invalid)), 'Native settings import accepted a public storage folder.');
+$ok($back->properties===$before, 'Rejected native import changed properties.');
+
 $no(fn()=>$front->BeginGuidedSetup($request['origin'],''),'Old setup-code method remained active.');
 $ok($gateway($front,$request,[],'bootstrapPrepare')['status']===403,'A public request opened a console intent.');
 $url=$front->OpenBootstrap($request['origin'],'',false,true);$ok($url===$request['origin'].'/hook/secrets_frontend_'.$front->InstanceID&&!str_contains($url,'?')&&!str_contains($url,'#'),'Setup link contains authority.');
@@ -63,6 +72,12 @@ $ok(!is_dir($choice['vaultDirectory']),'Cancellation left a usable vault.');
 $front->ApplyChanges();$front->OpenBootstrap($request['origin'],'',false,true);$reused=secBootstrapCandidate($front,$request,$key,true);$status=secBootstrapProof($front,$request,$reused,'candidateStatus')['data'];$ok(!$status['approved'],'Reused key inherited a previous console approval.');
 $view=json_decode($front->GetBootstrapConsoleView(),true)[0];$front->ApproveBootstrapCandidate($view['candidate'],$view['digest'],$view['proof']);$plan=secBootstrapProof($front,$request,$reused,'planPreview',$choice)['data'];$o=json_decode(json_encode(secBootstrapProof($front,$request,$reused,'applyOptions',['planDigest'=>$plan['planDigest']])['data']),true);
 $done=secBootstrapProof($front,$request,$reused,'applyVerify',['planDigest'=>$plan['planDigest'],'credential'=>secAssertion($key,$o['options']['challenge'],2)]);$ok($done['data']['status']==='COMMITTED','Previously prepared key could not complete with fresh approval.');
+$configuration=json_decode($back->ExportConfiguration(),true,16,JSON_THROW_ON_ERROR);
+$changed=$configuration;$changed['configuration']['KeyDirectory'].='-changed';
+$before=$back->properties;
+$no(fn()=>$back->ImportConfiguration(SecretsBackendCodec::json($changed)), 'Native configuration import replaced initialized storage.');
+$ok($back->properties===$before, 'Rejected native foundation import changed properties.');
+
 
 // A lost acceptance response survives reload and uses the exact original administrator.
 [$front,$back,$request,$choice]=$fixture();$key=secKey();$GLOBALS['pauseBootstrap']=true;

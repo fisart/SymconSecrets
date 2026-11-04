@@ -396,8 +396,26 @@ class SecretsBackend extends IPSModule
         if (count($data) !== 2 || ($data['schema'] ?? '') !== 'SECB.Config.v1' || !is_array($data['configuration'] ?? null)) throw new InvalidArgumentException('Expected SECB.Config.v1.');
         if (IPS_HasChanges($this->InstanceID)) throw new RuntimeException('Apply or discard pending console edits before import.');
         $settings = self::validate($data['configuration']); $settings['Enabled'] = false;
-        $bootstrap = $this->bootstrap();
-        if ($bootstrap !== null && !SecretsBackendSecurityConfiguration::sameFoundation($bootstrap['profile']['settings'], $settings)) throw new RuntimeException('Import cannot replace provisioned anchor trust, pairing or storage. Hardware settings are staged for explicit approval.');
+        if ($this->nativeInitialized()) {
+            $approved = $this->nativeStore()->storageHandoff()['profile']['settings'];
+        } elseif ($this->ReadAttributeBoolean('GuidedV2Only') && $this->ReadAttributeString('StorageBinding') === '' && !$this->ReadAttributeBoolean('ProvisioningSealed')) {
+            if ($this->ReadAttributeString('NativeInitPlan') !== '') {
+                throw new RuntimeException('Resolve the interrupted native setup before importing configuration.');
+            }
+            $kernel = IPS_GetKernelDir();
+            $defaults = SecretsBackendNativePlatform::defaults($this->InstanceID, $kernel);
+            SecretsBackendNativePlatform::paths(
+                $settings['DataDirectory'] === '' ? $defaults['vaultDirectory'] : $settings['DataDirectory'],
+                $settings['KeyDirectory'] === '' ? $defaults['keyDirectory'] : $settings['KeyDirectory'],
+                $kernel
+            );
+            $approved = null;
+        } else {
+            $approved = $this->bootstrap()['profile']['settings'] ?? null;
+        }
+        if ($approved !== null && !SecretsBackendSecurityConfiguration::sameFoundation($approved, $settings)) {
+            throw new RuntimeException('Import cannot replace provisioned anchor trust, pairing or storage. Hardware settings are staged for explicit approval.');
+        }
         foreach ($settings as $key => $value) IPS_SetProperty($this->InstanceID, $key, $value);
         IPS_ApplyChanges($this->InstanceID); $this->debug('configuration-imported-disabled'); return true;
     }
