@@ -33,10 +33,14 @@ final class SecretsBackendNativeLegacyHTTPS
         if(count($retained)>1)throw new RuntimeException('Saved connections have conflicting HTTPS settings for this platform.');
         return ['policy'=>$retained?array_values($retained)[0]:['mode'=>'strict'],'source'=>$retained?'saved connection':'PHP streams'];
     }
+    public static function timeout(string $endpoint): float
+    {
+        return preg_match('/^[a-z0-9]{32}\.ipmagic\.de$/D',(string)parse_url($endpoint,PHP_URL_HOST))===1?12.0:4.5;
+    }
     public static function post(string $endpoint,string $bytes,array $policy=['mode'=>'strict'],float $timeout=4.5): string
     {
         SecretsBackendNativePeer::endpoint($endpoint);$policy=self::policy($policy);
-        if($timeout<0.1||$timeout>4.5)throw new InvalidArgumentException('Invalid HTTPS timeout.');
+        if($timeout<0.1||$timeout>12.0)throw new InvalidArgumentException('Invalid HTTPS timeout.');
         $deadline=microtime(true)+$timeout;
         if(!self::available())throw new SecretsBackendNativePeerDeliveryFailure('transport');
         $host=parse_url($endpoint,PHP_URL_HOST);$pinned=$policy['mode']==='pinned';
@@ -54,7 +58,7 @@ final class SecretsBackendNativeLegacyHTTPS
         set_error_handler(static function(int $severity,string $message)use(&$warning):bool{$warning=substr($message,0,2048).' '.$warning;$warning=substr($warning,0,4096);return true;});
         try{
             $stream=fopen($endpoint,'rb',false,$context);
-            if($stream===false)throw self::failure($warning,$policy);
+            if($stream===false){$failure=self::failure($warning,$policy);if($failure->problem==='connect'&&microtime(true)>=$deadline-0.05)throw new SecretsBackendNativePeerDeliveryFailure('timeout');throw $failure;}
             $meta=stream_get_meta_data($stream);$status=0;
             foreach($meta['wrapper_data']??[]as$line)if(preg_match('~^HTTP/\d(?:\.\d)? (\d{3})(?: |$)~D',$line,$m))$status=(int)$m[1];
             if($status!==200)throw new SecretsBackendNativePeerDeliveryFailure('http',$status);

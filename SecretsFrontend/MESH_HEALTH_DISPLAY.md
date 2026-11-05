@@ -42,3 +42,9 @@ Encrypted integration tests cover component separation, exact directional grant 
 The warning list identifies each failing direction and its fixed diagnostic category: DNS, connection, timeout, certificate/TLS, HTTP status or rejected/oversized reply. Details include consecutive failures; no raw exception text is shared. Selected connection details show the same information. Reports from an older version remain usable, but may require updating the reporting node before a detailed reason appears. The new dialect is requested explicitly; old clients receive the original compact schema and updated clients retry the original dialect if an older receiver refuses the new one.
 
 The local console API `SECB_GetMeshHealth($backendId)` returns the same sanitized observations for troubleshooting, without recovery or network calls. It requires the current native vault to be usable.
+
+## Relay latency and frontend heartbeat
+
+Native Magic/Connect peer requests allow up to 12 seconds, while ordinary primary routes retain a 4.5-second limit. Emergency operations use a 20-second total budget and up to six seconds per relay attempt, including a reserved read phase. TLS, request binding and signature verification remain mandatory. Deadline expiry before HTTP headers is classified as timeout, including PHP's generic HTTP-request-failed warning. These are userland limits; DNS/OS stalls can exceed them.
+
+The frontend publishes its existing heartbeat as the `FrontendHealth` string variable. Backend report generation reads this snapshot and current instance settings rather than making a synchronous frontend module callback. An absent or stale heartbeat remains unknown. No live certificate chain is repaired or replaced by this change.

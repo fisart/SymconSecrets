@@ -9,6 +9,7 @@ import ssl
 import subprocess
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from cryptography import x509
@@ -71,6 +72,8 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
         def do_POST(self):
             counts.append(self.rfile.read(int(self.headers.get('Content-Length', '0'))))
             mode = getattr(self.server, 'reply_mode', 'normal')
+            if mode == 'slow-headers':
+                time.sleep(2.2)
             response = b'{"received":true}' if mode != 'oversize' else b'x' * 65537
             self.send_response(302 if mode == 'redirect' else 200)
             if mode == 'redirect':
@@ -160,6 +163,11 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
         mismatch = request(url, mode='pin:' + '0' * 64)
         assert not mismatch['ok'] and mismatch['problem'] == 'certificate', mismatch
         assert len(counts) == before, 'Fingerprint mismatch sent HTTP data before authentication.'
+        server.reply_mode = 'slow-headers'
+        short = request(url, ['openssl.cafile=' + str(ca_path)], mode='timeout:1.5')
+        assert not short['ok'] and short['problem'] == 'timeout', short
+        relay = request(url, ['openssl.cafile=' + str(ca_path)], mode='timeout:6')
+        assert relay['ok'] and relay['body'] == '{"received":true}', relay
         server.reply_mode = 'chunked'
         chunked = request(url, ['openssl.cafile=' + str(ca_path)])
         assert chunked['ok'] and chunked['body'] == '{"received":true}', chunked
