@@ -256,7 +256,7 @@ async function api(action,data={},ticket=generation){
  ensure(ticket);const controller=new AbortController();controllers.add(controller);
  try{const response=await fetch(boot.path,{method:'POST',credentials:'same-origin',cache:'no-store',redirect:'error',signal:controller.signal,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({action,data})});
  let result;try{result=await response.json();}catch{ensure(ticket);throw Error('Request could not be completed. Check backend status.');}
- ensure(ticket);if(!response.ok)throw Error(result.error||'Request refused.');return result;
+ ensure(ticket);if(!response.ok){const error=Error(result.error||'Request refused.');error.code=result.code;error.reference=result.reference;if(result.requiresSignIn===true&&snapshot){nativeRelogin(error.message);$('readiness').textContent=error.message;$('readiness').classList.remove('success');error.name='AbortError';}throw error;}return result;
  }finally{controllers.delete(controller);}
 }
 function binary(text){const raw=atob(text.replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(raw,c=>c.charCodeAt(0));}

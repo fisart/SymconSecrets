@@ -105,8 +105,13 @@
   ],
   "actions": [
     {
+      "type": "Button",
+      "caption": "Show refused-request diagnostics",
+      "onClick": "SECB_ExportRequestDiagnostics($id);"
+    },
+    {
       "type": "ExpansionPanel",
-      "caption": "Advanced: earlier V1 development tools \u00b7 not native setup",
+      "caption": "Advanced: earlier V1 development tools · not native setup",
       "items": [
         {
           "type": "ExpansionPanel",
@@ -227,7 +232,7 @@
             },
             {
               "type": "Button",
-              "caption": "Import configuration \u2014 leave disabled",
+              "caption": "Import configuration — leave disabled",
               "onClick": "SECB_ImportConfiguration($id, $ImportJSON);"
             }
           ]
