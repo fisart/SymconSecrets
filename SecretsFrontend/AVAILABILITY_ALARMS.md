@@ -17,3 +17,5 @@ VaultError is a local last-check result: if its own watchdog stalls, it cannot c
 After updating SymconSecrets on `migration/legacy-sec-replacement`, wait for the next checks and locate these variables below the respective instances. IDs are assigned by Symcon; integrations should discover them by ident with `IPS_GetObjectIDByIdent`. For production121 the backend parent is 18655 and the frontend parent is 29568. All three should be false after healthy startup. This feature does not enable remote-vault secret fallback.
 
 Regression coverage includes startup alarms, successful automatic recovery, vault validation/configuration failures, stale and restored heartbeat, failed backend instance status, missing backend, frontend invalid configuration and repair, pending settings, and disabled/re-enabled frontend.
+
+Additional backend indicators for explicitly configured fallback are FallbackActive, SecretsUnavailable, SynchronizationProblem and ActiveSource. See [Emergency Global access](EMERGENCY_GLOBAL_ACCESS.md) for setup, degraded-service alarm interpretation and node-count behavior.

@@ -106,7 +106,9 @@ latest writer acknowledged its local change before losing connectivity. A cached
 matching HEALTH response, a completed outbox, or a wall-clock timestamp is not
 an emergency-read authorization. `consistency` metadata in native info/session
 and pairing progress makes these limits explicit; its fields are diagnostics,
-not a signed certificate. No remote secret read endpoint or fallback is enabled.
+not a signed certificate. Emergency reads require a separate explicit grant; peer health alone never enables fallback.
 
 See [strict mesh consistency verification](STRICT_MESH_CONSISTENCY.md) for the
-four-vault counterexamples, implementation prerequisites and acceptance tests.
+four-vault counterexamples and the historical strict-consistency proposal.
+
+Availability-first emergency access is now separately available through [two-sided approval](EMERGENCY_GLOBAL_ACCESS.md). The health comparison itself still does not authorize an emergency read or prove a latest committed value.

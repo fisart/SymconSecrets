@@ -1,3 +1,5 @@
+> Update: the approved policy now favors availability for standalone and arbitrary-size meshes. [Emergency Global access](EMERGENCY_GLOBAL_ACCESS.md) implements explicitly approved read-only fallback with uncertain freshness; the strict-quorum proposal below is historical and is not the selected design.
+
 # Strict emergency freshness: verification and implementation contract
 
 Date: 2026-11-05 UTC. Examined baseline: `2734ee25ffce855833724045dd4dd829760926b8`, `migration/legacy-sec-replacement`.

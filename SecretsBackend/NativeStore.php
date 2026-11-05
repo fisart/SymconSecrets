@@ -20,6 +20,8 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
     private string $markerDigest = '';
     private int $effectiveLimit;
     private bool $ordinaryChange = false;
+    private $beforeChange = null;
+    public function onBeforeChange(callable $guard): void { $this->beforeChange = $guard; }
     public function __construct(private string $directory, private string $keyDirectory, private string $runtime, ?callable $currentRuntime = null, ?callable $fault = null)
     {
         $this->directory = SecretsBackendNativePlatform::directory($directory);
@@ -326,6 +328,7 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
                 $state=SecretsBackendSharedGlobal::capture($state);
                 if(class_exists(SecretsBackendNativePeer::class))$state=SecretsBackendNativePeer::queueGlobal($state);
             }
+            if ($this->beforeChange !== null) ($this->beforeChange)($this->frame['state'], $state);
             $changed = self::stateDigest($state) !== $expectedHead['digest']; $index = $changed ? SecretsBackendCodec::increment($expectedHead['index']) : $expectedHead['index'];
             $event = $this->event($audit, $operationId, 'committed');
             $state['operations']['audit'][] = $event + ['afterIndex' => $index, 'afterRevision' => $state['vault']['revision']];

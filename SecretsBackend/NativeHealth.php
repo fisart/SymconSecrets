@@ -18,6 +18,7 @@ final class SecretsBackendNativeHealth
             'quorumCommit' => false,
             'linearizableRead' => false,
             'strictEmergencyReadSupported' => false,
+            'bestAvailableEmergencyReadSupported' => true,
             'emergencyReadReason' => 'QUORUM_COMMIT_READ_PROTOCOL_REQUIRED',
         ];
     }

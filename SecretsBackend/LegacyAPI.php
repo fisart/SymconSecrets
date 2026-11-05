@@ -55,6 +55,20 @@ final class SecretsBackendLegacyAPI
         if(is_array($value)){if(($value['__folder']??false)===true)unset($value['__folder']);foreach($value as&$child)$child=self::cleanFolders($child);unset($child);}return $value;
     }
     private static function encoded($v): string { return is_array($v)||is_object($v)?(str_replace(['"__folder":true,',',"__folder":true','"__folder":true'], '',json_encode($v))?:''):(string)$v; }
+    /** Used only after an independently approved emergency grant is checked. */
+    public static function emergencyGlobalRead(array $s,string $method,array $args) {
+        $path=SecretsBackendEmergency::arguments($method,$args);
+        SecretsBackendSharedGlobal::assertPath($s,$path,false);
+        if($method==='GetKeys'){
+            $root=self::value($s['vault']['global']);
+            return json_encode(array_values(array_filter(array_keys($root),static fn($k)=>!str_starts_with((string)$k,'__'))),JSON_THROW_ON_ERROR);
+        }
+        $node=SecretsBackendTree::at($s['vault']['global'],$path);
+        if($method==='GetSecret')return self::encoded(self::value($node));
+        $value=self::value($node);$out=[];
+        if(is_array($value))foreach($value as$k=>$v)if(!is_array($v)&&$k!=='__folder')$out[]=['Key'=>$k,'Value'=>(string)$v];
+        return $out;
+    }
     public function GetKeys(): string
     {
         return $this->read(static function(array $s):string{

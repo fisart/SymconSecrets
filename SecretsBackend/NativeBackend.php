@@ -17,6 +17,7 @@ trait SecretsBackendNativeBackend
         if ($paths['vaultDirectory'] !== $binding['paths']['vault'] || $paths['keyDirectory'] !== $binding['paths']['keys']) throw new RuntimeException('Native storage path binding changed.');
         $store = new SecretsBackendNativeStore($paths['vaultDirectory'], $paths['keyDirectory'], $this->GetBuffer('Runtime'),
             fn() => $this->GetBuffer('Runtime'));
+        $store->onBeforeChange(function(array $before,array $after):void{if(SecretsBackendEmergency::authorityDigest($before)!==SecretsBackendEmergency::authorityDigest($after))$this->emergencyCapsule()->invalidate();});
         $id = $store->identity();
         if ($id['deploymentId'] !== $binding['uuid'] || $id['binding']['backend'] !== $this->InstanceID
             || $id['binding']['frontend'] !== $this->ReadPropertyInteger('FrontendInstanceID') || $id['binding']['origin'] !== $this->ReadPropertyString('AdminOrigin')) throw new RuntimeException('Native vault identity or instance binding changed.');
@@ -58,7 +59,7 @@ trait SecretsBackendNativeBackend
         if($origin!==$active['AdminOrigin']){ $p=$current['state']['policy']['backupOrigin']??null; SecretsBackendBackupOriginPolicy::requireRoute($current['state'],$origin,$p['generation']??'','register-options'); }
         return new SecretsBackendApplication($store, ['origin' => $origin, 'primaryOrigin'=>$active['AdminOrigin'], 'frontend' => $active['FrontendInstanceID'], 'backend' => $this->InstanceID,
             'hardwareRoots' => $active['HardwareRootsDirectory'], 'hardwareAAGUIDs' => json_decode($active['HardwareAAGUIDs'], true, 8, JSON_THROW_ON_ERROR),
-            'hardwareTrustVersion' => $active['HardwareTrustVersion'], 'managementProfile' => $profile, 'candidateProfile' => fn() => $this->nativeProfile(), 'nativeOps' => new SecretsBackendNativeOperations($store, $this->nativePeer($store,$origin), function(array $approved):void{foreach(SecretsBackendSecurityConfiguration::HARDWARE as$key)IPS_SetProperty($this->InstanceID,$key,$approved['settings'][$key]);IPS_ApplyChanges($this->InstanceID);$this->Recover();})]);
+            'hardwareTrustVersion' => $active['HardwareTrustVersion'], 'managementProfile' => $profile, 'candidateProfile' => fn() => $this->nativeProfile(), 'nativeOps' => new SecretsBackendNativeOperations($store, $this->nativePeer($store,$origin), function(array $approved):void{foreach(SecretsBackendSecurityConfiguration::HARDWARE as$key)IPS_SetProperty($this->InstanceID,$key,$approved['settings'][$key]);IPS_ApplyChanges($this->InstanceID);$this->Recover();}, fn(bool $create)=>$this->syncEmergencyAccess($create), fn()=>json_decode($this->GetEmergencyStatus(),true))]);
     }
     private function nativeApply(): void
     {
@@ -101,7 +102,8 @@ trait SecretsBackendNativeBackend
         $result = ['nativeMode' => $this->ReadAttributeBoolean('GuidedV2Only'), 'initialized' => $this->nativeInitialized(), 'ready' => false,
             'platform' => SecretsBackendNativePlatform::capabilities(), 'backend' => $this->InstanceID,
             'availability' => json_decode($this->GetAvailability(), true),
-            'consistency' => SecretsBackendNativeHealth::guarantees()];
+            'consistency' => SecretsBackendNativeHealth::guarantees(),
+            'emergency' => json_decode($this->GetEmergencyStatus(),true)];
         if ($result['initialized']) {
             try { $store = $this->nativeStore(); $meta = $store->metadata(); $result += $meta;$result['storage']=$store->storagePaths(); $result['ready'] = $this->ReadPropertyBoolean('Enabled');
                 $result['backupOrigin']=$store->read()['state']['policy']['backupOrigin']??null;

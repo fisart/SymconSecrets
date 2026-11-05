@@ -113,4 +113,8 @@ See [the automatic operation, security contract and tests](SHARED_GLOBAL.md).
 
 ## Mesh consistency and emergency reads
 
-The native mesh currently acknowledges local durable writes and synchronizes asynchronously. A matching peer-health check is not a guarantee of the latest committed value. See [strict mesh verification and required protocol upgrade](STRICT_MESH_CONSISTENCY.md) for the four-vault counterexamples, approved current-or-unavailable target and acceptance tests. Automatic emergency remote secret reads remain unavailable.
+The native mesh currently acknowledges local durable writes and synchronizes asynchronously. A matching peer-health check is not a guarantee of the latest committed value. The approved availability-first policy uses separately authorized emergency peers without quorum. See [emergency Global access](EMERGENCY_GLOBAL_ACCESS.md) for setup and limits; [strict mesh verification](STRICT_MESH_CONSISTENCY.md) preserves the earlier counterexamples and superseded proposal.
+
+## Emergency Global access
+
+[Availability-first fallback](EMERGENCY_GLOBAL_ACCESS.md) supports existing Global SEC application reads through independently approved peers when the local vault cannot open. It requires two explicit approvals, uses separate encrypted credentials, works with one approved peer, and exposes alarm variables. There is no quorum or automatic Local/admin/capability fallback. Remote freshness is uncertain; known older/conflicting data is refused.

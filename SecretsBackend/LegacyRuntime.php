@@ -45,6 +45,7 @@ trait SecretsBackendLegacyRuntime
             ?'In Automation access -> Existing SEC applications, select This backend and review its explicit access override. The backend ID is detected automatically. Leave writes frozen for read-only scripts.'
             :($out['code']==='READ_ALLOWED'?'Run the read again and inspect lastFailure if it fails. Read failures are logged without printing into consumer JSON; a fallback [] does not prove an empty vault.':'Check the backend status and applied settings.');
         $last=json_decode($this->GetBuffer('LegacyAPILastFailure'),true);if(is_array($last))$out['lastFailure']=$last;
+        if(method_exists($this,'GetEmergencyStatus')){$emergency=json_decode($this->GetEmergencyStatus(),true);$out['emergencyGlobalReadAvailable']=($emergency['mode']??'')==='REMOTE'&&($emergency['ready']??false);$out['activeReadSource']=$emergency['activeSource']??'';}
         return SecretsBackendCodec::json($out);
     }
     public function CallLegacyAPI(int $SourceInstanceID,string $Method,string $ArgumentsJSON): string
@@ -63,17 +64,28 @@ trait SecretsBackendLegacyRuntime
         $args=json_decode($ArgumentsJSON,true,32,JSON_THROW_ON_ERROR);if(!is_array($args)||!array_is_list($args))throw new InvalidArgumentException('Legacy arguments must be a positional array.');
         $counts=['GetKeys'=>0,'GetSecret'=>1,'GetExplorerFields'=>1,'SetRecordFields'=>3,'ExportLocalSecrets'=>0,'ImportLocalSecrets'=>1,'EncryptAndSave'=>1];
         if(count($args)!==$counts[$Method])throw new InvalidArgumentException('Legacy argument count differs.');
-        $failure=null;
+        $failure=null;$localValidated=false;
         try{
+            if($SourceInstanceID!==$this->InstanceID)throw new RuntimeException('Old manager context refused.');
             $store=$this->nativeStore();
-            [$value,$output]=$store->withActiveSnapshot(function()use($store,$SourceInstanceID,$Method,$args,$expectedVault):array{
+            [$value,$output]=$store->withActiveSnapshot(function()use($store,$SourceInstanceID,$Method,$args,$expectedVault,&$localValidated):array{
                 if($expectedVault!==null&&!hash_equals($store->identity()['deploymentId'],$expectedVault))throw new RuntimeException('The pinned native vault changed.',1005);
-                $service=$this->legacyService($SourceInstanceID,$store);
+                $service=$this->legacyService($SourceInstanceID,$store);$localValidated=true;
+                if(in_array($Method,['GetKeys','GetSecret','GetExplorerFields'],true))$service->permission($store->read()['state'],'read');
+                if(in_array($Method,['GetKeys','GetSecret','GetExplorerFields'],true)&&!str_starts_with((string)($args[0]??''),'__'))$this->emergencyLocalGate($store);
                 return [$service->{$Method}(...$args),$service->output()];
             });
             $this->SetBuffer('LegacyAPILastError','');
         }
         catch(Throwable $error){
+            if($SourceInstanceID===$this->InstanceID&&(!$localValidated||$error instanceof SecretsBackendEmergencyNeeded)&&$error->getCode()!==1005){
+                try{
+                    SecretsBackendEmergency::arguments($Method,$args);
+                    $value=$this->emergencyRead($Method,$args,$expectedVault);
+                    $this->SetBuffer('LegacyAPILastError','');
+                    return SecretsBackendCodec::json(['value'=>$value,'output'=>'','error'=>null,'source'=>'emergency-peer']);
+                }catch(Throwable $fallbackError){/* Preserve the ordinary failed-call contract; no plaintext error detail. */}
+            }
             $output=$Method==='EncryptAndSave'?'❌ Error: Encryption failed.':'';
             $failure=['code'=>match($error->getCode()){2101=>'APPLICATION_RECORD_MISSING',1005=>'PINNED_VAULT_CHANGED',default=>'LEGACY_API_REFUSED'},'meaning'=>'The read/write request failed authorization or backend validation. The fallback value does not prove an empty vault.'];
             $this->SetBuffer('LegacyAPILastError','Legacy '.$Method.' refused; check approved access, binding, freeze, Global conflicts and backend readiness.');
