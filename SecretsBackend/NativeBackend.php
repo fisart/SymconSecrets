@@ -104,7 +104,7 @@ trait SecretsBackendNativeBackend
         if($frontend['available'])foreach(['Enabled','BackendInstanceID','AdminOrigin']as$key)$frontend[$key]=IPS_GetProperty($front,$key);
         $peers=[];foreach($state['pairing']['peers']as$p)$peers[]=['id'=>$p['id'],'name'=>$p['name'],'active'=>$p['active'],'state'=>$p['state'],'scope'=>$p['pair']['scope'],'endpoint'=>$p['descriptor']['endpoint'],'routes'=>$p['routes']['endpoints']??[$p['descriptor']['endpoint']],'httpsPolicy'=>array_intersect_key($p['httpsPolicy']??['mode'=>'strict'],array_flip(['mode','fingerprint']))];
         $configuration=['backend'=>$this->InstanceID,'enabled'=>$this->ReadPropertyBoolean('Enabled'),'pendingSettings'=>IPS_HasChanges($this->InstanceID),'origin'=>$this->ReadPropertyString('AdminOrigin'),'frontend'=>$frontend,'backupOrigin'=>$state['policy']['backupOrigin']['origin']??null,'backupStatus'=>$state['policy']['backupOrigin']['status']??'none','peers'=>$peers,'emergencyApprovals'=>SecretsBackendEmergency::publicMetadata($state)];
-        return SecretsBackendCodec::json((new SecretsBackendMeshStatus($store,$this->nativePeer($store)))->view($state)+['configuration'=>$configuration]);
+        return SecretsBackendCodec::json((new SecretsBackendMeshStatus($store,$this->nativePeer($store)))->view($state)+['configuration'=>$configuration,'requestDiagnostics'=>json_decode($this->GetRequestDiagnostics(),true,16,JSON_THROW_ON_ERROR)]);
     }
     public function ExportMeshConfiguration(): string
     {

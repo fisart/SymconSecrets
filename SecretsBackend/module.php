@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/Application.php';
+require_once __DIR__ . '/RequestDiagnostics.php';
 require_once __DIR__ . '/SecurityConfiguration.php';
 require_once __DIR__ . '/StoragePaths.php';
 require_once __DIR__ . '/NativeBackend.php';
@@ -22,6 +23,7 @@ class SecretsBackend extends IPSModule
     {
         parent::Create();
         $this->RegisterAttributeString('StorageBinding', '');
+        $this->RegisterAttributeString('RequestDiagnostics', '[]');
         $this->RegisterAttributeBoolean('ProvisioningSealed', false);
         $this->RegisterAttributeBoolean('GuidedV2Only', true);
         foreach (['NativeVaultUUID', 'NativeInitUUID', 'NativeInitPlan'] as $attribute) $this->RegisterAttributeString($attribute, '');
@@ -39,6 +41,7 @@ class SecretsBackend extends IPSModule
         $this->RegisterVariableString('Status', 'Backend status', '', 10);
         $this->RegisterVariableString('StorageStatus', 'Vault / key storage', '', 20);
         $this->RegisterVariableString('Debug', 'Debug', '~TextBox', 50);
+        $this->RegisterVariableString('LastRequestFailure', 'Last refused request (safe diagnostics)', '~TextBox', 51);
         $this->RegisterVariableString('Availability', 'Vault availability', '~TextBox', 25);
         $this->RegisterVariableBoolean('VaultError', 'Vault error', '~Alert', 26);
         $this->RegisterVariableBoolean('FallbackActive', 'Emergency fallback active', '~Alert', 27);
@@ -367,6 +370,7 @@ class SecretsBackend extends IPSModule
     /** Local backend entry point; browser routes never accept an instance ID or arbitrary function. */
     public function HandleFrontendRequest(int $FrontendInstanceID, string $RequestJSON): string
     {
+        $application=null; $request=[]; $requestContext=['stage'=>'envelope'];
         set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
             if (!(error_reporting() & $severity)) return false;
             throw new ErrorException($message, 0, $severity, $file, $line);
@@ -383,7 +387,9 @@ class SecretsBackend extends IPSModule
             if ($this->ReadAttributeBoolean('GuidedV2Only')) {
                 if ($this->nativeInitialized()) {
                     if ($action === 'status') $this->Recover();
-                    $result = $this->nativeApplication($request['origin'])->handle($action, $request['data'], $request);
+                    $requestContext['stage']='storage';
+                    $application=$this->nativeApplication($request['origin']);
+                    $result = $application->handle($action, $request['data'], $request);
                     if ($action === 'status') $result['data'] += ['nativeBackendImplemented' => true, 'initialized' => true];
                 } else {
                     if ($action !== 'status' || $request['data'] !== []) throw new RuntimeException('Initialize the native vault in the HTML setup wizard first.');
@@ -393,7 +399,7 @@ class SecretsBackend extends IPSModule
             elseif (in_array($action, ['setupPreview', 'setupCreate'], true)) $result = $this->setup($action, $request['data']);
             elseif ($action === 'status' && (!is_file($this->paths()['vault'] . '/vault.sqlite') || !$this->ReadPropertyBoolean('Enabled') || $this->GetBuffer('Runtime') === '')) {
                 $result = ['data' => ['ready' => false, 'storageCreated' => is_file($this->paths()['vault'] . '/vault.sqlite'), 'message' => 'Complete storage setup and independent anchor recovery in the backend console.']];
-            } else $result = $this->application()->handle($action, $request['data'], $request);
+            } else { $requestContext['stage']='storage'; $application=$this->application(); $result = $application->handle($action, $request['data'], $request); }
             return SecretsBackendCodec::json(['status' => 200, 'data' => $result['data'], 'cookie' => $result['cookie'] ?? '']);
         } catch (Throwable $exception) {
             $this->debug('request-rejected');
@@ -402,9 +408,10 @@ class SecretsBackend extends IPSModule
             } catch (Throwable $ignored) { if ($this->ReadPropertyBoolean('Enabled')) $this->scheduleRecovery(); } }
             elseif (!$this->nativeInitialized()) $this->nativeUnavailable();
             else { try { $this->nativeStore()->read(); } catch (Throwable $ignored) { $this->SetStatus(200); $this->SetTimerInterval('NativeJobs', 0); } }
-            $this->SetValue('Status', 'Request refused: ' . $exception->getMessage());
-            // No exception text, secret input or filesystem details are sent to unauthenticated clients.
-            return SecretsBackendCodec::json(['status' => 403, 'data' => ['error' => 'Request refused. Check login, revision, approval and backend status.'], 'cookie' => '']);
+            $failure=SecretsBackendRequestDiagnostics::failure($exception,$application?->diagnosticContext()??$requestContext,$request,$this->InstanceID,$FrontendInstanceID);
+            $this->recordRequestFailure($failure);
+            $this->SetValue('Status', 'Request refused: '.$failure['code'].' · '.$failure['reference']);
+            return SecretsBackendCodec::json(['status'=>403,'data'=>SecretsBackendRequestDiagnostics::response($failure),'cookie'=>'']);
         } finally {
             restore_error_handler();
         }
@@ -447,6 +454,30 @@ class SecretsBackend extends IPSModule
     {
         if ($Ident !== 'DebugEnabled' || !is_bool($Value) || IPS_HasChanges($this->InstanceID)) throw new InvalidArgumentException('Unsupported action or unapplied settings.');
         IPS_SetProperty($this->InstanceID, 'DebugEnabled', $Value); IPS_ApplyChanges($this->InstanceID);
+    }
+    /** Local read-only report remains available even if the vault is locked. */
+    public function GetRequestDiagnostics(): string
+    {
+        $recent=json_decode($this->ReadAttributeString('RequestDiagnostics'),true);
+        return SecretsBackendCodec::json(['schema'=>SecretsBackendRequestDiagnostics::SCHEMA,'backend'=>$this->InstanceID,'collectedUtc'=>gmdate('c'),'recentFailures'=>is_array($recent)?array_slice($recent,-20):[]]);
+    }
+    public function ExportRequestDiagnostics(): string
+    {
+        $json=$this->GetRequestDiagnostics();$this->UpdateFormField('ExportJSON','value',$json);return $json;
+    }
+    private function recordRequestFailure(array $failure): void
+    {
+        // Independent of DebugEnabled and of the encrypted vault's availability.
+        try {
+            $recent=json_decode($this->ReadAttributeString('RequestDiagnostics'),true);$recent=is_array($recent)?$recent:[];
+            $recent[]=$failure;$this->WriteAttributeString('RequestDiagnostics',SecretsBackendCodec::json(array_slice($recent,-20)));
+            $this->SetValue('LastRequestFailure',SecretsBackendCodec::json($failure));
+            if($this->ReadPropertyBoolean('DebugEnabled')){
+                $lines=array_filter(explode("\n",(string)$this->GetValue('Debug')));
+                $lines[]=$failure['at'].' | '.$failure['code'].' | '.$failure['action'].' | '.($failure['operation']??'-').' | '.$failure['stage'].' | '.$failure['reference'];
+                $this->SetValue('Debug',implode("\n",array_slice($lines,-50)));
+            }
+        } catch(Throwable $ignored) { /* Reporting must not replace the original refusal. */ }
     }
     public function ClearDebug(): void { $this->SetValue('Debug', ''); }
     private function debug(string $code): void

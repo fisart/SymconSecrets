@@ -130,3 +130,7 @@ Overview now includes a graphical network with component lights, primary/backup 
 3. Reload Secrets administration. **Portal** appears in the header beside **Dokumentation**, at the top right on desktop and below the title on narrow screens. **Add to Portal** creates the opposite link, from Portal to Secrets administration.
 
 The frontend uses its own native-aware metadata lookup so inactive old manager properties do not suppress the link. If no eligible registered Portal is found, the header shows Portal unavailable with a setup hint. Navigation does not grant access; Portal validates its own session. Original legacy helper files remain unchanged.
+
+### Refused requests
+
+Known refusals now explain the next action and show a diagnostic reference. Expired/invalid administrator sessions or CSRF failures return to sign-in and clear sensitive controls. Mutations are never retried automatically. Safe failure details are available from the paired Backend’s **Show refused-request diagnostics** console action and in Configuration Backup 1.3.10 GitHub diagnostic uploads. The previous generic error alone cannot establish which check failed.

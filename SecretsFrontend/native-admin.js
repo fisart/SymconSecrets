@@ -128,7 +128,7 @@ function renderNativeOverview(){
 async function refreshNativeOverview(ticket=generation){
  if(overviewBusy||!snapshot?.native||document.hidden||!pageActive||$('review').open||ceremonyActive)return;overviewBusy=true;
  try{const r=await api('nativeOverviewStatus',{},ticket);if(!r.overview||!Array.isArray(r.peers))throw Error('Update this module and refresh.');Object.assign(snapshot.native,r);meshReceivedAt=Date.now();overviewStale=false;renderNativeOverview();if(!$('nativePeers').hidden){renderPeerConnections();renderPeerWizard();}}
- catch(error){if(ticket===generation&&snapshot?.native&&error.name!=='AbortError'){overviewStale=true;renderNativeOverview();if(!$('nativePeers').hidden){renderPeerConnections();$('nativeDeliveryInfo').textContent='Status could not be refreshed. Last shown checks may be out of date. Sign in again or refresh.';}}}
+ catch(error){if(ticket===generation&&snapshot?.native&&error.name!=='AbortError'){overviewStale=true;renderNativeOverview();$('readiness').textContent+=' '+error.message;if(!$('nativePeers').hidden){renderPeerConnections();$('nativeDeliveryInfo').textContent='Status could not be refreshed. Last shown checks may be out of date. '+error.message;}}}
  finally{overviewBusy=false;}
 }
 $('meshFocus').addEventListener('change',()=>{meshFocusSelected=true;renderMeshMatrix();});

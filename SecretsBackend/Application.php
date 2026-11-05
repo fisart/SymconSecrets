@@ -15,6 +15,8 @@ final class SecretsBackendApplication
     private SecretsBackendStorage $store;
     private array $settings;
     private array $rejectionContext = [];
+    private array $requestContext = [];
+    public function diagnosticContext(): array { return $this->requestContext; }
     public function __construct(SecretsBackendStorage $store, array $settings) { $this->store = $store; $this->settings = $settings; }
     private function webauthn(bool $hardware = false): \lbuchs\WebAuthn\WebAuthn
     {
@@ -202,6 +204,7 @@ final class SecretsBackendApplication
     public function handle(string $action, array $data, array $request): array
     {
         $this->rejectionContext = [];
+        $this->requestContext = ['stage'=>'origin','authenticated'=>false,'csrfVerified'=>false,'operation'=>null];
         try { return $this->dispatch($action, $data, $request); }
         catch (Throwable $exception) {
             try { $this->store->auditRejected($this->rejectionContext); } catch (Throwable $ignored) {}
@@ -211,8 +214,11 @@ final class SecretsBackendApplication
     private function dispatch(string $action, array $data, array $request): array
     {
         if (($request['origin'] ?? '') !== $this->settings['origin']) throw new RuntimeException('Origin mismatch.');
+        $this->requestContext['stage']='rate';
         $this->store->rate(hash('sha256', ($request['remote'] ?? '') . ':' . $action), in_array($action, ['authOptions', 'authVerify', 'enrollmentOptions', 'enrollmentVerify','connectOptions','connectSubmit','connectProof'], true) ? 10 : 120);
+        $this->requestContext['stage']='storage';
         $current = $this->store->read();
+        $this->requestContext['stage']='configuration';
         if (isset($this->settings['managementProfile']) && SecretsBackendSecurityConfiguration::digest($this->settings['managementProfile']) !== SecretsBackendSecurityConfiguration::digest($current['state']['policy']['management'])) throw new RuntimeException('Security profile changed; repeat complete validation.');
         if ($current['state']['policy']['origin'] !== $this->primaryOrigin() || $current['state']['policy']['frontend'] !== (string)$this->settings['frontend']) throw new RuntimeException('Protected origin or frontend binding differs; use independent recovery.');
         $this->checkRoute($current['state'], $action);
@@ -223,6 +229,7 @@ final class SecretsBackendApplication
         if ($action === 'enrollmentVerify') return ['data' => $this->enrollmentVerify($data)];
         if ($action === 'authOptions') { self::exact($data, []); return ['data' => $this->challenge($current, $current['state']['identity']['credentials'], false, 'login', [])]; }
         if ($action === 'authVerify') {
+            $this->requestContext['stage']='login';
             self::exact($data, ['challengeId', 'credential']); $challenge = $this->store->get($data['challengeId'], 'login', true);
             $id = $data['credential']['rawId'] ?? ''; $entry = $current['state']['identity']['credentials'][$id] ?? null;
             if (!is_array($entry) || !$entry['active']) throw new RuntimeException('Credential is not an administrator.');
@@ -240,11 +247,15 @@ final class SecretsBackendApplication
                 'origin' => $this->settings['origin'], 'originGeneration'=>$this->originGeneration($current['state']), 'created' => time(), 'last' => time()], time() + 3600);
             return ['data' => ['authenticated' => true, 'csrf' => $csrf], 'cookie' => $this->cookieName() . '=' . $raw . '; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=3600'];
         }
+        $this->requestContext['stage']='session';
         $session = $this->session($request, $current);
+        $this->requestContext['authenticated']=true;
         $native = $this->settings['nativeOps'] ?? null;
         if ($native instanceof SecretsBackendNativeOperations) $native->bindSession($session['hash']);
         $this->rejectionContext = $this->audit('request', $session['credential'], 'management');
-        if ($action !== 'session') $this->requireCsrf($request, $session);
+        $this->requestContext['stage']='csrf';
+        if ($action !== 'session') { $this->requireCsrf($request, $session); $this->requestContext['csrfVerified']=true; }
+        $this->requestContext['stage']='action';
         if ($this->settings['origin'] !== $this->primaryOrigin() && !SecretsBackendBackupOriginPolicy::credentialFull($current['state'],$current['state']['identity']['credentials'][$session['credential']]) && !in_array($action,['session','list','sessionReveal','sessionTimeout','prepare','approve','logout','nativeOverviewStatus'],true)) throw new RuntimeException('Use the primary address for setup and integration management.');
         if ($action === 'connectCandidateReview') { self::exact($data,['candidate']); $c=$this->connectCandidate($data['candidate'],$current['state']); return ['data'=>['candidate'=>$data['candidate'],'digest'=>SecretsBootstrapVerifier::digest($c),'label'=>$c['entry']['label'],'origin'=>$c['origin'],'administrator'=>$c['entry']['administrator'],'rights'=>$c['rights'],'fingerprint'=>hash('sha256',$c['entry']['publicKey'])]]; }
         if ($action === 'connectDiscovery') { self::exact($data, []); return ['data'=>['permitted'=>true]]; }
@@ -293,6 +304,8 @@ final class SecretsBackendApplication
             return ['data' => ['profile' => $candidate, 'digest' => SecretsBackendSecurityConfiguration::digest($candidate)]];
         }
         if ($action === 'prepare') {
+            $this->requestContext['stage']='prepare';
+            $this->requestContext['operation']=$data['operation']['kind']??null;
             self::exact($data, ['operation']); $operation = $this->operation($data['operation'], $current['state']);
             $this->rejectionContext = $this->audit($operation['kind'], $session['credential'], SecretsBackendCodec::json(array_intersect_key($operation, array_flip(['kind', 'scope', 'path', 'credentialId']))));
             if ($this->settings['origin'] !== $this->primaryOrigin() && !SecretsBackendBackupOriginPolicy::credentialFull($current['state'],$current['state']['identity']['credentials'][$session['credential']]) && !in_array($operation['kind'],['save','delete','rename','reveal','nativeReveal','nativeGlobalReveal','nativeGlobalResolve','nativeBackup'],true)) throw new RuntimeException('Use the primary address for administrator changes.');
@@ -306,7 +319,9 @@ final class SecretsBackendApplication
             return ['data' => $args + ['requiresHardware' => $hardware, 'operationId' => $operationId, 'reviewSummary' => str_starts_with($operation['kind'], 'native') && $native instanceof SecretsBackendNativeOperations ? $native->summary($operation) : null]];
         }
         if ($action === 'approve') {
+            $this->requestContext['stage']='approval';
             self::exact($data, ['challengeId', 'credential']); $challenge = $this->store->get($data['challengeId'], 'approval', true);
+            $this->requestContext['operation']=$challenge['context']['operation']['kind']??null;
             if ($challenge['context']['session'] !== $session['hash']) throw new RuntimeException('Approval belongs to a different session.');
             $approvalCredential = $data['credential']['rawId'] ?? '';
             $entry = $current['state']['identity']['credentials'][$approvalCredential] ?? null;
@@ -318,7 +333,9 @@ final class SecretsBackendApplication
             $commit = fn() => $this->store->change($challenge['head'], $operationId, $digest, function (array $state) use ($operation, $id, $counter): array {
                 $state = $this->apply($operation, $state); $state['identity']['credentials'][$id]['counter'] = $counter; $state['identity']['credentials'][$id]['tested'] = true; return $state;
             }, $this->audit($operation['kind'], $id, SecretsBackendCodec::json(array_intersect_key($operation, array_flip(['kind', 'scope', 'path', 'credentialId'])))));
+            $this->requestContext['stage']='commit';
             $committed = $native instanceof SecretsBackendNativeOperations ? $native->commit($operation,$commit) : $commit();
+            $this->requestContext['stage']='result';
             if ($operation['kind'] === 'nativeEnrollment') return ['data'=>['committed'=>true,'operationId'=>$operationId,'reloginRequired'=>true]];
             if ($operation['kind'] === 'reveal') {
                 $latest = $this->store->read();
