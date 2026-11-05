@@ -43,7 +43,26 @@ try{
     $report=$back->GetRequestDiagnostics();secExpect(count(json_decode($report,true)['recentFailures'])===20,'Diagnostic history is unbounded.');
     foreach(['CSRF-CANARY','PRIVATE-EXCEPTION-CANARY','OPERATION-CANARY','ACTION-CANARY',$request['cookie'],$request['csrf'],$root]as$canary)secExpect(!str_contains($report,$canary)&&!str_contains(json_encode($unknown),$canary),'Sensitive input leaked into diagnostics.');
     secExpect($back->properties['DebugEnabled']===false&&!empty($back->values['LastRequestFailure']),'Failures were lost with debug logging disabled.');
-    echo "PASS request diagnostics: session expiry, CSRF, replaced offer, expired approval, revision race, safe correlation, recovery retention, locked-vault export, bounded redacted history\n";
+    // Another tab signs in: its shared cookie and this tab's old CSRF no longer match.
+    $pending=$call('prepare',['operation'=>['kind'=>'nativeInvite']],$request)['data'];
+    $auth=$call('authOptions',[],$request)['data'];
+    $login=$call('authVerify',['challengeId'=>$auth['challengeId'],'credential'=>secAssertion($key,$auth['options']['challenge'],100)],$request);
+    secExpect($login['status']===200,'Second-tab sign-in failed.');
+    $next=$request;$next['cookie']=explode(';',$login['cookie'])[0];
+    secExpect($next['cookie']!==$request['cookie']&&$login['data']['csrf']!==$request['csrf'],'Second sign-in did not create a distinct session.');
+    $r=$call('approve',['challengeId'=>$pending['challengeId'],'credential'=>secAssertion($key,$pending['options']['challenge'],101)],$next);
+    secExpect($r['data']['code']==='CSRF_INVALID','A changed cookie with old page token did not reproduce CSRF_INVALID.');
+    $last=end(json_decode($back->GetRequestDiagnostics(),true)['recentFailures']);
+    secExpect($last['authenticated']&&!$last['csrfVerified']&&$last['stage']==='csrf','CSRF diagnostics lost authenticated-session versus token-verification facts.');
+    $refreshed=$call('session',[],$next);
+    secExpect($refreshed['status']===200&&$refreshed['data']['csrf']===$login['data']['csrf'],'Authenticated session metadata could not refresh an old tab.');
+    $next['csrf']=$refreshed['data']['csrf'];
+    $r=$call('approve',['challengeId'=>$pending['challengeId'],'credential'=>secAssertion($key,$pending['options']['challenge'],101)],$next);
+    secExpect($r['data']['code']==='APPROVAL_INVALID','Session refresh improperly made an old-session approval valid.');
+    $fresh=$call('prepare',['operation'=>['kind'=>'nativeInvite']],$next)['data'];
+    $r=$call('approve',['challengeId'=>$fresh['challengeId'],'credential'=>secAssertion($key,$fresh['options']['challenge'],101)],$next);
+    secExpect($r['status']===200,'Freshly reviewed approval failed in the refreshed session.');
+    echo "PASS request diagnostics: session expiry, CSRF, replaced offer, expired approval, revision race, safe correlation, recovery retention, locked-vault export, bounded redacted history and second-tab login recovery with old-session approval refusal\n";
 }finally{
     $clean=static function(string $path)use(&$clean):void{if(is_dir($path)){foreach(scandir($path)as$n)if($n!=='.'&&$n!=='..')$clean($path.'/'.$n);rmdir($path);}elseif(file_exists($path))unlink($path);};$clean($root);
 }
