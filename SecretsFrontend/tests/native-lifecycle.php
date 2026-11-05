@@ -140,6 +140,10 @@ try {
     secExpect($front->Refresh(), 'Healthy frontend refresh failed.');
     secExpect(json_decode($front->CheckBackendAvailability(),true)['ready'],'Frontend observer missed healthy backend.');
     secExpect($front->values['BackendError'] === false && $front->values['FrontendError'] === false, 'Healthy frontend/backend alarms remained asserted.');
+    if(!function_exists('SECF_GetFrontendHealth')){function SECF_GetFrontendHealth(int $id):string{return $GLOBALS['instances'][$id]->GetFrontendHealth();}}
+    $frontHealth=json_decode($front->GetFrontendHealth(),true);secExpect($frontHealth['ready']&&!$frontHealth['stale']&&$frontHealth['backend']===$back->InstanceID,'Frontend heartbeat was not independently exposed.');
+    $runtime=(new ReflectionMethod(SecretsBackend::class,'meshRuntimeStatus'))->invoke($back,[]);secExpect($runtime['components']['frontend']['state']==='ok'&&$runtime['components']['backend']['state']==='ok'&&$runtime['components']['vault']['state']==='ok','Live component status was not reported separately.');
+    $front->buffers['FrontendHealth']=json_encode(['ready'=>true,'checkedAt'=>time()-100]);$runtime=(new ReflectionMethod(SecretsBackend::class,'meshRuntimeStatus'))->invoke($back,[]);secExpect($runtime['components']['frontend']['state']==='unknown','Stale frontend heartbeat was green.');$front->CheckBackendAvailability();
     $savedHealth=$back->buffers['AvailabilityState'];$stale=json_decode($savedHealth,true);$stale['checkedAt']=time()-100;$back->buffers['AvailabilityState']=json_encode($stale);
     $observed=json_decode($front->CheckBackendAvailability(),true);
     secExpect(!$observed['ready'] && $observed['state']==='HEARTBEAT_STALE','Frontend observer accepted a stopped heartbeat.');

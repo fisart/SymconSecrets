@@ -112,3 +112,7 @@ See [strict mesh consistency verification](STRICT_MESH_CONSISTENCY.md) for the
 four-vault counterexamples and the historical strict-consistency proposal.
 
 Availability-first emergency access is now separately available through [two-sided approval](EMERGENCY_GLOBAL_ACCESS.md). The health comparison itself still does not authorize an emergency read or prove a latest committed value.
+
+## Graphical mesh health
+
+Overview now includes a graphical network with component lights, primary/backup route lines, directional emergency authorization arrows and an expandable comparison matrix. See [Mesh health display](MESH_HEALTH_DISPLAY.md) for interpretation, refresh intervals and limits.

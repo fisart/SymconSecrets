@@ -40,6 +40,7 @@ try{
  $op=$operation(0,['kind'=>'nativeResync','peerId'=>$peers[1]->descriptor()['vaultId']]);$pump();$ok(count(array_unique($models()))===1,'Authenticated resync changed Global values.');
  $edit(0,['Gap'],'"intermediate"','create');$cur=$stores[0]->read();$stores[0]->change($cur['head'],SecretsBackendCodec::uuid(),hash('sha256','gap-fixture'),static function($s){$s['outbox']['jobs']=[];return $s;});$edit(0,['Gap'],'"recovered automatically"');$pump();$ok(count(array_unique($models()))===1,'Sequence gap required a manual resynchronization.');
  if($GLOBALS['emergencyAccessTest']??false)require __DIR__.'/emergency-access-operations.php';
+ if($GLOBALS['meshStatusTest']??false)require __DIR__.'/mesh-status-operations.php';
  if($GLOBALS['nativeHealthTest']??false)require __DIR__.'/native-health-operations.php';
  if($GLOBALS['fullPeerRoutesTest']??false)require __DIR__.'/full-peer-routes-operations.php';
  $saved=$models();$stores[1]->invalidate();$restart=new SecretsBackendNativeStore($roots[1].'/data',$roots[1].'/keys','fresh-runtime');$restart->recover();$ok(SecretsBackendNativeStore::canonical($restart->read()['state']['native']['sharedGlobal'])===$saved[1],'Restart lost shared version history.');

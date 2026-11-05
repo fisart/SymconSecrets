@@ -41,6 +41,7 @@ class SecretsFrontend extends IPSModule
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
+        $this->SetBuffer('FrontendHealth','');
         $this->SetValue('BackendError', true);
         $this->SetValue('FrontendError', true);
         $this->SetTimerInterval('BackendAvailability', $this->ReadPropertyBoolean('Enabled') ? 30000 : 0);
@@ -85,10 +86,21 @@ class SecretsFrontend extends IPSModule
     /** Local module readiness; external HTTPS reachability requires a remote observer. */
     private function updateFrontendError(): void
     {
-        $this->SetValue('FrontendError', !$this->ReadPropertyBoolean('Enabled')
+        $error=!$this->ReadPropertyBoolean('Enabled')
             || IPS_GetKernelRunlevel() !== 10103
             || IPS_HasChanges($this->InstanceID)
-            || (int)IPS_GetInstance($this->InstanceID)['InstanceStatus'] !== 102);
+            || (int)IPS_GetInstance($this->InstanceID)['InstanceStatus'] !== 102;
+        $this->SetValue('FrontendError', $error);
+        $this->SetBuffer('FrontendHealth',json_encode(['ready'=>!$error,'checkedAt'=>time()],JSON_THROW_ON_ERROR));
+    }
+    /** Local heartbeat only; an external route is checked independently by peers. */
+    public function GetFrontendHealth(): string
+    {
+        $h=json_decode($this->GetBuffer('FrontendHealth'),true)?:['ready'=>false,'checkedAt'=>0];$age=time()-(int)$h['checkedAt'];
+        $h['backend']=$this->ReadPropertyInteger('BackendInstanceID');
+        $h['stale']=$h['checkedAt']===0||$age<0||$age>90;
+        $h['ready']=!$h['stale']&&$h['ready']&&$this->ReadPropertyBoolean('Enabled')&&!IPS_HasChanges($this->InstanceID)&&IPS_GetKernelRunlevel()===10103&&(int)IPS_GetInstance($this->InstanceID)['InstanceStatus']===102;
+        return json_encode($h,JSON_THROW_ON_ERROR);
     }
     private function settings(): array
     {
