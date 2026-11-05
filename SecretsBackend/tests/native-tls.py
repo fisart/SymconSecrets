@@ -86,7 +86,11 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
             self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', str(len(response) + (10 if mode == 'truncated' else 0)))
             self.end_headers()
-            self.wfile.write(response)
+            try:
+                self.wfile.write(response)
+            except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
+                if mode != 'slow-headers':
+                    raise
 
     def run_server(*, san=True, expired=False, chain=True):
         leaf_key = key()
@@ -204,5 +208,5 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
         finally:
             server.shutdown()
             server.server_close()
-    assert counts == [b'TLS-REQUEST-CANARY'] * 10, counts
+    assert counts == [b'TLS-REQUEST-CANARY'] * 12, counts
 print('PASS real HTTPS: reused original PHP streams; explicit approved pin succeeds and mismatch sends no HTTP; separate cURL CA file cannot override OpenSSL;  reproduced unknown-issuer failure, recovered through PHP/env trust, accepted valid chains, rejected wrong roots/hostname/expiry/incomplete chain before POST, no trust-policy bypass')

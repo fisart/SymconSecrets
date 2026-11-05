@@ -106,7 +106,7 @@
   "actions": [
     {
       "type": "ExpansionPanel",
-      "caption": "Advanced: earlier V1 development tools · not native setup",
+      "caption": "Advanced: earlier V1 development tools \u00b7 not native setup",
       "items": [
         {
           "type": "ExpansionPanel",
@@ -205,6 +205,15 @@
               "onClick": "SECB_ExportConfiguration($id);"
             },
             {
+              "type": "Button",
+              "caption": "Export mesh configuration for support",
+              "onClick": "SECB_ExportMeshConfiguration($id);"
+            },
+            {
+              "type": "Label",
+              "caption": "The mesh support report includes bindings, origins, peer routes, TLS policy and approval metadata. It contains no secrets or private keys and is not a configuration restore file."
+            },
+            {
               "type": "ValidationTextBox",
               "name": "ExportJSON",
               "caption": "Configuration export",
@@ -218,7 +227,7 @@
             },
             {
               "type": "Button",
-              "caption": "Import configuration — leave disabled",
+              "caption": "Import configuration \u2014 leave disabled",
               "onClick": "SECB_ImportConfiguration($id, $ImportJSON);"
             }
           ]
