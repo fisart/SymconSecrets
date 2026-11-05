@@ -49,6 +49,7 @@ $failReadOnce=true;$racingTransport=static function($url,$bytes,$policy,$timeout
     return $transport($url,$bytes,$policy,$timeout);
 };
 $r=(new SecretsBackendEmergencyClient($capsule,$binding,$racingTransport))->read('GetSecret',['Account'],$source);$ok($r['source']===$peers[2]->descriptor()['vaultId'],'Peer failure after probe prevented eligible fallback.');
+$budgetTransport=static function($url,$bytes,$policy,$timeout)use($transport,$ok):string{$ok($timeout>=4.0,'Emergency timeout cannot accommodate measured relay latency.');return $transport($url,$bytes,$policy,$timeout);};(new SecretsBackendEmergencyClient($capsule,$binding,$budgetTransport))->read('GetSecret',['Account'],$source);
 $offline[1]=true;$c=$client();$r=$c->read('GetSecret',['Account'],$source);$ok($r['source']===$peers[2]->descriptor()['vaultId'],'Unreachable peer blocked another approved peer.');
 $before=count($calls);$client($c->backoff())->read('GetSecret',['Account'],$source);$ok(count($calls)===$before+2,'Circuit breaker repeatedly called the unavailable peer.');unset($offline[1]);
 $overloaded=static function($url,$bytes,$policy,$timeout)use($transport,$peers):string{if($url===$peers[1]->descriptor()['endpoint'])throw new SecretsBackendNativePeerDeliveryFailure('http',503);return $transport($url,$bytes,$policy,$timeout);};

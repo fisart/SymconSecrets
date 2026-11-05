@@ -18,7 +18,7 @@ final class SecretsBackendEmergencyClient
             if(parse_url($url,PHP_URL_PATH)!=='/hook/secrets_peer_'.$c['descriptor']['backend'])throw new SecretsBackendEmergencyRefused('ENDPOINT_BINDING');
             $left=$deadline-microtime(true);if($left<0.1)throw new SecretsBackendNativePeerDeliveryFailure('timeout');
             $policy=SecretsBackendNativeLegacyHTTPS::origin($url)===SecretsBackendNativeLegacyHTTPS::origin($c['descriptor']['endpoint'])?$c['httpsPolicy']:['mode'=>'strict'];
-            try{$raw=($this->transport)($url,$bytes,$policy,min(1.5,$left));}
+            try{$raw=($this->transport)($url,$bytes,$policy,min(6.0,SecretsBackendNativeLegacyHTTPS::timeout($url),$left));}
             catch(SecretsBackendNativePeerDeliveryFailure $e){
                 if($e->problem==='http'&&!in_array($e->httpStatus,[429,502,503,504],true))throw new SecretsBackendEmergencyRefused('REMOTE_REFUSED');
                 if(in_array($e->problem,['invalid-reply','response-size'],true))throw new SecretsBackendEmergencyRefused('INVALID_RESPONSE');
@@ -48,10 +48,10 @@ final class SecretsBackendEmergencyClient
     public function read(string $method,array $args,?string $expectedVault=null,bool $probeOnly=false): array {
         SecretsBackendEmergency::arguments($method,$args);$access=$this->capsule->load($this->binding);
         if($expectedVault!==null&&!hash_equals($access['source'],$expectedVault))throw new SecretsBackendEmergencyRefused('PINNED_VAULT_CHANGED');
-        $deadline=microtime(true)+8.0;$observed=[];$candidates=[];$skipped=0;
+        $deadline=microtime(true)+20.0;$observed=[];$candidates=[];$skipped=0;
         foreach($access['clients']as$id=>$c){
-            if(($this->backoff[$id]['next']??0)>time()||microtime(true)>$deadline-1.7){++$skipped;continue;}
-            try{$reply=$this->exchange($c,$access['source'],$method,$args,'probe',$deadline-1.5);}
+            if(($this->backoff[$id]['next']??0)>time()||microtime(true)>$deadline-6.2){++$skipped;continue;}
+            try{$reply=$this->exchange($c,$access['source'],$method,$args,'probe',$deadline-6.0);}
             catch(SecretsBackendNativePeerDeliveryFailure $e){$failures=min(8,($this->backoff[$id]['failures']??0)+1);$this->backoff[$id]=['failures'=>$failures,'next'=>time()+min(60,2**$failures)];++$skipped;continue;}
             $stamp=$reply['stamp'];$this->capsule->observe($this->binding,$access['authorization'],$stamp);$observed[]=$stamp;$candidates[]=['client'=>$c,'stamp'=>$stamp];
         }

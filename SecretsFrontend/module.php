@@ -32,6 +32,7 @@ class SecretsFrontend extends IPSModule
         $this->RegisterVariableString('BackendAvailability', 'Backend availability', '~TextBox', 35);
         $this->RegisterVariableBoolean('BackendError', 'Backend error', '~Alert', 36);
         $this->RegisterVariableBoolean('FrontendError', 'Frontend error', '~Alert', 37);
+        $this->RegisterVariableString('FrontendHealth', 'Frontend heartbeat', '~TextBox', 38);
         $this->SetValue('BackendError', true);
         $this->SetValue('FrontendError', true);
         $this->RegisterTimer('BackendAvailability', 0, 'SECF_CheckBackendAvailability($_IPS[\'TARGET\']);');
@@ -41,7 +42,8 @@ class SecretsFrontend extends IPSModule
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
-        $this->SetBuffer('FrontendHealth','');
+        $this->RegisterVariableString('FrontendHealth', 'Frontend heartbeat', '~TextBox', 38);
+        $this->SetBuffer('FrontendHealth','');$this->SetValue('FrontendHealth','');
         $this->SetValue('BackendError', true);
         $this->SetValue('FrontendError', true);
         $this->SetTimerInterval('BackendAvailability', $this->ReadPropertyBoolean('Enabled') ? 30000 : 0);
@@ -91,7 +93,8 @@ class SecretsFrontend extends IPSModule
             || IPS_HasChanges($this->InstanceID)
             || (int)IPS_GetInstance($this->InstanceID)['InstanceStatus'] !== 102;
         $this->SetValue('FrontendError', $error);
-        $this->SetBuffer('FrontendHealth',json_encode(['ready'=>!$error,'checkedAt'=>time()],JSON_THROW_ON_ERROR));
+        $health=json_encode(['ready'=>!$error,'checkedAt'=>time(),'backend'=>$this->ReadPropertyInteger('BackendInstanceID')],JSON_THROW_ON_ERROR);
+        $this->SetBuffer('FrontendHealth',$health);$this->SetValue('FrontendHealth',$health);
     }
     /** Local heartbeat only; an external route is checked independently by peers. */
     public function GetFrontendHealth(): string

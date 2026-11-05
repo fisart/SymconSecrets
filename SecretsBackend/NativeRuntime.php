@@ -27,7 +27,11 @@ trait SecretsBackendNativeRuntime
         $id=$this->ReadPropertyInteger('FrontendInstanceID');
         try{
             if(!IPS_InstanceExists($id))$frontend=['state'=>'error','age'=>0];
-            elseif(function_exists('SECF_GetFrontendHealth')){$h=json_decode(SECF_GetFrontendHealth($id),true);if(($h['backend']??null)!==$this->InstanceID)$h['ready']=false;$frontend=$indicator($h);}
+            else{
+                $h=json_decode(GetValueString(IPS_GetObjectIDByIdent('FrontendHealth',$id)),true,8,JSON_THROW_ON_ERROR);
+                if(($h['backend']??null)!==$this->InstanceID||IPS_GetProperty($id,'BackendInstanceID')!==$this->InstanceID||!IPS_GetProperty($id,'Enabled')||IPS_HasChanges($id)||(int)IPS_GetInstance($id)['InstanceStatus']!==102)$h['ready']=false;
+                $frontend=$indicator($h);
+            }
         }catch(Throwable $ignored){}
         $backend=['state'=>$this->ReadPropertyBoolean('Enabled')&&IPS_GetKernelRunlevel()===10103&&!IPS_HasChanges($this->InstanceID)&&(int)IPS_GetInstance($this->InstanceID)['InstanceStatus']===102?'ok':'error','age'=>0];
         $p=$state['policy']['backupOrigin']??null;$backup=['state'=>'none','age'=>0];
@@ -39,7 +43,7 @@ trait SecretsBackendNativeRuntime
     }
     public static function nativeHTTPS(string $endpoint,string $bytes,array $policy=['mode'=>'strict']): string
     {
-        return SecretsBackendNativeLegacyHTTPS::post($endpoint,$bytes,$policy);
+        return SecretsBackendNativeLegacyHTTPS::post($endpoint,$bytes,$policy,SecretsBackendNativeLegacyHTTPS::timeout($endpoint));
     }
     public function GetNativePublicDescriptor(): string
     {

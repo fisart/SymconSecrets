@@ -1,4 +1,5 @@
 <?php
+$ok(SecretsBackendNativeLegacyHTTPS::timeout('https://'.str_repeat('c',32).'.ipmagic.de/hook/secrets_peer_8001')===12.0&&SecretsBackendNativeLegacyHTTPS::timeout('https://ordinary.example/hook/secrets_peer_8001')===4.5,'Relay and primary transport budgets were not separated.');
 $transport=(new ReflectionProperty($peers[0],'transport'))->getValue($peers[0]);$now=time();$clock=static function()use(&$now):int{return $now;};
 $runtime=['components'=>['frontend'=>['state'=>'error','age'=>0],'backend'=>['state'=>'ok','age'=>0],'vault'=>['state'=>'ok','age'=>0]],'backupService'=>['state'=>'ok','age'=>0],'source'=>['state'=>'ok','age'=>0],'fallback'=>false];
 $peers[1]=new SecretsBackendNativePeer($stores[1],$peers[1]->descriptor()['endpoint'],$transport,true,static fn()=>$runtime);$routes[$peers[1]->descriptor()['endpoint']]=$peers[1];
