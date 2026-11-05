@@ -35,12 +35,12 @@ final class SecretsBackendNativeLegacyHTTPS
     }
     public static function timeout(string $endpoint): float
     {
-        return preg_match('/^[a-z0-9]{32}\.ipmagic\.de$/D',(string)parse_url($endpoint,PHP_URL_HOST))===1?12.0:4.5;
+        return preg_match('/^[a-z0-9]{32}\.ipmagic\.de$/D',(string)parse_url($endpoint,PHP_URL_HOST))===1?25.0:15.0;
     }
-    public static function post(string $endpoint,string $bytes,array $policy=['mode'=>'strict'],float $timeout=4.5): string
+    public static function post(string $endpoint,string $bytes,array $policy=['mode'=>'strict'],float $timeout=15.0): string
     {
         SecretsBackendNativePeer::endpoint($endpoint);$policy=self::policy($policy);
-        if($timeout<0.1||$timeout>12.0)throw new InvalidArgumentException('Invalid HTTPS timeout.');
+        if($timeout<0.1||$timeout>25.0)throw new InvalidArgumentException('Invalid HTTPS timeout.');
         $deadline=microtime(true)+$timeout;
         if(!self::available())throw new SecretsBackendNativePeerDeliveryFailure('transport');
         $host=parse_url($endpoint,PHP_URL_HOST);$pinned=$policy['mode']==='pinned';
