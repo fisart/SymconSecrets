@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/Http.php';
+require_once __DIR__ . '/PortalNavigation.php';
 require_once __DIR__ . '/GuidedSetup.php';
 require_once __DIR__ . '/../libs/SystemPortalNavigation.php';
 
@@ -253,7 +254,7 @@ class SecretsFrontend extends IPSModule
             $native=$this->bootstrapNative();$backup=$native['backupOrigin']??null;$setup=$this->bootstrapState();$recoveryUI=false;
             if(in_array($_SERVER['REQUEST_METHOD']??'', ['GET','HEAD'],true)&&($setup['mode']??'')==='recovery'&&($setup['expires']??0)>=time()&&($setup['runtime']??'')===$this->BootstrapRuntime()){try{$journal=$this->bootstrapJournal();$recoveryUI=$journal->locked(fn()=>$journal->read('decision-'.hash('sha256',$setup['intent']))===null);}catch(Throwable $ignored){}}
             $connect=is_array($backup)&&in_array($backup['status']??'', ['pending','active'],true)?SecretsFrontendConnectDiscovery::local():[];
-            $portal = AFSystemPortalNavigationV1::path(0, $settings['PortalInstanceID']);
+            $portal = SecretsFrontendPortalNavigation::path(0, $settings['PortalInstanceID']);
             $reply = SecretsFrontendHttp::response($settings, $this->InstanceID, $_SERVER, $this->path(), $portal, $this->documentationPath(), $input, function (array $request): array {
                 return $this->gateway($request);
             }, ['vaultInitialized'=>($native['initialized']??false)===true,'setupMode'=>$recoveryUI?'recovery':'initial','guidedV2Only' => $this->ReadAttributeBoolean('GuidedV2Only'), 'backupOrigin'=>$backup,'connectDiscovery'=>$connect,'transportDiagnostic'=>['instance'=>$caller,'module'=>$callerModule]]);

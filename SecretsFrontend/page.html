@@ -36,6 +36,7 @@ header p {margin:3px 0 0;color:var(--muted);font-size:12px}
 .badge {display:inline-flex;align-items:center;gap:7px;border:1px solid #dccfac;background:#faf4e5;color:#765c28;border-radius:30px;padding:5px 11px;font-size:11px;font-weight:700;letter-spacing:.02em;white-space:nowrap}
 .badge::before {content:"";width:6px;height:6px;background:#b18b3d;border-radius:50%}
 .headerLinks:empty {display:none}
+.headerLinks .navUnavailable {color:var(--muted);cursor:help}
 .headerLinks {display:flex;gap:18px;font-size:12px}
 .layout {display:grid;grid-template-columns:224px minmax(0,1fr);max-width:1420px;margin:auto;min-height:calc(100vh - 90px);padding:26px 28px 48px;gap:42px;align-items:start}
 nav.tabs {display:flex;flex-direction:column;gap:6px;background:var(--sidebar);border-radius:var(--radius);padding:24px 13px 18px;position:sticky;top:24px;box-shadow:var(--shadow)}
@@ -145,7 +146,7 @@ body.dark .brandmark {background:#426b43}
 @media(max-width:800px) {
  header {padding:17px 20px}.top {gap:15px}.brandmark {width:38px;height:43px}.brandmark::after {left:17px;top:19px}
  header h1 {font-size:18px;white-space:normal}header p {font-size:11px}.headerActions {gap:8px}.badge {font-size:10px;padding:4px 8px}
- .headerLinks {display:none}.layout {display:block;padding:18px 20px 36px}
+ .headerLinks {display:flex;gap:12px;flex-wrap:wrap}.layout {display:block;padding:18px 20px 36px}
  nav.tabs {position:static;flex-direction:row;overflow:auto;padding:8px;gap:4px;margin-bottom:27px;border-radius:13px;scrollbar-width:thin}
  nav.tabs button {padding:10px 13px;font-size:12px}.navLabel,.navFoot {display:none}nav.tabs button::before {display:none}
  input,select,textarea,input[spellcheck=false] {font-size:16px}.panel>h2,.panel>.row h2 {font-size:27px}.card {padding:23px}.wizardSteps {margin-top:23px}
@@ -153,8 +154,8 @@ body.dark .brandmark {background:#426b43}
  .wizardSteps span::before {width:23px;height:23px}.grid {gap:14px}.tree {max-height:300px}.wizardIntro {display:block}
 }
 @media(max-width:480px) {
- .layout {padding:15px 14px 30px}header {padding:15px}.top {align-items:flex-start}.brand {gap:10px}.brandmark {display:none}
- .badge {white-space:normal;max-width:120px;line-height:1.5}.headerActions {max-width:135px}.card {padding:20px;border-radius:14px}
+ .layout {padding:15px 14px 30px}header {padding:15px}.top {align-items:flex-start;flex-wrap:wrap}.brand {gap:10px}.brandmark {display:none}
+ .badge {white-space:normal;max-width:120px;line-height:1.5}.headerActions {width:100%;max-width:100%;justify-content:space-between}.card {padding:20px;border-radius:14px}
  .grid {grid-template-columns:minmax(0,1fr)}.grid>.card {margin:0}.grid>.card+.card {margin-top:0}
  .row:not(.between)>button {flex:1 1 auto}.wizardActions>button.primary {flex-basis:100%}.wizardActions {gap:9px}
  .setupReview {grid-template-columns:1fr}.setupReview dt {border:0;padding-bottom:2px;font-size:11px}.setupReview dd {padding:0 0 11px}
