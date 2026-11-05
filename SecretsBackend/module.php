@@ -192,7 +192,7 @@ class SecretsBackend extends IPSModule
         // Finish an already-authorized path/property handoff before taking the
         // lifecycle semaphore: IPS_ApplyChanges needs that same semaphore.
         if($this->ReadAttributeBoolean('GuidedV2Only')&&$this->nativeInitialized()&&$this->ReadPropertyBoolean('Enabled')){
-            try{$this->nativeStore();}catch(Throwable $e){$this->SetStatus(200);$this->SetValue('Status','Native vault locked: '.$e->getMessage());return false;}
+            try{$this->nativeStore();}catch(Throwable $e){$this->SetValue('VaultError',true);$this->SetStatus(200);$this->SetValue('Status','Native vault locked: '.$e->getMessage());return false;}
         }
         $lock = 'SECB.Runtime.' . $this->InstanceID;
         if (!IPS_SemaphoreEnter($lock, 100)) return false;
