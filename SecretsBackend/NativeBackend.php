@@ -64,13 +64,15 @@ trait SecretsBackendNativeBackend
     {
         $this->SetTimerInterval('Recovery', 0);
         $this->SetTimerInterval('NativeJobs', 0);
+        $this->SetTimerInterval('Availability', $this->ReadPropertyBoolean('Enabled') && $this->nativeInitialized() ? 30000 : 0);
+        $this->SetBuffer('AvailabilityState', '');
         $this->syncNativePeerHook($this->ReadPropertyBoolean('Enabled') && $this->nativeInitialized());
         if (!$this->nativeInitialized()) { $this->nativeUnavailable(); return; }
         try {
             $store = $this->nativeStore(); $store->invalidate();
             if (!$this->ReadPropertyBoolean('Enabled')) { $this->SetStatus(104); $this->SetValue('Status', 'Native vault disabled; sessions and approvals invalidated.'); return; }
             $this->SetStatus(201); $this->SetValue('Status', 'Native encrypted vault: recovery check pending.');
-            if (IPS_GetKernelRunlevel() === 10103) $this->SetTimerInterval('Recovery', 100);
+            $this->SetTimerInterval('Recovery', IPS_GetKernelRunlevel() === 10103 ? 100 : 1000);
         } catch (Throwable $e) { $this->SetStatus(200); $this->SetValue('Status', 'Native vault locked: ' . $e->getMessage()); }
     }
     private function nativeRecover(): bool
@@ -96,7 +98,8 @@ trait SecretsBackendNativeBackend
     public function GetNativeInfo(): string
     {
         $result = ['nativeMode' => $this->ReadAttributeBoolean('GuidedV2Only'), 'initialized' => $this->nativeInitialized(), 'ready' => false,
-            'platform' => SecretsBackendNativePlatform::capabilities(), 'backend' => $this->InstanceID];
+            'platform' => SecretsBackendNativePlatform::capabilities(), 'backend' => $this->InstanceID,
+            'availability' => json_decode($this->GetAvailability(), true)];
         if ($result['initialized']) {
             try { $store = $this->nativeStore(); $meta = $store->metadata(); $result += $meta;$result['storage']=$store->storagePaths(); $result['ready'] = $this->ReadPropertyBoolean('Enabled');
                 $result['backupOrigin']=$store->read()['state']['policy']['backupOrigin']??null;

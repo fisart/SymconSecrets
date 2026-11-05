@@ -29,12 +29,15 @@ class SecretsFrontend extends IPSModule
         $this->RegisterVariableString('Status', 'Frontend status', '', 20);
         $this->RegisterVariableString('IntegrationStatus', 'Portal / documentation / backup', '~TextBox', 30);
         $this->RegisterVariableString('Debug', 'Debug', '~TextBox', 50);
+        $this->RegisterVariableString('BackendAvailability', 'Backend availability', '~TextBox', 35);
+        $this->RegisterTimer('BackendAvailability', 0, 'SECF_CheckBackendAvailability($_IPS[\'TARGET\']);');
         $this->RegisterTimer('BootstrapRecovery', 0, 'SECF_RecoverBootstrap($_IPS[\'TARGET\']);');
         $this->RegisterTimer('Setup', 0, 'SECF_Refresh($_IPS[\'TARGET\']);'); $this->RegisterMessage(0, 10103);
     }
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
+        $this->SetTimerInterval('BackendAvailability', $this->ReadPropertyBoolean('Enabled') ? 30000 : 0);
         $this->forgetGuidedSetup();
         $this->SetTimerInterval('BootstrapRecovery', 1000);
         $this->SetValue('DebugEnabled', $this->ReadPropertyBoolean('DebugEnabled'));
@@ -44,6 +47,31 @@ class SecretsFrontend extends IPSModule
     public function MessageSink($TimeStamp, $SenderID, $Message, $Data): void
     {
         if ((int)$SenderID === 0 && (int)$Message === 10103) { $this->forgetGuidedSetup(); $this->SetTimerInterval('Setup', 100); $this->SetTimerInterval('BootstrapRecovery', 1000); }
+    }
+    /** Independent observer: can report a stopped or unloaded backend watchdog. */
+    public function CheckBackendAvailability(): string
+    {
+        $out = ['ready'=>false, 'state'=>'UNAVAILABLE', 'checkedAt'=>time()];
+        try {
+            if (!$this->ReadPropertyBoolean('Enabled')) $out['state']='DISABLED';
+            else {
+                $id=$this->ReadPropertyInteger('BackendInstanceID');
+                if (!IPS_InstanceExists($id) || !function_exists('SECB_GetAvailability')) $out['state']='BACKEND_API_UNAVAILABLE';
+                else {
+                    $out=json_decode(SECB_GetAvailability($id),true,16,JSON_THROW_ON_ERROR);
+                    if (!is_array($out) || !isset($out['state'],$out['ready'])) throw new RuntimeException('Invalid health response.');
+                    if ($out['stale']??true) { $out['state']='HEARTBEAT_STALE'; $out['ready']=false; }
+                    elseif (!$out['ready'] && $out['state']==='READY') $out['state']='NOT_READY';
+                }
+            }
+        } catch (Throwable $e) { $out=['ready'=>false,'state'=>'BACKEND_CHECK_FAILED','checkedAt'=>time()]; }
+        $json=json_encode($out,JSON_THROW_ON_ERROR);
+        $before=$this->GetBuffer('BackendAvailabilityState');
+        if ($before!==$out['state'] && function_exists('IPS_LogMessage'))
+            IPS_LogMessage('SecretsFrontend '.$this->InstanceID,'Backend availability: '.$out['state']);
+        $this->SetBuffer('BackendAvailabilityState',$out['state']);
+        $this->SetValue('BackendAvailability',$json);
+        return $json;
     }
     private function settings(): array
     {
