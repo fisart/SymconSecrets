@@ -64,7 +64,9 @@ trait SecretsBackendAvailability
                 }
             }
             $this->SetBuffer('AvailabilityState', json_encode($s, JSON_THROW_ON_ERROR));
-            $this->SetValue('Availability', $this->GetAvailability());
+            $health = $this->GetAvailability();
+            $this->SetValue('Availability', $health);
+            $this->SetValue('VaultError', !json_decode($health, true, 16, JSON_THROW_ON_ERROR)['ready']);
             if ($previous !== $s['state'] && function_exists('IPS_LogMessage'))
                 IPS_LogMessage('SecretsBackend ' . $this->InstanceID, 'Availability: ' . $s['state'] . ($s['reason'] ? ' (' . $s['reason'] . ')' : ''));
             return $this->GetAvailability();
@@ -73,7 +75,9 @@ trait SecretsBackendAvailability
                 'recoveryAttempts'=>$s['recoveryAttempts']??0, 'nextRecoveryAt'=>$s['nextRecoveryAt']??0,
                 'lastSuccessAt'=>$s['lastSuccessAt']??0];
             $this->SetBuffer('AvailabilityState', json_encode($s, JSON_THROW_ON_ERROR));
-            $this->SetValue('Availability', $this->GetAvailability());
+            $health = $this->GetAvailability();
+            $this->SetValue('Availability', $health);
+            $this->SetValue('VaultError', !json_decode($health, true, 16, JSON_THROW_ON_ERROR)['ready']);
             return $this->GetAvailability();
         } finally { IPS_SemaphoreLeave($lock); }
     }

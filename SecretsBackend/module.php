@@ -38,6 +38,8 @@ class SecretsBackend extends IPSModule
         $this->RegisterVariableString('StorageStatus', 'Vault / key storage', '', 20);
         $this->RegisterVariableString('Debug', 'Debug', '~TextBox', 50);
         $this->RegisterVariableString('Availability', 'Vault availability', '~TextBox', 25);
+        $this->RegisterVariableBoolean('VaultError', 'Vault error', '~Alert', 26);
+        $this->SetValue('VaultError', true);
         $this->RegisterTimer('Availability', 0, 'SECB_CheckAvailability($_IPS[\'TARGET\']);');
         $this->RegisterMessage(0, 10001); // IPS_KERNELSTARTED
         $this->RegisterTimer('Recovery', 0, 'SECB_Recover($_IPS[\'TARGET\']);');
@@ -52,6 +54,7 @@ class SecretsBackend extends IPSModule
         parent::ApplyChanges();
         $approvedHandoff=$this->GetBuffer('ApprovedStorageHandoff');$this->SetBuffer('ApprovedStorageHandoff','');
         if($approvedHandoff!==''&&hash_equals($approvedHandoff,SecretsBackendSecurityConfiguration::digest($this->configuration())))return;
+        $this->SetValue('VaultError', true);
         $this->SetBuffer('ApplyingNativeSettings','1');
         $this->SetBuffer('Runtime', SecretsBackendCodec::b64(random_bytes(32))); $this->SetBuffer('Setup', '');
         $this->SetBuffer('RecoveryDelay', '1000');
@@ -77,6 +80,7 @@ class SecretsBackend extends IPSModule
     }
     private function nativeUnavailable(): void
     {
+        $this->SetValue('VaultError', true);
         $this->SetTimerInterval('Recovery', 0);
         $this->SetStatus(201);
         $this->SetValue('Status', 'Native vault not initialized. Open the HTML setup wizard; no additional database or anchor service is required.');

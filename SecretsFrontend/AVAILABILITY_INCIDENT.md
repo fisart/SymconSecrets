@@ -51,3 +51,7 @@ Local records needed during site failure require a separately approved replicati
 ## Deployment and acceptance
 
 This is a candidate branch targeting migration/legacy-sec-replacement, not main. Updating main will not install it. Frontend branch also needs the lifecycle change through its own compatible patch before use there. A test on an isolated installation must cover missed ready notification, normal reboot, deliberate pending settings, corrupt/missing key, inaccessible disk, recovery lock contention and disabled jobs timer. Then perform the actual nightly backup/restart and verify fresh availability, status 102 and application reads. Do not equate kernel ready with Secrets ready.
+
+## Alarm integration
+
+See [Boolean availability alarms](AVAILABILITY_ALARMS.md) for VaultError, BackendError and FrontendError, their independent scopes, timing and alarm-system integration.

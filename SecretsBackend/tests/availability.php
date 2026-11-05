@@ -16,10 +16,12 @@ class AvailabilityProbe extends IPSModule {
 $p=new AvailabilityProbe(1);$p->properties['Enabled']=true;
 check(!json_decode($p->GetAvailability(),true)['ready'],'Unknown heartbeat reported ready');
 $r=json_decode($p->CheckAvailability(),true);check($r['ready']&&$p->recoveries===0,'Healthy probe invoked recovery');
+check($p->values['VaultError'] === false, 'Healthy vault alarm remained asserted');
 $p->failure='Native runtime is fenced or recovery is pending.';
 $r=json_decode($p->CheckAvailability(),true);check($r['ready']&&$p->recoveries===1,'Missed startup did not recover');
 $p->failure='Native identity authentication failed.';
 $r=json_decode($p->CheckAvailability(),true);check(!$r['ready']&&$p->recoveries===1,'Integrity error triggered recovery');
+check($p->values['VaultError'] === true, 'Integrity failure did not raise vault alarm');
 $p->failure='Native runtime is fenced or recovery is pending.';$p->recoverWorks=false;
 $p->buffers['AvailabilityState']='';
 for($i=0;$i<5;$i++){
@@ -31,7 +33,9 @@ $n=$p->recoveries;$p->CheckAvailability();check($n===$p->recoveries,'Retry budge
 $p->properties['Enabled']=false;$p->CheckAvailability();check($n===$p->recoveries,'Disabled backend recovered');
 $p->properties['Enabled']=true;$p->initialized=false;$p->CheckAvailability();check($n===$p->recoveries,'Uninitialized backend recovered');
 $p->initialized=true;$GLOBALS['changed'][1]=true;$p->CheckAvailability();check($n===$p->recoveries,'Pending configuration recovered');
+check($p->values['VaultError'] === true, 'Pending settings did not raise vault alarm');
 $GLOBALS['changed'][1]=false;$p->failure='';$p->CheckAvailability();
+check($p->values['VaultError'] === false, 'Restored health did not clear vault alarm');
 $s=json_decode($p->buffers['AvailabilityState'],true);$s['checkedAt']=time()-100;$p->buffers['AvailabilityState']=json_encode($s);
 check(!json_decode($p->GetAvailability(),true)['ready'],'Stale heartbeat reported ready');
 echo "PASS availability: pending startup, integrity refusal, retry budget/backoff, disabled/uninitialized/pending settings, staleness\n";
