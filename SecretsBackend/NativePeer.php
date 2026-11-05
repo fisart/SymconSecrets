@@ -40,9 +40,9 @@ final class SecretsBackendNativePeer
     use SecretsBackendNativeTransfer;
     private $transport;
     public function __construct(private SecretsBackendNativeStore $store, private string $endpoint, ?callable $transport = null, private bool $automaticGlobal=true,private $meshComponents=null) { self::endpoint($endpoint); $this->transport = $transport; }
-    public function meshReport(array $state):array {
+    public function meshReport(array $state,bool $detailed=true):array {
         try{$runtime=$this->meshComponents!==null?($this->meshComponents)($state):[];}catch(Throwable $ignored){$runtime=[];}
-        return (new SecretsBackendMeshStatus($this->store,$this))->report($state,$runtime);
+        $report=(new SecretsBackendMeshStatus($this->store,$this))->report($state,$runtime);if(!$detailed)foreach($report['links']as&$l)foreach(['primary','backup']as$k)$l[$k]=array_intersect_key($l[$k],array_flip(['state','age']));unset($l);return $report;
     }
     public static function exact(array $value, array $keys): void { if (array_diff(array_keys($value),$keys) || array_diff($keys,array_keys($value))) throw new RuntimeException('Unexpected native protocol fields.'); }
     public static function uuid(string $value): void { if (!preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/D',$value)) throw new RuntimeException('Invalid native UUID.'); }
@@ -213,8 +213,8 @@ final class SecretsBackendNativePeer
         if($m['kind']==='OWNER_OFFER'&&isset($current['state']['native']['sharedGlobal']))throw new RuntimeException('Shared Global does not accept single-owner offers.');
         if($m['kind']==='OWNER_OFFER')return $this->receiveOwnerOffer($m,$payload,$peer,$current,$digest);
         if($m['kind']==='MESH_STATUS'){
-            self::exact($payload,['format']);if($payload['format']!==SecretsBackendMeshStatus::FORMAT||!self::shared($peer)||$peer['state']!=='ACTIVE')throw new RuntimeException('Wrong mesh status scope.');
-            return $this->reply($m,$peer['descriptor'],$digest,['status'=>'MESH_STATUS','report'=>$this->meshReport($current['state'])]);
+            self::exact($payload,['format']);if(!in_array($payload['format'],[SecretsBackendMeshStatus::FORMAT,SecretsBackendMeshStatus::DETAILS],true)||!self::shared($peer)||$peer['state']!=='ACTIVE')throw new RuntimeException('Wrong mesh status scope.');
+            return $this->reply($m,$peer['descriptor'],$digest,['status'=>'MESH_STATUS','report'=>$this->meshReport($current['state'],$payload['format']===SecretsBackendMeshStatus::DETAILS)]);
         }
         if($m['kind']==='HEALTH'){
             self::exact($payload,['format']);if($payload['format']!==SecretsBackendNativeHealth::FORMAT||!self::shared($peer))throw new RuntimeException('Wrong health protocol or sharing scope.');

@@ -97,6 +97,10 @@ trait SecretsBackendNativeBackend
         } catch (Throwable $e) { $this->SetValue('VaultError', true); $this->SetStatus(200); $this->SetValue('Status', 'Native vault locked: ' . $e->getMessage()); return false; }
     }
     /** Public metadata only; no key, credential, session or secret value. */
+    public function GetMeshHealth(): string
+    {
+        $this->nativeApplication();$store=$this->nativeStore();return SecretsBackendCodec::json((new SecretsBackendMeshStatus($store,$this->nativePeer($store)))->view($store->read()['state']));
+    }
     public function GetNativeInfo(): string
     {
         $result = ['nativeMode' => $this->ReadAttributeBoolean('GuidedV2Only'), 'initialized' => $this->nativeInitialized(), 'ready' => false,

@@ -36,3 +36,9 @@ When an entire host, backend or vault is unavailable, its own authenticated page
 ## Validation
 
 Encrypted integration tests cover component separation, exact directional grant identities, primary failure with successful backup, Magic-origin pairing labels, bounded polling, stale and unsupported modules, forged/replayed or misbound reports, revocation during a request, replacement pairing and secret-free metadata. Module lifecycle tests cover independent frontend heartbeat expiry and readiness. DOM tests cover a five-node graphical mesh, separate route lights, exact grants, focus, selected-detail refresh, stale-page behavior, partial reports, unsafe names and standalone display. The SVG graph is also rendered for visual inspection.
+
+## Route failure details
+
+The warning list identifies each failing direction and its fixed diagnostic category: DNS, connection, timeout, certificate/TLS, HTTP status or rejected/oversized reply. Details include consecutive failures; no raw exception text is shared. Selected connection details show the same information. Reports from an older version remain usable, but may require updating the reporting node before a detailed reason appears. The new dialect is requested explicitly; old clients receive the original compact schema and updated clients retry the original dialect if an older receiver refuses the new one.
+
+The local console API `SECB_GetMeshHealth($backendId)` returns the same sanitized observations for troubleshooting, without recovery or network calls. It requires the current native vault to be usable.
