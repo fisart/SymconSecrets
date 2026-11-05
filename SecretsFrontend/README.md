@@ -134,3 +134,7 @@ The frontend uses its own native-aware metadata lookup so inactive old manager p
 ### Refused requests
 
 Known refusals now explain the next action and show a diagnostic reference. Expired/invalid administrator sessions or CSRF failures return to sign-in and clear sensitive controls. Mutations are never retried automatically. Safe failure details are available from the paired Backend’s **Show refused-request diagnostics** console action and in Configuration Backup 1.3.10 GitHub diagnostic uploads. The previous generic error alone cannot establish which check failed.
+
+### Session changes in other tabs
+
+A new sign-in on the same vault replaces its shared browser cookie. An older tab can still hold its previous session’s CSRF token. On a `CSRF_INVALID` refusal, the page now clears sensitive state and any pending approval, loads the current authenticated session through the existing same-origin session endpoint, and asks the user to review and confirm the current action again. It never automatically repeats the refused prepare/approve request and never reuses an approval from another session. If session refresh fails, normal passkey sign-in is required. Browser back/forward restoration also reloads the session before reusing the page. Backend CSRF, exact-session approval, revocation and WebAuthn checks remain unchanged.
