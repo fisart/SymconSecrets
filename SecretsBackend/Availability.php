@@ -67,6 +67,7 @@ trait SecretsBackendAvailability
             $health = $this->GetAvailability();
             $this->SetValue('Availability', $health);
             $this->SetValue('VaultError', !json_decode($health, true, 16, JSON_THROW_ON_ERROR)['ready']);
+            if(method_exists($this,'observeEmergencyAvailability'))$this->observeEmergencyAvailability((bool)json_decode($health,true)['ready']);
             if ($previous !== $s['state'] && function_exists('IPS_LogMessage'))
                 IPS_LogMessage('SecretsBackend ' . $this->InstanceID, 'Availability: ' . $s['state'] . ($s['reason'] ? ' (' . $s['reason'] . ')' : ''));
             return $this->GetAvailability();
@@ -78,6 +79,7 @@ trait SecretsBackendAvailability
             $health = $this->GetAvailability();
             $this->SetValue('Availability', $health);
             $this->SetValue('VaultError', !json_decode($health, true, 16, JSON_THROW_ON_ERROR)['ready']);
+            if(method_exists($this,'observeEmergencyAvailability'))$this->observeEmergencyAvailability((bool)json_decode($health,true)['ready']);
             return $this->GetAvailability();
         } finally { IPS_SemaphoreLeave($lock); }
     }

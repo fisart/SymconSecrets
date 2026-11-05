@@ -29,6 +29,12 @@ trait SecretsBackendNativeRuntime
     }
     public function ReceiveNativePeer(string $EnvelopeJSON): string
     {
+        $envelope=json_decode($EnvelopeJSON,true,16);
+        if(is_array($envelope)&&($envelope['format']??'')===SecretsBackendEmergency::FORMAT){
+            if(!$this->ReadPropertyBoolean('Enabled')||!$this->nativeInitialized())throw new SecretsBackendEmergencyUnavailable('Native peer receiver unavailable.');
+            try{$this->nativeApplication();}catch(Throwable $e){throw new SecretsBackendEmergencyUnavailable('Remote vault unavailable.');}
+            return SecretsBackendEmergency::serve($this->nativeStore(),$EnvelopeJSON);
+        }
         if(!$this->ReadPropertyBoolean('Enabled')||!$this->nativeInitialized())throw new RuntimeException('Native peer receiver is disabled.');
         $this->nativeApplication(); // Verify the pinned active security profile before accepting peer effects.
         return $this->nativePeer()->receive($EnvelopeJSON);
@@ -82,6 +88,7 @@ trait SecretsBackendNativeRuntime
     protected function ProcessHookData()
     {
         header('Content-Type: application/json; charset=utf-8');header('Cache-Control: no-store');header('X-Content-Type-Options: nosniff');
+        $emergency=false;
         try{
             $transportOrigin=$this->nativePeerTransportOrigin($_SERVER);$path='/hook/secrets_peer_'.$this->InstanceID;$uri=(string)($_SERVER['REQUEST_URI']??$path);
             if(in_array($_SERVER['REQUEST_METHOD']??'', ['GET','HEAD'],true)&&parse_url($uri,PHP_URL_PATH)===$path&&($_SERVER['QUERY_STRING']??'')===''){
@@ -92,8 +99,19 @@ trait SecretsBackendNativeRuntime
             if(count($types)!==1||!isset($types['application/json']))throw new RuntimeException('Native JSON envelope required.');
             $limit=SecretsBackendNativePlatform::budget()*2+65536;$bytes=file_get_contents('php://input',false,null,0,$limit+1);
             if(!is_string($bytes)||strlen($bytes)>$limit)throw new RuntimeException('Native envelope exceeds its bound.');
+            $decoded=json_decode($bytes,true,16);$emergency=is_array($decoded)&&($decoded['format']??'')===SecretsBackendEmergency::FORMAT;
             $reply=$this->ReceiveNativePeer($bytes);http_response_code(200);echo $reply;
-        }catch(Throwable $e){http_response_code(403);echo '{"error":"Native peer request refused."}';}
+        }catch(Throwable $e){
+            // An unavailable remote vault is retryable, including a Connect route whose
+            // origin lookup could not open that vault. Malformed/denied healthy requests stay 403.
+            if(!$emergency&&($_SERVER['REQUEST_METHOD']??'')==='POST'){
+                $probe=file_get_contents('php://input',false,null,0,32769);
+                if(is_string($probe)&&strlen($probe)<=32768){$m=json_decode($probe,true,16);$emergency=is_array($m)&&($m['format']??'')===SecretsBackendEmergency::FORMAT;}
+            }
+            $unavailable=$e instanceof SecretsBackendEmergencyUnavailable;
+            if($emergency&&!$unavailable){try{$this->nativeApplication();}catch(Throwable $ignored){$unavailable=true;}}
+            http_response_code($unavailable?503:403);echo '{"error":"Native peer request refused."}';
+        }
     }
     private function nativeCapability(array $state,string $token,string $scope,array $path,bool $write): array
     {

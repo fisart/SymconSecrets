@@ -105,7 +105,8 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
     def request(url, settings=(), mode='', environment=None):
         cmd = command + [item for setting in settings for item in ['-d', setting]]
         result = subprocess.run(cmd + [str(root / 'SecretsBackend/tests/native-tls-client.php'), url, mode],
-                                env=environment or env, text=True, capture_output=True, timeout=15, check=True)
+                                env=environment or env, text=True, capture_output=True, timeout=15)
+        assert result.returncode == 0, result.stdout + result.stderr
         try:
             return json.loads(result.stdout)
         except ValueError as error:

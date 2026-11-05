@@ -3,7 +3,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/BootstrapFixture.php';
 $GLOBALS['moduleIDs'] = [5100 => SecretsBackend::FRONTEND, 5101 => '{52165EDD-B2C0-40EC-8A59-42A97319B6E2}', 700 => '{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}'];
 $hooks = new IPSModule(700); $hooks->properties['Hooks'] = '[]';
-$front = new SecretsFrontend(5100); $front->Create(); $back = new SecretsBackend(5101); $back->Create();
+$front = new SecretsFrontend(5100); $front->Create(); $back = ($GLOBALS['emergencyRuntimeTest']??false) ? new EmergencyBackendProbe(5101) : new SecretsBackend(5101); $back->Create();
 secExpect($back->values['VaultError'] === true && $front->values['BackendError'] === true && $front->values['FrontendError'] === true, 'New instances advertised healthy before validation.');
 $root = sys_get_temp_dir() . '/sec-native-life-' . bin2hex(random_bytes(8));
 $gateway = new ReflectionMethod(SecretsFrontend::class,'gateway');
@@ -171,6 +171,7 @@ try {
     $front->properties['TrustedHTTPSProxyIPs']='["192.0.2.1"]';
     secExpect(!json_decode($back->CheckAvailability(),true)['ready'],'Availability ignored protected configuration drift.');
     $front->properties['TrustedHTTPSProxyIPs']='[]';
+    if($GLOBALS['emergencyRuntimeTest']??false)require __DIR__.'/emergency-runtime-operations.php';
     echo "PASS missed startup notification, boot retry, independent watchdog recovery, no healthy journal write, protected configuration refusal\n";
     echo "PASS native wizard, real WebAuthn, encrypted writes/reveal, scoped machine read/write/dedup/revocation, key rotation, authenticated backup/compaction/value recovery and restart fencing; no PDO/SQLite or external authority\n";
 } finally {

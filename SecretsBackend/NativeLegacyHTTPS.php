@@ -33,21 +33,24 @@ final class SecretsBackendNativeLegacyHTTPS
         if(count($retained)>1)throw new RuntimeException('Saved connections have conflicting HTTPS settings for this platform.');
         return ['policy'=>$retained?array_values($retained)[0]:['mode'=>'strict'],'source'=>$retained?'saved connection':'PHP streams'];
     }
-    public static function post(string $endpoint,string $bytes,array $policy=['mode'=>'strict']): string
+    public static function post(string $endpoint,string $bytes,array $policy=['mode'=>'strict'],float $timeout=4.5): string
     {
         SecretsBackendNativePeer::endpoint($endpoint);$policy=self::policy($policy);
+        if($timeout<0.1||$timeout>4.5)throw new InvalidArgumentException('Invalid HTTPS timeout.');
+        $deadline=microtime(true)+$timeout;
         if(!self::available())throw new SecretsBackendNativePeerDeliveryFailure('transport');
         $host=parse_url($endpoint,PHP_URL_HOST);$pinned=$policy['mode']==='pinned';
         // PHP verifies peer_fingerprint during TLS setup, before its HTTP wrapper sends request bytes.
         // Pinned mode authenticates the exact previously approved leaf certificate, as in SecretsManager.
         $ssl=['verify_peer'=>!$pinned,'verify_peer_name'=>!$pinned,'allow_self_signed'=>$pinned,'SNI_enabled'=>true,'peer_name'=>$host];
         if($pinned)$ssl['peer_fingerprint']=['sha256'=>$policy['fingerprint']];
-        return SecretsBackendNativeIssuers::run($ssl,static fn(array $options):string=>self::send($endpoint,$bytes,$policy,$options));
+        return SecretsBackendNativeIssuers::run($ssl,static fn(array $options):string=>self::send($endpoint,$bytes,$policy,$options,$deadline));
     }
-    private static function send(string $endpoint,string $bytes,array $policy,array $ssl): string
+    private static function send(string $endpoint,string $bytes,array $policy,array $ssl,float $deadline): string
     {
-        $context=stream_context_create(['ssl'=>$ssl,'http'=>['method'=>'POST','header'=>"Content-Type: application/json\r\nAccept: application/json\r\nConnection: close\r\n",'content'=>$bytes,'timeout'=>4.5,'ignore_errors'=>true,'follow_location'=>0,'max_redirects'=>0,'protocol_version'=>1.1]]);
-        $warning='';$stream=false;$deadline=microtime(true)+4.5;
+        $remaining=$deadline-microtime(true);if($remaining<0.1)throw new SecretsBackendNativePeerDeliveryFailure('timeout');
+        $context=stream_context_create(['ssl'=>$ssl,'http'=>['method'=>'POST','header'=>"Content-Type: application/json\r\nAccept: application/json\r\nConnection: close\r\n",'content'=>$bytes,'timeout'=>$remaining,'ignore_errors'=>true,'follow_location'=>0,'max_redirects'=>0,'protocol_version'=>1.1]]);
+        $warning='';$stream=false;
         set_error_handler(static function(int $severity,string $message)use(&$warning):bool{$warning=substr($message,0,2048).' '.$warning;$warning=substr($warning,0,4096);return true;});
         try{
             $stream=fopen($endpoint,'rb',false,$context);

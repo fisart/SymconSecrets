@@ -1,3 +1,5 @@
+> Update: the approved policy now favors availability for standalone and arbitrary-size meshes. [Emergency Global access](EMERGENCY_GLOBAL_ACCESS.md) implements explicitly approved read-only fallback with uncertain freshness; the strict-quorum proposal below is historical and is not the selected design.
+
 # Native vault availability: 5 November 2026
 
 ## Observed incident and timing

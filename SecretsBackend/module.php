@@ -7,6 +7,7 @@ require_once __DIR__ . '/NativeBackend.php';
 require_once __DIR__ . '/NativeRuntime.php';
 require_once __DIR__ . '/Availability.php';
 require_once __DIR__ . '/LegacyRuntime.php';
+require_once __DIR__ . '/EmergencyRuntime.php';
 
 class SecretsBackend extends IPSModule
 {
@@ -14,6 +15,7 @@ class SecretsBackend extends IPSModule
     use SecretsBackendNativeRuntime;
     use SecretsBackendAvailability;
     use SecretsBackendLegacyRuntime;
+    use SecretsBackendEmergencyRuntime;
     public const FRONTEND = '{8D6AE8F7-EA3A-4513-AA14-C3F9613B0E83}';
     private const STRINGS = ['DataDirectory', 'KeyDirectory', 'AdminOrigin', 'AnchorURL', 'AnchorPublicKey', 'AnchorKeyID', 'ClientCertificatePath', 'ClientKeyPath', 'AnchorCAFile', 'HardwareRootsDirectory', 'HardwareAAGUIDs', 'HardwareTrustVersion'];
     public function Create(): void
@@ -39,6 +41,12 @@ class SecretsBackend extends IPSModule
         $this->RegisterVariableString('Debug', 'Debug', '~TextBox', 50);
         $this->RegisterVariableString('Availability', 'Vault availability', '~TextBox', 25);
         $this->RegisterVariableBoolean('VaultError', 'Vault error', '~Alert', 26);
+        $this->RegisterVariableBoolean('FallbackActive', 'Emergency fallback active', '~Alert', 27);
+        $this->RegisterVariableBoolean('SecretsUnavailable', 'Secrets unavailable', '~Alert', 28);
+        $this->RegisterVariableBoolean('SynchronizationProblem', 'Synchronization / freshness problem', '~Alert', 29);
+        $this->RegisterVariableString('ActiveSource', 'Active secrets source', '', 30);
+        $this->RegisterVariableString('EmergencyStatus', 'Emergency access status', '~TextBox', 31);
+        $this->SetValue('SecretsUnavailable', true);
         $this->SetValue('VaultError', true);
         $this->RegisterTimer('Availability', 0, 'SECB_CheckAvailability($_IPS[\'TARGET\']);');
         $this->RegisterMessage(0, 10001); // IPS_KERNELSTARTED
@@ -55,6 +63,8 @@ class SecretsBackend extends IPSModule
         $approvedHandoff=$this->GetBuffer('ApprovedStorageHandoff');$this->SetBuffer('ApprovedStorageHandoff','');
         if($approvedHandoff!==''&&hash_equals($approvedHandoff,SecretsBackendSecurityConfiguration::digest($this->configuration())))return;
         $this->SetValue('VaultError', true);
+        $this->emergencyStatus(['reason'=>'STARTING_OR_DISABLED']);
+        $this->SetBuffer('EmergencyLocalHealthyCount','0');
         $this->SetBuffer('ApplyingNativeSettings','1');
         $this->SetBuffer('Runtime', SecretsBackendCodec::b64(random_bytes(32))); $this->SetBuffer('Setup', '');
         $this->SetBuffer('RecoveryDelay', '1000');

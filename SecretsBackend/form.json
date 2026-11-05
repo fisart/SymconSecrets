@@ -229,6 +229,12 @@
           "onClick": "SECB_ClearDebug($id);"
         }
       ]
+    },
+    {
+      "type": "Button",
+      "caption": "Stop emergency fallback",
+      "onClick": "SECB_StopEmergencyAccess($id);",
+      "confirm": "Stop using approved remote sources for emergency application reads? Re-enable by approving an emergency source again in the HTML page."
     }
   ],
   "status": [
