@@ -92,7 +92,7 @@ final class SecretsBackendEmergency
             if(!is_array($g)||!$g['active']||$g['source']!==$q['source']||!hash_equals($g['hash'],hash('sha256',$q['token'])))return ['status'=>'DENIED'];
             try{$p=self::pair($s,$q['source']);}catch(Throwable $e){return ['status'=>'DENIED'];}
             if($p['pairingId']!==$g['pairingId'])return ['status'=>'DENIED'];
-            $store->rate('emergency:'.$g['id'],120);
+            try{$store->rate('emergency:'.$g['id'],120);}catch(RuntimeException $e){throw new SecretsBackendEmergencyUnavailable('Remote emergency capacity unavailable.');}
             try{$path=self::arguments($q['method'],$q['args']);}catch(Throwable $e){return ['status'=>'DENIED'];}
             try{SecretsBackendSharedGlobal::assertPath($s,$path,false);}catch(Throwable $e){return ['status'=>'CONFLICT'];}
             try{$value=SecretsBackendLegacyAPI::emergencyGlobalRead($s,$q['method'],$q['args']);}catch(Throwable $e){return ['status'=>'MISSING'];}

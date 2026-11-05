@@ -51,6 +51,8 @@ $failReadOnce=true;$racingTransport=static function($url,$bytes,$policy,$timeout
 $r=(new SecretsBackendEmergencyClient($capsule,$binding,$racingTransport))->read('GetSecret',['Account'],$source);$ok($r['source']===$peers[2]->descriptor()['vaultId'],'Peer failure after probe prevented eligible fallback.');
 $offline[1]=true;$c=$client();$r=$c->read('GetSecret',['Account'],$source);$ok($r['source']===$peers[2]->descriptor()['vaultId'],'Unreachable peer blocked another approved peer.');
 $before=count($calls);$client($c->backoff())->read('GetSecret',['Account'],$source);$ok(count($calls)===$before+2,'Circuit breaker repeatedly called the unavailable peer.');unset($offline[1]);
+$overloaded=static function($url,$bytes,$policy,$timeout)use($transport,$peers):string{if($url===$peers[1]->descriptor()['endpoint'])throw new SecretsBackendNativePeerDeliveryFailure('http',503);return $transport($url,$bytes,$policy,$timeout);};
+$r=(new SecretsBackendEmergencyClient($capsule,$binding,$overloaded))->read('GetSecret',['Account'],$source);$ok($r['source']===$peers[2]->descriptor()['vaultId'],'An overloaded provider blocked another approved peer.');
 // A denied grant is terminal; it is never bypassed with another authority.
 $operation(1,['kind'=>'nativeEmergencyRevoke','id'=>$remoteGrants[1]['id']]);$before=count($calls);
 $no(fn()=>$client()->read('GetSecret',['Account'],$source),'Revocation was bypassed by another peer.');$ok(count($calls)===$before+1,'Denied access fell through to another peer.');
@@ -82,4 +84,10 @@ $edit(0,['Account','User'],'"conflict-one"');$edit(2,['Account','User'],'"confli
 $no(fn()=>$client()->read('GetSecret',['Account'],$source),'A conflicting remote record was silently selected.');
 $conflicts=SecretsBackendSharedGlobal::metadata($stores[0]->read()['state'])['conflicts'];$c=array_values(array_filter($conflicts,static fn($c)=>$c['path']===['Account','User']))[0];
 $operation(0,['kind'=>'nativeGlobalResolve','path'=>$c['path'],'digest'=>$c['digest'],'choices'=>[['id'=>$c['versions'][0]['id'],'name'=>'User']]]);$pump();$sync();
+// A provider capacity limit is temporary unavailability, not an authorization denial.
+$g=$operation(4,['kind'=>'nativeEmergencyGrant','peerId'=>$source])['grant'];$bucket=intdiv(time(),60);
+foreach([$bucket,$bucket+1]as$b)$stores[4]->put('rate:'.hash('sha256','emergency:'.$g['id'].':'.$b),'rate',['count'=>120],time()+180);
+$q=['source'=>$source,'grantId'=>$g['id'],'token'=>$g['token'],'nonce'=>SecretsBackendCodec::b64(random_bytes(32)),'replyKey'=>SecretsBackendCodec::b64(sodium_crypto_box_publickey(sodium_crypto_box_keypair())),'phase'=>'probe','method'=>'GetKeys','args'=>[]];
+$request=['format'=>SecretsBackendEmergency::FORMAT,'receiver'=>$peers[4]->descriptor()['vaultId'],'payload'=>SecretsBackendCodec::b64(sodium_crypto_box_seal(json_encode($q),SecretsBackendCodec::unb64($peers[4]->descriptor()['boxKey'],32)))];
+$busy=false;try{SecretsBackendEmergency::serve($stores[4],json_encode($request));}catch(SecretsBackendEmergencyUnavailable $e){$busy=true;}$ok($busy,'Provider rate limit was not retryable unavailability.');
 echo "PASS emergency access: independent encrypted credentials, exact peer grants, Global-only reads, causal selection, local key loss, one-peer availability, terminal denial/revocation, replay, source binding, circuit breaker and catch-up\n";
