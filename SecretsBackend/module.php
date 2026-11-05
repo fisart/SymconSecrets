@@ -370,6 +370,7 @@ class SecretsBackend extends IPSModule
     /** Local backend entry point; browser routes never accept an instance ID or arbitrary function. */
     public function HandleFrontendRequest(int $FrontendInstanceID, string $RequestJSON): string
     {
+        $this->peerRequestStarted=microtime(true);
         $application=null; $request=[]; $requestContext=['stage'=>'envelope'];
         set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
             if (!(error_reporting() & $severity)) return false;
@@ -413,6 +414,7 @@ class SecretsBackend extends IPSModule
             $this->SetValue('Status', 'Request refused: '.$failure['code'].' · '.$failure['reference']);
             return SecretsBackendCodec::json(['status'=>403,'data'=>SecretsBackendRequestDiagnostics::response($failure),'cookie'=>'']);
         } finally {
+            $this->peerRequestStarted=0.0;
             restore_error_handler();
         }
     }

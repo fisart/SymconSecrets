@@ -72,8 +72,8 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
         def do_POST(self):
             counts.append(self.rfile.read(int(self.headers.get('Content-Length', '0'))))
             mode = getattr(self.server, 'reply_mode', 'normal')
-            if mode == 'slow-headers':
-                time.sleep(2.2)
+            if mode in ['slow-headers', 'very-slow-headers']:
+                time.sleep(5.2 if mode == 'very-slow-headers' else 2.2)
             response = b'{"received":true}' if mode != 'oversize' else b'x' * 65537
             self.send_response(302 if mode == 'redirect' else 200)
             if mode == 'redirect':
@@ -172,6 +172,11 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
         assert not short['ok'] and short['problem'] == 'timeout', short
         relay = request(url, ['openssl.cafile=' + str(ca_path)], mode='timeout:6')
         assert relay['ok'] and relay['body'] == '{"received":true}', relay
+        server.reply_mode = 'very-slow-headers'
+        started = time.monotonic()
+        slow_primary = request(url, ['openssl.cafile=' + str(ca_path)])
+        assert slow_primary['ok'] and slow_primary['body'] == '{"received":true}', slow_primary
+        assert 5 <= time.monotonic() - started < 15, slow_primary
         server.reply_mode = 'chunked'
         chunked = request(url, ['openssl.cafile=' + str(ca_path)])
         assert chunked['ok'] and chunked['body'] == '{"received":true}', chunked
