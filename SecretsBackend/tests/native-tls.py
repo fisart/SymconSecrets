@@ -213,5 +213,5 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
         finally:
             server.shutdown()
             server.server_close()
-    assert counts == [b'TLS-REQUEST-CANARY'] * 12, counts
+    assert counts == [b'TLS-REQUEST-CANARY'] * 13, counts
 print('PASS real HTTPS: reused original PHP streams; explicit approved pin succeeds and mismatch sends no HTTP; separate cURL CA file cannot override OpenSSL;  reproduced unknown-issuer failure, recovered through PHP/env trust, accepted valid chains, rejected wrong roots/hostname/expiry/incomplete chain before POST, no trust-policy bypass')
