@@ -110,3 +110,31 @@ component tests. They are never a native-mode fallback or runtime requirement.
 New connections merge Global across platforms. Local stays private. Concurrent
 versions are preserved for explicit conflict resolution. Existing active connections join automatically in the background.
 See [the automatic operation, security contract and tests](SHARED_GLOBAL.md).
+
+## Mesh consistency and emergency reads
+
+The native mesh currently acknowledges local durable writes and synchronizes asynchronously. A matching peer-health check is not a guarantee of the latest committed value. The approved availability-first policy uses separately authorized emergency peers without quorum. See [emergency Global access](EMERGENCY_GLOBAL_ACCESS.md) for setup and limits; [strict mesh verification](STRICT_MESH_CONSISTENCY.md) preserves the earlier counterexamples and superseded proposal.
+
+## Emergency Global access
+
+[Availability-first fallback](EMERGENCY_GLOBAL_ACCESS.md) supports existing Global SEC application reads through independently approved peers when the local vault cannot open. It requires two explicit approvals, uses separate encrypted credentials, works with one approved peer, and exposes alarm variables. There is no quorum or automatic Local/admin/capability fallback. Remote freshness is uncertain; known older/conflicting data is refused.
+
+## Graphical mesh health
+
+Overview now includes a graphical network with component lights, primary/backup route lines, directional emergency authorization arrows and an expandable comparison matrix. See [Mesh health display](MESH_HEALTH_DISPLAY.md) for interpretation, refresh intervals and limits.
+
+## Portal link on the administration page
+
+1. Select the local SystemPortal instance under Portal in the frontend configuration and Apply.
+2. Enable/configure that Portal with either the old SecretsManager or the new Secrets backend (Portal 1.5 supports both). Its webhook must be registered.
+3. Reload Secrets administration. **Portal** appears in the header beside **Dokumentation**, at the top right on desktop and below the title on narrow screens. **Add to Portal** creates the opposite link, from Portal to Secrets administration.
+
+The frontend uses its own native-aware metadata lookup so inactive old manager properties do not suppress the link. If no eligible registered Portal is found, the header shows Portal unavailable with a setup hint. Navigation does not grant access; Portal validates its own session. Original legacy helper files remain unchanged.
+
+### Refused requests
+
+Known refusals now explain the next action and show a diagnostic reference. Expired/invalid administrator sessions or CSRF failures return to sign-in and clear sensitive controls. Mutations are never retried automatically. Safe failure details are available from the paired Backend’s **Show refused-request diagnostics** console action and in Configuration Backup 1.3.10 GitHub diagnostic uploads. The previous generic error alone cannot establish which check failed.
+
+### Session changes in other tabs
+
+A new sign-in on the same vault replaces its shared browser cookie. An older tab can still hold its previous session’s CSRF token. On a `CSRF_INVALID` refusal, the page now clears sensitive state and any pending approval, loads the current authenticated session through the existing same-origin session endpoint, and asks the user to review and confirm the current action again. It never automatically repeats the refused prepare/approve request and never reuses an approval from another session. If session refresh fails, normal passkey sign-in is required. Browser back/forward restoration also reloads the session before reusing the page. Backend CSRF, exact-session approval, revocation and WebAuthn checks remain unchanged.

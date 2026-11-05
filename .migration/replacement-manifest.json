@@ -1,0 +1,16 @@
+{
+  "format": "NativeSECReplacement.1",
+  "sourceCommit": "d612e52c772beea3c39f7994a2f354169e451ac1",
+  "originalModuleSHA256": "7424da5bc0c7fb8aae689b7e36360538e9205edab8cf9bb3c17c52fb46e0abc6",
+  "adapterSHA256": "555828dedbf5cd7b9c056b98190266b2c518c5f0dd943459f1f80e9e5461043e",
+  "guid": "{7C5A3841-3F7B-4D2A-9E1C-5B6D8F9A0E12}",
+  "prefix": "SEC",
+  "activation": "No installation changed; switching to this branch replaces all instances of the old module type. A unique ready native backend is selected automatically and pinned.",
+  "oldImplementationEnabled": false,
+  "oldStorageUsed": false,
+  "oldSyncEnabled": false,
+  "rollback": "Restore source branch AND saved configuration/state before re-enabling old synchronization. Saved old vault/key files remain inactive. New writes are not copied back.",
+  "replacementBaselineFiles": {
+    ".github/workflows/portal-navigation.yml": "b06232f618066d6763d338ca91d4f1fd15ee189ca5e34ffb12239cfb5d0baa8b"
+  }
+}

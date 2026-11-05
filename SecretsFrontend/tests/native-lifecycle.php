@@ -3,7 +3,8 @@ declare(strict_types=1);
 require_once __DIR__ . '/BootstrapFixture.php';
 $GLOBALS['moduleIDs'] = [5100 => SecretsBackend::FRONTEND, 5101 => '{52165EDD-B2C0-40EC-8A59-42A97319B6E2}', 700 => '{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}'];
 $hooks = new IPSModule(700); $hooks->properties['Hooks'] = '[]';
-$front = new SecretsFrontend(5100); $front->Create(); $back = new SecretsBackend(5101); $back->Create();
+$front = new SecretsFrontend(5100); $front->Create(); $back = ($GLOBALS['emergencyRuntimeTest']??false) ? new EmergencyBackendProbe(5101) : new SecretsBackend(5101); $back->Create();
+secExpect($back->values['VaultError'] === true && $front->values['BackendError'] === true && $front->values['FrontendError'] === true, 'New instances advertised healthy before validation.');
 $root = sys_get_temp_dir() . '/sec-native-life-' . bin2hex(random_bytes(8));
 $gateway = new ReflectionMethod(SecretsFrontend::class,'gateway');
 $request = ['origin'=>'https://secrets.example.test','cookie'=>'','csrf'=>'','remote'=>'test'];
@@ -19,7 +20,10 @@ try {
     secExpect(($login['data']['status']??'')==='COMMITTED'&&($login['data']['authenticated']??false),'Code-free native initialization failed: '.json_encode($login).' '.($front->values['Status']??''));
     secExpect(!file_exists($root.'/data/vault.sqlite')&&is_file($root.'/data/native.json'),'Native setup entered SQLite.');
     $request['cookie']=explode(';',$login['cookie'])[0];$request['csrf']=$login['data']['csrf'];
-    $listed=$invoke('session')['data'];secExpect($listed['revision']==='0','Fresh native session failed.');
+    $listed=$invoke('session')['data'];
+    secExpect(($listed['native']['consistency']['strictEmergencyReadSupported']??null)===false, 'Session metadata advertised strict remote freshness.');
+    secExpect((json_decode($back->GetNativeInfo(),true)['consistency']['quorumCommit']??null)===false, 'Native info advertised quorum writes.');
+    secExpect($listed['revision']==='0','Fresh native session failed.');
     $discovery=$invoke('connectDiscovery')['data'];secExpect(($discovery['available']??null)===false,'Missing Connect instance produced an address.');
     $savedCookie=$request['cookie'];$request['cookie']='';secReject(static fn()=>$invoke('connectDiscovery'),'Unauthenticated Connect discovery was allowed.');$request['cookie']=$savedCookie;
     $savedCsrf=$request['csrf'];$request['csrf']='wrong';secReject(static fn()=>$invoke('connectDiscovery'),'Connect discovery accepted invalid CSRF.');$request['csrf']=$savedCsrf;
@@ -122,6 +126,61 @@ try {
     $back->ApplyChanges();$back->Recover();
     $rejected=$gateway->invoke($front,['action'=>'session','data'=>[]]+$request);secExpect($rejected['status']!==200,'Native restart retained a session.');
     secReject(static fn()=>$invoke('sessionReveal',['operation'=>$sessionRead]),'Restarted backend accepted an old session for a reveal.');
+    // Production incident: ApplyChanges during boot, no readiness notification delivered.
+    $GLOBALS['testRunlevel']=10102;
+    $back->ApplyChanges();
+    secExpect($back->values['VaultError'] === true, 'Boot did not assert vault alarm.');
+    secExpect($back->timers['Recovery']===1000 && $back->timers['Availability']===30000,'Boot left recovery/watchdog disabled.');
+    secExpect(!$back->Recover() && $back->timers['Recovery']===1000,'Recovery ran before kernel readiness.');
+    $GLOBALS['testRunlevel']=10103; // Deliberately omit MessageSink.
+    $health=json_decode($back->CheckAvailability(),true);
+    secExpect($health['ready'] && $back->status===102 && $back->timers['NativeJobs']===10000,'Independent watchdog failed to activate the existing vault.');
+    if (!function_exists('SECB_GetAvailability')) { function SECB_GetAvailability(int $id):string { return $GLOBALS['instances'][$id]->GetAvailability(); } }
+    secExpect($back->values['VaultError'] === false, 'Recovered vault alarm remained asserted.');
+    secExpect($front->Refresh(), 'Healthy frontend refresh failed.');
+    secExpect(json_decode($front->CheckBackendAvailability(),true)['ready'],'Frontend observer missed healthy backend.');
+    secExpect($front->values['BackendError'] === false && $front->values['FrontendError'] === false, 'Healthy frontend/backend alarms remained asserted.');
+    if(!function_exists('SECF_GetFrontendHealth')){function SECF_GetFrontendHealth(int $id):string{throw new RuntimeException('Mesh reports must not call back into the frontend.');}}
+    if(!function_exists('IPS_GetObjectIDByIdent')){function IPS_GetObjectIDByIdent(string $ident,int $id):int{if($ident!=='FrontendHealth')throw new RuntimeException('Unexpected variable.');return $id;}}
+    if(!function_exists('GetValueString')){function GetValueString(int $id):string{return $GLOBALS['instances'][$id]->values['FrontendHealth'];}}
+    $meshCheck=json_decode($back->GetMeshHealth(),true);secExpect($meshCheck['configuration']['backend']===$back->InstanceID&&$meshCheck['configuration']['frontend']['BackendInstanceID']===$back->InstanceID&&!str_contains(json_encode($meshCheck),'dataKey'),'Safe mesh configuration audit was not available.');
+    $export=json_decode($back->ExportMeshConfiguration(),true);secExpect($export['schema']==='SECB.MeshConfigurationReport.v1'&&$export['configuration']['backend']===$back->InstanceID&&!str_contains(json_encode($export),'privateKey'),'Support configuration export was unavailable or unsafe.');
+    $frontHealth=json_decode($front->GetFrontendHealth(),true);secExpect($frontHealth['ready']&&!$frontHealth['stale']&&$frontHealth['backend']===$back->InstanceID,'Frontend heartbeat was not independently exposed.');
+    $runtime=(new ReflectionMethod(SecretsBackend::class,'meshRuntimeStatus'))->invoke($back,[]);secExpect($runtime['components']['frontend']['state']==='ok'&&$runtime['components']['backend']['state']==='ok'&&$runtime['components']['vault']['state']==='ok','Live component status was not reported separately.');
+    $front->buffers['FrontendHealth']=json_encode(['ready'=>true,'checkedAt'=>time()-100,'backend'=>$back->InstanceID]);$front->values['FrontendHealth']=$front->buffers['FrontendHealth'];$runtime=(new ReflectionMethod(SecretsBackend::class,'meshRuntimeStatus'))->invoke($back,[]);secExpect($runtime['components']['frontend']['state']==='unknown','Stale frontend heartbeat was green.');$front->CheckBackendAvailability();
+    $savedHealth=$back->buffers['AvailabilityState'];$stale=json_decode($savedHealth,true);$stale['checkedAt']=time()-100;$back->buffers['AvailabilityState']=json_encode($stale);
+    $observed=json_decode($front->CheckBackendAvailability(),true);
+    secExpect(!$observed['ready'] && $observed['state']==='HEARTBEAT_STALE','Frontend observer accepted a stopped heartbeat.');
+    secExpect($front->values['BackendError'] === true && $front->values['FrontendError'] === false, 'Stale backend heartbeat failed to raise an independent backend alarm.');
+    $back->buffers['AvailabilityState']=$savedHealth;
+    $front->CheckBackendAvailability();
+    secExpect($front->values['BackendError'] === false, 'Fresh heartbeat did not clear backend alarm.');
+    $back->status=200;$front->CheckBackendAvailability();
+    secExpect($front->values['BackendError'] === true, 'Backend status failure was hidden by recent heartbeat.');
+    $back->status=102;
+    $front->properties['BackendInstanceID']=999999;$front->CheckBackendAvailability();
+    secExpect($front->values['BackendError'] === true, 'Missing backend did not raise alarm.');
+    $front->properties['BackendInstanceID']=$back->InstanceID;
+    $front->properties['AdminOrigin']='';
+    secExpect(!$front->Refresh() && $front->values['FrontendError'] === true, 'Invalid frontend configuration did not raise alarm.');
+    $front->properties['AdminOrigin']=$request['origin'];
+    secExpect($front->Refresh() && $front->values['FrontendError'] === false, 'Frontend configuration recovery did not clear alarm.');
+    $GLOBALS['changed'][$front->InstanceID]=true;$front->CheckBackendAvailability();
+    secExpect($front->values['FrontendError'] === true, 'Pending frontend configuration did not raise alarm.');
+    $GLOBALS['changed'][$front->InstanceID]=false;
+    $front->properties['Enabled']=false;$front->ApplyChanges();
+    secExpect($front->values['FrontendError'] === true && $front->values['BackendError'] === true, 'Disabled frontend retained healthy alarm indicators.');
+    $front->properties['Enabled']=true;$front->ApplyChanges();$front->Refresh();$front->CheckBackendAvailability();
+    secExpect($front->values['FrontendError'] === false && $front->values['BackendError'] === false, 'Re-enabled frontend did not clear alarms.');
+    $beforeFiles=[];foreach(glob($root.'/data/*')?:[]as$file)if(is_file($file))$beforeFiles[basename($file)]=hash_file('sha256',$file);
+    $back->CheckAvailability();
+    $afterFiles=[];foreach(glob($root.'/data/*')?:[]as$file)if(is_file($file))$afterFiles[basename($file)]=hash_file('sha256',$file);
+    secExpect($beforeFiles===$afterFiles,'Healthy availability probe rewrote vault files.');
+    $front->properties['TrustedHTTPSProxyIPs']='["192.0.2.1"]';
+    secExpect(!json_decode($back->CheckAvailability(),true)['ready'],'Availability ignored protected configuration drift.');
+    $front->properties['TrustedHTTPSProxyIPs']='[]';
+    if($GLOBALS['emergencyRuntimeTest']??false)require __DIR__.'/emergency-runtime-operations.php';
+    echo "PASS missed startup notification, boot retry, independent watchdog recovery, no healthy journal write, protected configuration refusal\n";
     echo "PASS native wizard, real WebAuthn, encrypted writes/reveal, scoped machine read/write/dedup/revocation, key rotation, authenticated backup/compaction/value recovery and restart fencing; no PDO/SQLite or external authority\n";
 } finally {
     $remove=static function($path)use(&$remove){if(is_dir($path)&&!is_link($path)){foreach(scandir($path)as$n)if($n!=='.'&&$n!=='..')$remove($path.'/'.$n);rmdir($path);}elseif(file_exists($path)||is_link($path))unlink($path);};if(is_dir($root))$remove($root);

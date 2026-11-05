@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/Http.php';
+require_once __DIR__ . '/PortalNavigation.php';
 require_once __DIR__ . '/GuidedSetup.php';
 require_once __DIR__ . '/../libs/SystemPortalNavigation.php';
 
@@ -29,12 +30,24 @@ class SecretsFrontend extends IPSModule
         $this->RegisterVariableString('Status', 'Frontend status', '', 20);
         $this->RegisterVariableString('IntegrationStatus', 'Portal / documentation / backup', '~TextBox', 30);
         $this->RegisterVariableString('Debug', 'Debug', '~TextBox', 50);
+        $this->RegisterVariableString('BackendAvailability', 'Backend availability', '~TextBox', 35);
+        $this->RegisterVariableBoolean('BackendError', 'Backend error', '~Alert', 36);
+        $this->RegisterVariableBoolean('FrontendError', 'Frontend error', '~Alert', 37);
+        $this->RegisterVariableString('FrontendHealth', 'Frontend heartbeat', '~TextBox', 38);
+        $this->SetValue('BackendError', true);
+        $this->SetValue('FrontendError', true);
+        $this->RegisterTimer('BackendAvailability', 0, 'SECF_CheckBackendAvailability($_IPS[\'TARGET\']);');
         $this->RegisterTimer('BootstrapRecovery', 0, 'SECF_RecoverBootstrap($_IPS[\'TARGET\']);');
         $this->RegisterTimer('Setup', 0, 'SECF_Refresh($_IPS[\'TARGET\']);'); $this->RegisterMessage(0, 10103);
     }
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
+        $this->RegisterVariableString('FrontendHealth', 'Frontend heartbeat', '~TextBox', 38);
+        $this->SetBuffer('FrontendHealth','');$this->SetValue('FrontendHealth','');
+        $this->SetValue('BackendError', true);
+        $this->SetValue('FrontendError', true);
+        $this->SetTimerInterval('BackendAvailability', $this->ReadPropertyBoolean('Enabled') ? 30000 : 0);
         $this->forgetGuidedSetup();
         $this->SetTimerInterval('BootstrapRecovery', 1000);
         $this->SetValue('DebugEnabled', $this->ReadPropertyBoolean('DebugEnabled'));
@@ -44,6 +57,54 @@ class SecretsFrontend extends IPSModule
     public function MessageSink($TimeStamp, $SenderID, $Message, $Data): void
     {
         if ((int)$SenderID === 0 && (int)$Message === 10103) { $this->forgetGuidedSetup(); $this->SetTimerInterval('Setup', 100); $this->SetTimerInterval('BootstrapRecovery', 1000); }
+    }
+    /** Independent observer: can report a stopped or unloaded backend watchdog. */
+    public function CheckBackendAvailability(): string
+    {
+        $out = ['ready'=>false, 'state'=>'UNAVAILABLE', 'checkedAt'=>time()];
+        try {
+            if (!$this->ReadPropertyBoolean('Enabled')) $out['state']='DISABLED';
+            else {
+                $id=$this->ReadPropertyInteger('BackendInstanceID');
+                if (!IPS_InstanceExists($id) || !function_exists('SECB_GetAvailability')) $out['state']='BACKEND_API_UNAVAILABLE';
+                else {
+                    $out=json_decode(SECB_GetAvailability($id),true,16,JSON_THROW_ON_ERROR);
+                    if (!is_array($out) || !isset($out['state'],$out['ready'])) throw new RuntimeException('Invalid health response.');
+                    if ($out['stale']??true) { $out['state']='HEARTBEAT_STALE'; $out['ready']=false; }
+                    elseif ((int)IPS_GetInstance($id)['InstanceStatus'] !== 102) { $out['state']='BACKEND_NOT_READY'; $out['ready']=false; }
+                    elseif (!$out['ready'] && $out['state']==='READY') $out['state']='NOT_READY';
+                }
+            }
+        } catch (Throwable $e) { $out=['ready'=>false,'state'=>'BACKEND_CHECK_FAILED','checkedAt'=>time()]; }
+        $json=json_encode($out,JSON_THROW_ON_ERROR);
+        $before=$this->GetBuffer('BackendAvailabilityState');
+        if ($before!==$out['state'] && function_exists('IPS_LogMessage'))
+            IPS_LogMessage('SecretsFrontend '.$this->InstanceID,'Backend availability: '.$out['state']);
+        $this->SetBuffer('BackendAvailabilityState',$out['state']);
+        $this->SetValue('BackendAvailability',$json);
+        $this->SetValue('BackendError', !($out['ready'] ?? false));
+        $this->updateFrontendError();
+        return $json;
+    }
+    /** Local module readiness; external HTTPS reachability requires a remote observer. */
+    private function updateFrontendError(): void
+    {
+        $error=!$this->ReadPropertyBoolean('Enabled')
+            || IPS_GetKernelRunlevel() !== 10103
+            || IPS_HasChanges($this->InstanceID)
+            || (int)IPS_GetInstance($this->InstanceID)['InstanceStatus'] !== 102;
+        $this->SetValue('FrontendError', $error);
+        $health=json_encode(['ready'=>!$error,'checkedAt'=>time(),'backend'=>$this->ReadPropertyInteger('BackendInstanceID')],JSON_THROW_ON_ERROR);
+        $this->SetBuffer('FrontendHealth',$health);$this->SetValue('FrontendHealth',$health);
+    }
+    /** Local heartbeat only; an external route is checked independently by peers. */
+    public function GetFrontendHealth(): string
+    {
+        $h=json_decode($this->GetBuffer('FrontendHealth'),true)?:['ready'=>false,'checkedAt'=>0];$age=time()-(int)$h['checkedAt'];
+        $h['backend']=$this->ReadPropertyInteger('BackendInstanceID');
+        $h['stale']=$h['checkedAt']===0||$age<0||$age>90;
+        $h['ready']=!$h['stale']&&$h['ready']&&$this->ReadPropertyBoolean('Enabled')&&!IPS_HasChanges($this->InstanceID)&&IPS_GetKernelRunlevel()===10103&&(int)IPS_GetInstance($this->InstanceID)['InstanceStatus']===102;
+        return json_encode($h,JSON_THROW_ON_ERROR);
     }
     private function settings(): array
     {
@@ -124,11 +185,11 @@ class SecretsFrontend extends IPSModule
             if ($settings['AdminOrigin'] !== '') $this->updateWizardLinks();
             $this->SetValue('Status', !$settings['Enabled'] ? 'Disabled.' : ($this->ReadAttributeBoolean('GuidedV2Only') ? 'Native HTML setup and administration available; the backend checks every operation.' : 'Development frontend available. Backend authorizes every administrative operation.'));
             $this->SetValue('IntegrationStatus', 'Portal: use Add to Portal below. Documentation: bundled manual and catalog entry. Central backup: registration review required; exports contain configuration only.');
-            $this->SetStatus($settings['Enabled'] ? 102 : 104); $this->debug('configuration-checked'); return true;
+            $this->SetStatus($settings['Enabled'] ? 102 : 104); $this->updateFrontendError(); $this->debug('configuration-checked'); return true;
         } catch (Throwable $exception) {
             // An invalid configuration must remove only this instance's old hook.
             try { $this->syncHook(false); } catch (Throwable $ignored) { }
-            $this->SetStatus(200); $this->SetValue('Status', $exception->getMessage()); $this->debug('configuration-refused'); return false;
+            $this->SetStatus(200); $this->SetValue('FrontendError', true); $this->SetValue('Status', $exception->getMessage()); $this->debug('configuration-refused'); return false;
         }
     }
     private function syncHook(bool $enabled): void
@@ -193,7 +254,7 @@ class SecretsFrontend extends IPSModule
             $native=$this->bootstrapNative();$backup=$native['backupOrigin']??null;$setup=$this->bootstrapState();$recoveryUI=false;
             if(in_array($_SERVER['REQUEST_METHOD']??'', ['GET','HEAD'],true)&&($setup['mode']??'')==='recovery'&&($setup['expires']??0)>=time()&&($setup['runtime']??'')===$this->BootstrapRuntime()){try{$journal=$this->bootstrapJournal();$recoveryUI=$journal->locked(fn()=>$journal->read('decision-'.hash('sha256',$setup['intent']))===null);}catch(Throwable $ignored){}}
             $connect=is_array($backup)&&in_array($backup['status']??'', ['pending','active'],true)?SecretsFrontendConnectDiscovery::local():[];
-            $portal = AFSystemPortalNavigationV1::path(0, $settings['PortalInstanceID']);
+            $portal = SecretsFrontendPortalNavigation::path(0, $settings['PortalInstanceID']);
             $reply = SecretsFrontendHttp::response($settings, $this->InstanceID, $_SERVER, $this->path(), $portal, $this->documentationPath(), $input, function (array $request): array {
                 return $this->gateway($request);
             }, ['vaultInitialized'=>($native['initialized']??false)===true,'setupMode'=>$recoveryUI?'recovery':'initial','guidedV2Only' => $this->ReadAttributeBoolean('GuidedV2Only'), 'backupOrigin'=>$backup,'connectDiscovery'=>$connect,'transportDiagnostic'=>['instance'=>$caller,'module'=>$callerModule]]);

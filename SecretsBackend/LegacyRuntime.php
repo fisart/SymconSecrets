@@ -5,16 +5,12 @@ require_once __DIR__.'/LegacyAPI.php';
 /** Symcon public method signatures matching the old SEC application interface. */
 trait SecretsBackendLegacyRuntime
 {
-    private function legacyService(int $source): SecretsBackendLegacyAPI
+    private function legacyService(int $source, ?SecretsBackendNativeStore $store = null): SecretsBackendLegacyAPI
     {
-        $this->nativeApplication();
-        return new SecretsBackendLegacyAPI($this->nativeStore(),$source,function(array $permission)use($source):void{
-            if(!IPS_InstanceExists($source)||IPS_HasChanges($source))throw new RuntimeException('Legacy source is unavailable or has unapplied settings.');
-            if($source===$this->InstanceID)return;
-            $info=IPS_GetInstance($source);
-            if(($info['InstanceStatus']??0)!==102||strtoupper($info['ModuleInfo']['ModuleID']??'')!==SecretsBackendLegacyImport::MODULE
-                ||IPS_GetProperty($source,'NativeBackendInstanceID')!==$this->InstanceID
-                ||IPS_GetProperty($source,'OperationMode')!==$permission['mode'])throw new RuntimeException('Legacy instance/backend/role binding differs from its approval.');
+        if($source!==$this->InstanceID)throw new RuntimeException('Old manager contexts are disabled on this native-only branch.');
+        $store ??= $this->nativeStore();$this->nativeApplication(null,$store);
+        return new SecretsBackendLegacyAPI($store,$source,function(array $permission)use($source):void{
+            if(!IPS_InstanceExists($source)||IPS_HasChanges($source))throw new RuntimeException('The native backend is unavailable or has unapplied settings.');
         },$this->InstanceID);
     }
     /** Permission/readiness metadata only: no key names, values, paths or exception text. */
@@ -47,30 +43,70 @@ trait SecretsBackendLegacyRuntime
             default=>'The native backend could not validate its current storage, runtime or pinned security configuration. No automatic recovery or permission change was attempted.'};
         $out['nextStep']=in_array($out['code'],['READ_GRANT_MISSING','READ_GRANT_DISABLED','READ_NOT_APPROVED','GLOBAL_IDENTITY_CHANGED'],true)
             ?'In Automation access -> Existing SEC applications, select This backend and review its explicit access override. The backend ID is detected automatically. Leave writes frozen for read-only scripts.'
-            :($out['code']==='READ_ALLOWED'?'Run the read again. If it warns, the operation failed after this status check; do not treat its fallback [] as an empty vault.':'Check the backend status and applied settings.');
+            :($out['code']==='READ_ALLOWED'?'Run the read again and inspect lastFailure if it fails. Read failures are logged without printing into consumer JSON; a fallback [] does not prove an empty vault.':'Check the backend status and applied settings.');
+        $last=json_decode($this->GetBuffer('LegacyAPILastFailure'),true);if(is_array($last))$out['lastFailure']=$last;
+        if(method_exists($this,'GetEmergencyStatus')){$emergency=json_decode($this->GetEmergencyStatus(),true);$out['emergencyGlobalReadAvailable']=($emergency['mode']??'')==='REMOTE'&&($emergency['ready']??false);$out['activeReadSource']=$emergency['activeSource']??'';}
         return SecretsBackendCodec::json($out);
     }
     public function CallLegacyAPI(int $SourceInstanceID,string $Method,string $ArgumentsJSON): string
+    {
+        return $this->executeLegacyAPI($SourceInstanceID,$Method,$ArgumentsJSON,null);
+    }
+    /** Adapter-only binding check is part of the same fresh operation, not a separate status scan. */
+    public function CallBoundLegacyAPI(string $ExpectedVaultID,string $Method,string $ArgumentsJSON): string
+    {
+        return $this->executeLegacyAPI($this->InstanceID,$Method,$ArgumentsJSON,$ExpectedVaultID);
+    }
+    private function executeLegacyAPI(int $SourceInstanceID,string $Method,string $ArgumentsJSON,?string $expectedVault): string
     {
         if(!in_array($Method,SecretsBackendLegacyAPI::DATA_METHODS,true))throw new RuntimeException('This legacy administration operation requires its native approved workflow.');
         if(strlen($ArgumentsJSON)>SecretsBackendNativePlatform::budget())throw new InvalidArgumentException('Legacy arguments exceed the native memory budget.');
         $args=json_decode($ArgumentsJSON,true,32,JSON_THROW_ON_ERROR);if(!is_array($args)||!array_is_list($args))throw new InvalidArgumentException('Legacy arguments must be a positional array.');
         $counts=['GetKeys'=>0,'GetSecret'=>1,'GetExplorerFields'=>1,'SetRecordFields'=>3,'ExportLocalSecrets'=>0,'ImportLocalSecrets'=>1,'EncryptAndSave'=>1];
         if(count($args)!==$counts[$Method])throw new InvalidArgumentException('Legacy argument count differs.');
-        $failure=null;
-        try{$service=$this->legacyService($SourceInstanceID);$value=$service->{$Method}(...$args);$output=$service->output();$this->SetBuffer('LegacyAPILastError','');}
+        $failure=null;$localValidated=false;
+        try{
+            if($SourceInstanceID!==$this->InstanceID)throw new RuntimeException('Old manager context refused.');
+            $store=$this->nativeStore();
+            [$value,$output]=$store->withActiveSnapshot(function()use($store,$SourceInstanceID,$Method,$args,$expectedVault,&$localValidated):array{
+                if($expectedVault!==null&&!hash_equals($store->identity()['deploymentId'],$expectedVault))throw new RuntimeException('The pinned native vault changed.',1005);
+                $service=$this->legacyService($SourceInstanceID,$store);$localValidated=true;
+                if(in_array($Method,['GetKeys','GetSecret','GetExplorerFields'],true))$service->permission($store->read()['state'],'read');
+                if(in_array($Method,['GetKeys','GetSecret','GetExplorerFields'],true)&&!str_starts_with((string)($args[0]??''),'__'))$this->emergencyLocalGate($store);
+                return [$service->{$Method}(...$args),$service->output()];
+            });
+            $this->SetBuffer('LegacyAPILastError','');
+        }
         catch(Throwable $error){
+            if($SourceInstanceID===$this->InstanceID&&(!$localValidated||$error instanceof SecretsBackendEmergencyNeeded)&&$error->getCode()!==1005){
+                try{
+                    SecretsBackendEmergency::arguments($Method,$args);
+                    $value=$this->emergencyRead($Method,$args,$expectedVault);
+                    $this->SetBuffer('LegacyAPILastError','');
+                    return SecretsBackendCodec::json(['value'=>$value,'output'=>'','error'=>null,'source'=>'emergency-peer']);
+                }catch(Throwable $fallbackError){/* Preserve the ordinary failed-call contract; no plaintext error detail. */}
+            }
             $output=$Method==='EncryptAndSave'?'❌ Error: Encryption failed.':'';
-            $failure=['code'=>'LEGACY_API_REFUSED','meaning'=>'The read/write request failed authorization or backend validation. The fallback value does not prove an empty vault.'];
+            $failure=['code'=>match($error->getCode()){2101=>'APPLICATION_RECORD_MISSING',1005=>'PINNED_VAULT_CHANGED',default=>'LEGACY_API_REFUSED'},'meaning'=>'The read/write request failed authorization or backend validation. The fallback value does not prove an empty vault.'];
             $this->SetBuffer('LegacyAPILastError','Legacy '.$Method.' refused; check approved access, binding, freeze, Global conflicts and backend readiness.');
             $value=match($Method){'GetKeys'=>'[]','GetExplorerFields'=>[],'SetRecordFields','ImportLocalSecrets'=>false,'EncryptAndSave'=>null,default=>''};
         }
         return SecretsBackendCodec::json(['value'=>$value,'output'=>$output??'','error'=>$failure]);
     }
+    private function legacyFailedRead(string $method,string $code): void
+    {
+        if(!preg_match('/^[A-Z_]{1,48}$/D',$code))$code='LEGACY_API_REFUSED';
+        $this->SetBuffer('LegacyAPILastFailure',json_encode(['method'=>$method,'code'=>$code,'at'=>time()],JSON_THROW_ON_ERROR));
+        $lock='SECB.LegacyAPILog.'.$this->InstanceID;if(!IPS_SemaphoreEnter($lock,1))return;
+        try{if((int)$this->GetBuffer('LegacyAPILogAt')>time()-60)return;$this->SetBuffer('LegacyAPILogAt',(string)time());
+            if(function_exists('IPS_LogMessage'))IPS_LogMessage('SecretsBackend '.$this->InstanceID,'Application read refused ('.$code.'). Run SECB_GetLegacyAPIStatus('.$this->InstanceID.'); fallback values do not prove an empty vault.');
+        }catch(Throwable $ignored){}finally{IPS_SemaphoreLeave($lock);}
+    }
     private function legacyValue(string $method,array $args)
     {
-        $result=json_decode($this->CallLegacyAPI($this->InstanceID,$method,SecretsBackendCodec::json($args)),true,32,JSON_THROW_ON_ERROR);if(($result['output']??'')!=='')echo $result['output'];
-        if(($result['error']??null)!==null&&in_array($method,['GetKeys','GetSecret','GetExplorerFields','ExportLocalSecrets'],true))trigger_error('SecretsBackend: legacy read refused. Run SECB_GetLegacyAPIStatus('.$this->InstanceID.') for permission and backend diagnostics; the fallback value is not evidence of an empty vault.',E_USER_WARNING);
+        $result=json_decode($this->CallLegacyAPI($this->InstanceID,$method,SecretsBackendCodec::json($args)),true,32,JSON_THROW_ON_ERROR);if($method==='EncryptAndSave'&&($result['output']??'')!=='')echo $result['output'];
+        if(($result['error']??null)!==null&&in_array($method,['GetKeys','GetSecret','GetExplorerFields','ExportLocalSecrets'],true))$this->legacyFailedRead($method,$result['error']['code']??'LEGACY_API_REFUSED');
+        elseif(($result['error']??null)===null)$this->SetBuffer('LegacyAPILastFailure','');
         return $result['value'];
     }
     public function GetKeys(): string { return $this->legacyValue(__FUNCTION__,[]); }
@@ -99,7 +135,6 @@ trait SecretsBackendLegacyRuntime
             if(strlen($ServerJSON)>16384)return false;$server=json_decode($ServerJSON,true,8,JSON_THROW_ON_ERROR);
             $service=$this->legacyService($SourceInstanceID);$service->permission($this->nativeStore()->read()['state'],'portal');
             $origin=$this->legacyOrigin($server);
-            if($SourceInstanceID!==$this->InstanceID&&IPS_GetProperty($SourceInstanceID,'PortalEnabled')!==true)return false;
             return $this->nativeApplication($origin)->portalAuthenticated(['cookie'=>(string)($server['HTTP_COOKIE']??''),'origin'=>$origin]);
         }catch(Throwable $error){return false;}
     }
@@ -110,8 +145,19 @@ trait SecretsBackendLegacyRuntime
         if(!preg_match('~^/hook/[A-Za-z0-9_-]+$~D',$ReturnPath))throw new InvalidArgumentException('Return to one local hook path without query parameters.');
         $service=$this->legacyService($SourceInstanceID);$service->permission($this->nativeStore()->read()['state'],'portal');
         $origin=$this->legacyOrigin($server);
-        if($SourceInstanceID!==$this->InstanceID&&IPS_GetProperty($SourceInstanceID,'PortalEnabled')!==true)throw new RuntimeException('Protected-page access is disabled on this instance.');
         return $origin.'/hook/secrets_frontend_'.$this->ReadPropertyInteger('FrontendInstanceID').'#legacy-return='.rawurlencode($ReturnPath);
+    }
+    /** Native browser-session integration; no old manager or old credential store is involved. */
+    public function IsNativePortalAuthenticated(): bool
+    {
+        try{$this->nativeApplication();$server=json_decode(self::legacyServerJSON(),true,8,JSON_THROW_ON_ERROR);$origin=$this->legacyOrigin($server);return $this->nativeApplication($origin)->portalAuthenticated(['cookie'=>(string)($server['HTTP_COOKIE']??''),'origin'=>$origin]);}catch(Throwable $error){return false;}
+    }
+    public function GetNativePortalLoginURL(string $ReturnPath,string $ServerJSON): string
+    {
+        $this->nativeApplication();if(strlen($ServerJSON)>16384)throw new InvalidArgumentException('Browser context too large.');
+        if($ReturnPath!==''&&(!preg_match('~^/hook/[A-Za-z0-9_-]+$~D',$ReturnPath)||preg_match('~^/hook/secrets(?:_frontend|_peer)?_~',$ReturnPath)))throw new InvalidArgumentException('Choose a plain local application hook.');
+        $server=json_decode($ServerJSON,true,8,JSON_THROW_ON_ERROR);$origin=$this->legacyOrigin($server);
+        return $origin.'/hook/secrets_frontend_'.$this->ReadPropertyInteger('FrontendInstanceID').($ReturnPath===''?'':'#legacy-return='.rawurlencode($ReturnPath));
     }
     public function IsPortalAuthenticated(): bool { return $this->CheckLegacyPortalSession($this->InstanceID,self::legacyServerJSON()); }
     public static function legacyServerJSON(): string

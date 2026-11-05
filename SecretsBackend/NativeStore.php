@@ -20,6 +20,8 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
     private string $markerDigest = '';
     private int $effectiveLimit;
     private bool $ordinaryChange = false;
+    private $beforeChange = null;
+    public function onBeforeChange(callable $guard): void { $this->beforeChange = $guard; }
     public function __construct(private string $directory, private string $keyDirectory, private string $runtime, ?callable $currentRuntime = null, ?callable $fault = null)
     {
         $this->directory = SecretsBackendNativePlatform::directory($directory);
@@ -244,7 +246,7 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
         } finally { $this->depth=0;$this->frame=null;$this->dirty=false;foreach(array_reverse($locks)as$h){flock($h,LOCK_UN);fclose($h);} }
     }
     private function physicalPaths(): array { return ['vaultDirectory'=>$this->directory,'keyDirectory'=>$this->keyDirectory]; }
-    public function storageHandoff(): array { return $this->locked(fn():array=>['move'=>$this->frame['state']['native']['storageMove']??null,'profile'=>$this->frame['state']['policy']['management']]); }
+    public function storageHandoff(): array { return $this->locked(fn():array=>['paths'=>$this->physicalPaths(),'move'=>$this->frame['state']['native']['storageMove']??null,'profile'=>$this->frame['state']['policy']['management']]); }
     public function storagePaths(): array { return $this->locked(fn():array=>$this->physicalPaths()); }
     public function reviewStorageMove(array $target,string $kernel,string|array|null $legacyParent=null): array
     {
@@ -297,6 +299,13 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
     }
     public function recoveryRequired(): bool { try { $this->read(); return false; } catch (Throwable $e) { return true; } }
     public function read(bool $fresh = true): array { return $this->locked(function (): array { $this->active(); return $this->current(); }); }
+    /** One local operation, with fresh state and nested authorization under the same lock.
+     * Never retain this snapshot between calls or perform network I/O in the callback.
+     */
+    public function withActiveSnapshot(callable $operation)
+    {
+        return $this->locked(function () use ($operation) { $this->active(); return $operation($this->current()); });
+    }
     public function head(): array { return $this->read()['head']; }
     private function event(array $context, string $id, string $result): array
     {
@@ -319,6 +328,7 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
                 $state=SecretsBackendSharedGlobal::capture($state);
                 if(class_exists(SecretsBackendNativePeer::class))$state=SecretsBackendNativePeer::queueGlobal($state);
             }
+            if ($this->beforeChange !== null) ($this->beforeChange)($this->frame['state'], $state);
             $changed = self::stateDigest($state) !== $expectedHead['digest']; $index = $changed ? SecretsBackendCodec::increment($expectedHead['index']) : $expectedHead['index'];
             $event = $this->event($audit, $operationId, 'committed');
             $state['operations']['audit'][] = $event + ['afterIndex' => $index, 'afterRevision' => $state['vault']['revision']];
@@ -327,6 +337,18 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
             $head = $changed ? $this->newHead($state, $index) : $expectedHead;
             $this->frame['outcomeHeads'][$operationId] = $head;
             $this->frame['state'] = $state; $this->frame['head'] = $head; $this->ordinaryChange = $changed && !$maintenance; $this->dirty = true; return $head;
+        });
+    }
+    /** Trusted local application read: fresh authorization without persistent read telemetry.
+     * Mutations, browser reveals and administrative approvals retain authorize()/change().
+     */
+    public function authorizeApplicationRead(array $validated, callable $validate): array
+    {
+        return $this->locked(function () use ($validated, $validate): array {
+            $this->active(); $current = $this->current();
+            if (!SecretsBackendCodec::same($current['head'], $validated['head']) || !SecretsBackendCodec::same($current['owner'], $validated['owner'])) throw new RuntimeException('Authorization state changed; repeat full verification.');
+            $validate($current); $this->trip('before_authorize'); $this->active();
+            return ['result' => ['status' => 'AUTHORIZED', 'head' => $current['head']], 'head' => $current['head'], 'owner' => $current['owner']];
         });
     }
     public function authorize(string $kind, string $actionDigest, array $validated, callable $validate, array $audit = []): array

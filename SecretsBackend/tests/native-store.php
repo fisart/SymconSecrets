@@ -34,7 +34,16 @@ try {
     $no(static fn()=>$new->get('session','session'),'Restart preserved a session.');
     $before = $new->read();
     $no(static fn()=>$new->authorize('reveal',$digest,$initial,static fn($x)=>null),'Stale exact-snapshot grant accepted.');
+    $journal=static function()use($paths):array{$out=[];foreach(glob($paths['vaultDirectory'].'/*')?:[]as$f)if(is_file($f))$out[basename($f)]=hash_file('sha256',$f);ksort($out);return $out;};
+    $beforeRead=$journal();
+    $ok($new->authorizeApplicationRead($before,static fn($x)=>null)['result']['status']==='AUTHORIZED','Current read authorization failed.');
+    $no(static fn()=>$new->authorizeApplicationRead($initial,static fn($x)=>null),'Read authorization accepted a stale snapshot/runtime.');
+    $no(static fn()=>$new->authorizeApplicationRead($before,static function($x){throw new RuntimeException('Access revoked');}),'Read authorization ignored revocation.');
+    $nonce='runtime-b';$fenced=new SecretsBackendNativeStore($paths['vaultDirectory'],$paths['keyDirectory'],$nonce,static function()use(&$nonce){return $nonce;},static function($point)use(&$nonce){if($point==='before_authorize')$nonce='superseded';});
+    $no(static fn()=>$fenced->authorizeApplicationRead($before,static fn($x)=>null),'Read returned after its runtime was superseded during validation.');
+    $ok($journal()===$beforeRead,'Read authorization or refusal persisted a snapshot.');
     $ok($new->authorize('metadata',$digest,$before,static fn($x)=>null)['result']['status']==='AUTHORIZED','Current exact grant refused.');
+    $ok($journal()!==$beforeRead,'Audited authorization stopped recording durable telemetry.');
     foreach (['after_frame','before_marker','after_marker','after_directory_sync'] as $point) {
         [$r,$p,$s] = $fixture(); $base = $s->read(); $op=SecretsBackendCodec::uuid();
         $fault = new SecretsBackendNativeStore($p['vaultDirectory'],$p['keyDirectory'],'runtime-a',null,static function($where)use($point){if($where===$point)throw new RuntimeException('Injected interruption');});

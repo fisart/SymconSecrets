@@ -9,6 +9,13 @@ $magicApproved(['kind'=>'rename','scope'=>'global','path'=>['Magic folder'],'new
 $magicApproved(['kind'=>'save','scope'=>'global','path'=>['Renamed folder','Password'],'mode'=>'create','json'=>'"FULL-MAGIC-VALUE"','revision'=>$invoke('session')['data']['revision']]);
 $cap=$magicApproved(['kind'=>'nativeMachineGrant','name'=>'Magic app','scope'=>'global','path'=>['Renamed folder'],'write'=>true]);secExpect(isset($cap['capabilityToken']),'Magic cannot issue application capabilities.');
 $magicApproved(['kind'=>'nativeMachineRevoke','id'=>$cap['machineId']]);
+// The SEC replacement uses only native browser authentication, without old portal grants.
+$nativeServer=['HTTP_HOST'=>parse_url($origin,PHP_URL_HOST),'HTTP_COOKIE'=>$request['cookie'],'REMOTE_ADDR'=>'127.0.0.1'];
+$savedServer=$_SERVER;$_SERVER=$nativeServer;
+secExpect($back->IsNativePortalAuthenticated(),'Native-only protected page did not accept the current full Magic session.');
+$_SERVER=$savedServer;
+secExpect(str_starts_with($back->GetNativePortalLoginURL('/hook/library',json_encode($nativeServer)),$origin.'/'),'Native-only Magic login contacted the primary origin.');
+secExpect($back->GetNativePortalLoginURL('',json_encode($nativeServer))===$origin.'/hook/secrets_frontend_5200','Old base hook did not open the native Magic administration page.');
 // Legacy protected pages must validate the Magic cookie locally; no primary contact is needed.
 $magicApproved(['kind'=>'nativeLegacyAccess','instance'=>$back->InstanceID,'mode'=>1,'enabled'=>true,'read'=>true,'write'=>false,'portal'=>true,'frozen'=>true,'bulk'=>false]);
 secExpect(str_contains($back->GetSecret('Renamed folder'),'FULL-MAGIC-VALUE'),'Direct native legacy signature did not read application data.');

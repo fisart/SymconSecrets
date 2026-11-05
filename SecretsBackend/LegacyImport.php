@@ -3,7 +3,7 @@ declare(strict_types=1);
 require_once __DIR__.'/Tree.php';
 require_once __DIR__.'/NativePlatform.php';
 
-/** Read-only adapter for the deployed aes-128-gcm legacy format. No old APIs execute. */
+/** Explicit administrator import of retained aes-128-gcm snapshots. Never used by SEC application calls. */
 final class SecretsBackendLegacyImport
 {
     public const MODULE='{7C5A3841-3F7B-4D2A-9E1C-5B6D8F9A0E12}';
@@ -14,7 +14,7 @@ final class SecretsBackendLegacyImport
     public static function read(int $id,int $limit): array { return self::withSnapshot($id,$limit,static fn($snapshot)=>$snapshot); }
     public static function withSnapshot(int $id,int $limit,callable $callback)
     {
-        if($id<=0||!IPS_InstanceExists($id)||strtoupper(IPS_GetInstance($id)['ModuleInfo']['ModuleID']??'')!==self::MODULE||IPS_HasChanges($id)||(IPS_GetInstance($id)['InstanceStatus']??0)!==102)throw new RuntimeException('Select an active old PasswordSafe without pending console edits.');
+        if($id<=0||!IPS_InstanceExists($id)||strtoupper(IPS_GetInstance($id)['ModuleInfo']['ModuleID']??'')!==self::MODULE||IPS_HasChanges($id)||(IPS_GetInstance($id)['InstanceStatus']??0)!==102)throw new RuntimeException('Select a ready retained vault instance without pending console edits.');
         $lock='SymconSecrets.Vault.'.$id;if(!IPS_SemaphoreEnter($lock,5000))throw new RuntimeException('The old vault is busy. Try again.');
         try{
             $raw=IPS_GetConfiguration($id);if(!is_string($raw)||strlen($raw)>65536)throw new RuntimeException('Unsupported old configuration.');

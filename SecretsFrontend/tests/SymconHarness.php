@@ -36,7 +36,7 @@ class IPSModule
     protected function SetStatus($code): void { $this->status = $code; }
     protected function UpdateFormField($k, $field, $value): void { $this->form[$k][$field] = $value; }
 }
-function IPS_GetKernelRunlevel(): int { return 10103; }
+function IPS_GetKernelRunlevel(): int { return $GLOBALS['testRunlevel'] ?? 10103; }
 function IPS_GetKernelDir(): string { return $GLOBALS['testKernel'] ?? (PHP_OS_FAMILY === 'Windows' ? str_replace('\\', '/', sys_get_temp_dir()) . '/symcon-test-kernel/' : '/var/lib/symcon/'); }
 function IPS_HasChanges(int $id): bool { return $GLOBALS['changed'][$id] ?? false; }
 function IPS_InstanceExists(int $id): bool { return isset($GLOBALS['instances'][$id]); }

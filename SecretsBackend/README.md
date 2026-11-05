@@ -93,3 +93,22 @@ refuse existing storage. The old SEC APIs and vault are not called or migrated.
 Local automated tests are not a certificate for arbitrary filesystems/hardware.
 Real Symcon lifecycle, HTTPS isolation, physical passkeys, different hosts,
 Docker replacement/restore and physical power interruption still need acceptance.
+
+## Refused-request diagnostics
+
+A refusal now records a random reference, UTC time, backend/frontend IDs, allowlisted action and operation, failed stage, fixed reason code, exception type, backend source filename/line and session/CSRF verification facts. The last twenty records survive recovery and remain available with debug disabled or a locked vault. No exception messages, traces, request bodies, cookies, CSRF tokens, credentials, secret paths or secret values are retained in this report.
+
+1. Update the Secrets library on `migration/legacy-sec-replacement`, then reopen the administration page and sign in again.
+2. Repeat the refused action once. The page identifies session expiry, invalid session/CSRF, expired approval, changed emergency offer or a concurrent revision where known; it shows a diagnostic reference. Details requiring authorization are returned only after session and CSRF verification. Unauthenticated failures retain a generic response except safe sign-in guidance.
+3. In the Secrets Backend console, use **Show refused-request diagnostics**, or inspect **Last refused request (safe diagnostics)** below the backend. `SECB_GetRequestDiagnostics` is local/read-only and does not open the vault.
+4. Update Configuration Backup to 1.3.10 and upload **GitHub diagnostics**. Reports include these failures and pending emergency offers even if mesh collection is unavailable.
+
+An expired session returns the browser to sign-in, clears sensitive controls and stops status polling. It never repeats an approved mutation automatically. A refusal after commit can still mean the action completed; review current configuration/outcome before requesting another grant. Earlier generic failures cannot be reconstructed retroactively from these new records.
+
+## Slow peer connections
+
+Peer HTTPS requests now allow 15 seconds on primary routes and 25 seconds on exact Symcon Magic hosts. Update the sending installations as well as the slow receiving installation. These are automatic defaults; no pairing, URL, credential or security-profile change is required. TLS/hostname/signature checks and the 120-second administrator approval lifetime are unchanged. Emergency application reads retain their separate 20-second total budget and six-second per-request cap.
+
+Background work rotates fairly through delivery, Global verification, route diagnostics and provider work. Idle phases can be skipped, but only one phase that attempts outbound network I/O runs per tick. Approved failover within that phase shares a best-effort worker budget of at most 45 seconds, capped below the PHP execution limit with five seconds reserved for cleanup and elapsed setup deducted. PHP limits are never raised automatically. Interactive peer operations share a request deadline too, including failover. The actual permitted time for failover may therefore be smaller than a route’s nominal limit. A per-instance semaphore still prevents overlapping workers. Existing stale-report thresholds remain in force: a slow or unavailable node is not made green by extending cached health. OS/DNS and local filesystem stalls can exceed the best-effort network deadline. No browser/session read performs a new latency probe.
+
+Use **Show peer timing diagnostics** in the backend console, or `SECB_GetTransportDiagnostics`, to see the active limits and last attempt per peer/primary-or-backup route. Timings record UTC time, elapsed milliseconds, actual permitted milliseconds, operation category and a fixed transport outcome. They are bounded to 64 entries, contain no payloads or credentials, survive in runtime buffers only and reset on restart. A received HTTP response is not proof of a valid signed peer reply; use the existing mesh/synchronization status for that conclusion. Configuration Backup 1.3.11 includes this data in the opt-in Secrets GitHub report, including when vault-based mesh collection is unavailable.

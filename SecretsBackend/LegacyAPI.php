@@ -36,7 +36,7 @@ final class SecretsBackendLegacyAPI
     private function read(callable $get,string $method)
     {
         $c=$this->snapshot();
-        $this->store->authorize('legacy-read',hash('sha256',$method.':'.$this->instance),$c,function(array $checked):void{$this->permission($checked['state'],'read');},['action'=>'legacy-read','actor'=>(string)$this->instance,'target'=>$method]);
+        $this->store->authorizeApplicationRead($c,function(array $checked):void{$this->permission($checked['state'],'read');});
         return $get($c['state']);
     }
     private static function value(array $node)
@@ -55,6 +55,20 @@ final class SecretsBackendLegacyAPI
         if(is_array($value)){if(($value['__folder']??false)===true)unset($value['__folder']);foreach($value as&$child)$child=self::cleanFolders($child);unset($child);}return $value;
     }
     private static function encoded($v): string { return is_array($v)||is_object($v)?(str_replace(['"__folder":true,',',"__folder":true','"__folder":true'], '',json_encode($v))?:''):(string)$v; }
+    /** Used only after an independently approved emergency grant is checked. */
+    public static function emergencyGlobalRead(array $s,string $method,array $args) {
+        $path=SecretsBackendEmergency::arguments($method,$args);
+        SecretsBackendSharedGlobal::assertPath($s,$path,false);
+        if($method==='GetKeys'){
+            $root=self::value($s['vault']['global']);
+            return json_encode(array_values(array_filter(array_keys($root),static fn($k)=>!str_starts_with((string)$k,'__'))),JSON_THROW_ON_ERROR);
+        }
+        $node=SecretsBackendTree::at($s['vault']['global'],$path);
+        if($method==='GetSecret')return self::encoded(self::value($node));
+        $value=self::value($node);$out=[];
+        if(is_array($value))foreach($value as$k=>$v)if(!is_array($v)&&$k!=='__folder')$out[]=['Key'=>$k,'Value'=>(string)$v];
+        return $out;
+    }
     public function GetKeys(): string
     {
         return $this->read(static function(array $s):string{
@@ -68,7 +82,7 @@ final class SecretsBackendLegacyAPI
             if($ident==='__LOCAL__')return self::encoded(self::value($s['vault']['local']));
             if(str_starts_with($ident,'__'))throw new RuntimeException('Legacy identity/internal areas are unavailable through the application API.');
             if(isset($s['native']['sharedGlobal']))SecretsBackendSharedGlobal::assertPath($s,[$ident],false);
-            $root=self::value($s['vault']['global']);if(!array_key_exists($ident,$root)){trigger_error('SecretsManager: Secret not found.',E_USER_NOTICE);return '';}
+            $root=self::value($s['vault']['global']);if(!array_key_exists($ident,$root))throw new RuntimeException('Application record is unavailable.',2101);
             return self::encoded($root[$ident]);
         },__FUNCTION__);
     }
@@ -105,8 +119,9 @@ final class SecretsBackendLegacyAPI
         $parts=array_map('trim',explode('/',$path));if(in_array('',$parts,true))return false;
         $normalized=[];foreach($fields as$k=>$v){$k=trim((string)$k);if($k===''||str_starts_with($k,'__')||is_array($v)||is_object($v))return false;$normalized[$k]=(string)$v;}
         SecretsBackendTree::path($parts);
-        return $this->write(__FUNCTION__,[$path,$normalized,$scope],static function(array $s,array $permission)use($parts,$normalized,$scope):array{
-            if($scope==='global'&&($permission['mode']!==1||!$s['native']['globalWritable']))throw new RuntimeException('Global writes require legacy Master mode and a writable Global vault.');
+        $native=$this->instance===$this->backend;
+        return $this->write(__FUNCTION__,[$path,$normalized,$scope],static function(array $s,array $permission)use($parts,$normalized,$scope,$native):array{
+            if($scope==='global'&&((!$native&&$permission['mode']!==1)||!$s['native']['globalWritable']))throw new RuntimeException('Global writes require legacy Master mode and a writable Global vault.');
             if($scope==='global'&&isset($s['native']['sharedGlobal']))SecretsBackendSharedGlobal::assertPath($s,$parts,false);
             self::setFields($s['vault'][$scope],$parts,$normalized);return $s;
         });
@@ -114,7 +129,7 @@ final class SecretsBackendLegacyAPI
     public function EncryptAndSave(string $jsonInput): void
     {
         $p=$this->permission($this->store->read()['state'],'write',true);
-        if($p['mode']===0){$this->output='Operation not allowed in Slave mode.';return;}
+        if($this->instance!==$this->backend&&$p['mode']===0){$this->output='Operation not allowed in Slave mode.';return;}
         if(!$p['bulk'])throw new RuntimeException('Whole-vault application replacement requires explicit bulk-write approval.');
         if(trim($jsonInput)===''){$this->output='Input empty.';return;}
         if(strlen($jsonInput)>SecretsBackendNativePlatform::budget())throw new RuntimeException('Legacy input exceeds the native budget.');
@@ -125,8 +140,9 @@ final class SecretsBackendLegacyAPI
         $local=self::cleanFolders($decoded['__LOCAL__']??[]);unset($decoded['__LOCAL__']);$global=self::cleanFolders($decoded);
         $global=SecretsBackendTree::parseBounded(json_encode($global?:new stdClass(),JSON_THROW_ON_ERROR),SecretsBackendNativePlatform::budget());
         $local=SecretsBackendTree::parseBounded(json_encode($local?:new stdClass(),JSON_THROW_ON_ERROR),SecretsBackendNativePlatform::budget());
-        $this->write(__FUNCTION__,[$jsonInput],static function(array $s,array $p)use($global,$local):array{
-            if(!$p['bulk']||$p['mode']===0||!$s['native']['globalWritable'])throw new RuntimeException('Whole-vault write is unapproved or Global is frozen.');
+        $native=$this->instance===$this->backend;
+        $this->write(__FUNCTION__,[$jsonInput],static function(array $s,array $p)use($global,$local,$native):array{
+            if(!$p['bulk']||(!$native&&$p['mode']===0)||!$s['native']['globalWritable'])throw new RuntimeException('Whole-vault write is unapproved or Global is frozen.');
             if(isset($s['native']['sharedGlobal']))SecretsBackendSharedGlobal::assertPath($s,[],false);
             $s['vault']['global']=$global;$s['vault']['local']=$local;return $s;
         });$this->output='✅ Saved & Encrypted locally.';

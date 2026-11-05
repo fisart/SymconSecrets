@@ -1,6 +1,6 @@
 # Local-only import when joining an existing Secrets network
 
-Use `feature/secrets-frontend` while the old SecretsManager still serves applications. In **Import old vault → Secrets to import**, the browser now defaults to **Local secrets only**. **Global and Local secrets** remains available for a full import. The old manager and its storage remain unchanged.
+Available on `feature/secrets-frontend` and `migration/legacy-sec-replacement`. On the migration branch the old manager remains disabled: import reads its retained encrypted Vault variable and existing master.key directly, only for this explicit administrator operation. Application reads, writes, login and synchronization continue using only the native vault. Retained data is a pre-switch snapshot and can be stale; keep current native values unless intentionally replacing them. If the old instance, Vault variable or key has been deleted, it is no longer an available source. In **Import old vault → Secrets to import**, the browser now defaults to **Local secrets only**. **Global and Local secrets** remains available for a full import. The old manager and its storage remain unchanged.
 
 Local-only copies the source's `__LOCAL__` application data. It does not import ordinary Global records, `__AUTH__`, old passkeys, sessions or administrator authority. Ordinary top-level records in a Standalone vault are still Global; selecting Local-only will not copy them. An empty/missing `__LOCAL__` area does not delete destination Local values and does not fall back to importing Global.
 
@@ -15,7 +15,7 @@ For Production:
 3. Review and approve. Check Local secrets in the new vault and retain the backup/recovery key separately.
 4. Pair with the existing Test and Heartbeat native vaults, receive their Global state, and resolve any relevant conflicts. Local values remain private to Production.
 5. Compare every Production old instance's Global and Local application data before switching. Production-only Global records are intentionally absent from a Local-only import and must be reconciled separately. Pause secret writers for the final comparison.
-6. Only after verification switch to `migration/legacy-sec-replacement`, preserving instance IDs and application calls. Confirm native binding and required read/write access. Native compatibility writes remain frozen until approved. That replacement branch cannot import old storage.
+6. Only after verification switch to `migration/legacy-sec-replacement`, preserving instance IDs and application calls. Confirm native binding and required read/write access. Native compatibility writes remain frozen until approved. The replacement branch also supports explicit import of retained old snapshots, without restoring the old manager.
 
 The coexistence branch's migration helper directory is now `.migration`, avoiding Symcon's attempt to load it as a module without `module.json`. The original SecretsManager implementation is unchanged.
 

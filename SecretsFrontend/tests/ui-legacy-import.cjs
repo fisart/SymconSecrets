@@ -4,6 +4,7 @@ const {fixture,tick}=require('./ui-native.cjs');
  const f=await fixture();const $=f.$;
  try {
   $('login').click();await tick();await tick();
+  assert.equal($('nativeImportNav').hidden,false,'Replacement metadata must expose explicit import');
   f.dom.window.document.querySelector('[data-tab="nativeImport"]').click();await tick();
   assert.equal($('legacySource').value,'6000','Single ready source should be discovered automatically');
   assert.equal($('legacyScope').value,'local','Local-only must be the safe UI default');

@@ -17,10 +17,11 @@ trait SecretsBackendNativeBackend
         if ($paths['vaultDirectory'] !== $binding['paths']['vault'] || $paths['keyDirectory'] !== $binding['paths']['keys']) throw new RuntimeException('Native storage path binding changed.');
         $store = new SecretsBackendNativeStore($paths['vaultDirectory'], $paths['keyDirectory'], $this->GetBuffer('Runtime'),
             fn() => $this->GetBuffer('Runtime'));
+        $store->onBeforeChange(function(array $before,array $after):void{if(SecretsBackendEmergency::authorityDigest($before)!==SecretsBackendEmergency::authorityDigest($after))$this->emergencyCapsule()->invalidate();});
         $id = $store->identity();
         if ($id['deploymentId'] !== $binding['uuid'] || $id['binding']['backend'] !== $this->InstanceID
             || $id['binding']['frontend'] !== $this->ReadPropertyInteger('FrontendInstanceID') || $id['binding']['origin'] !== $this->ReadPropertyString('AdminOrigin')) throw new RuntimeException('Native vault identity or instance binding changed.');
-        $physical=$store->storagePaths();$handoff=$store->storageHandoff();$move=$handoff['move'];
+        $handoff=$store->storageHandoff();$physical=$handoff['paths'];$move=$handoff['move'];
         if(is_array($move)&&$physical===$move['to']){
             $approved=$handoff['profile']['settings'];$configuration=$this->configuration();
             $beforeRoots=$approved['HardwareRootsDirectory'];
@@ -46,10 +47,10 @@ trait SecretsBackendNativeBackend
         return $store;
     }
     private function nativeProfile(): array { return SecretsBackendSecurityConfiguration::nativeProfile($this->configuration(), $this->frontendSecurity()); }
-    private function nativeApplication(?string $requestOrigin = null): SecretsBackendApplication
+    private function nativeApplication(?string $requestOrigin = null, ?SecretsBackendNativeStore $store = null): SecretsBackendApplication
     {
         if (!$this->ReadPropertyBoolean('Enabled') || !$this->nativeInitialized()) throw new RuntimeException('Initialize and enable the native backend in the HTML wizard.');
-        $store = $this->nativeStore(); $current = $store->read(); $profile = $current['state']['policy']['management'];
+        $store ??= $this->nativeStore(); $current = $store->read(); $profile = $current['state']['policy']['management'];
         if (!is_array($profile) || ($profile['version'] ?? '') !== 'native-1') throw new RuntimeException('Native security profile is unavailable.');
         SecretsBackendSecurityConfiguration::verify($profile, $this->frontendSecurity());
         if (!SecretsBackendSecurityConfiguration::sameFoundation($profile['settings'], $this->configuration())) throw new RuntimeException('Pinned native foundation changed. Restore the reviewed settings or use recovery.');
@@ -58,26 +59,28 @@ trait SecretsBackendNativeBackend
         if($origin!==$active['AdminOrigin']){ $p=$current['state']['policy']['backupOrigin']??null; SecretsBackendBackupOriginPolicy::requireRoute($current['state'],$origin,$p['generation']??'','register-options'); }
         return new SecretsBackendApplication($store, ['origin' => $origin, 'primaryOrigin'=>$active['AdminOrigin'], 'frontend' => $active['FrontendInstanceID'], 'backend' => $this->InstanceID,
             'hardwareRoots' => $active['HardwareRootsDirectory'], 'hardwareAAGUIDs' => json_decode($active['HardwareAAGUIDs'], true, 8, JSON_THROW_ON_ERROR),
-            'hardwareTrustVersion' => $active['HardwareTrustVersion'], 'managementProfile' => $profile, 'candidateProfile' => fn() => $this->nativeProfile(), 'nativeOps' => new SecretsBackendNativeOperations($store, $this->nativePeer($store,$origin), function(array $approved):void{foreach(SecretsBackendSecurityConfiguration::HARDWARE as$key)IPS_SetProperty($this->InstanceID,$key,$approved['settings'][$key]);IPS_ApplyChanges($this->InstanceID);$this->Recover();})]);
+            'hardwareTrustVersion' => $active['HardwareTrustVersion'], 'managementProfile' => $profile, 'candidateProfile' => fn() => $this->nativeProfile(), 'nativeOps' => new SecretsBackendNativeOperations($store, $this->nativePeer($store,$origin), function(array $approved):void{foreach(SecretsBackendSecurityConfiguration::HARDWARE as$key)IPS_SetProperty($this->InstanceID,$key,$approved['settings'][$key]);IPS_ApplyChanges($this->InstanceID);$this->Recover();}, fn(bool $create)=>$this->syncEmergencyAccess($create), fn()=>json_decode($this->GetEmergencyStatus(),true))]);
     }
     private function nativeApply(): void
     {
         $this->SetTimerInterval('Recovery', 0);
         $this->SetTimerInterval('NativeJobs', 0);
+        $this->SetTimerInterval('Availability', $this->ReadPropertyBoolean('Enabled') && $this->nativeInitialized() ? 30000 : 0);
+        $this->SetBuffer('AvailabilityState', '');
         $this->syncNativePeerHook($this->ReadPropertyBoolean('Enabled') && $this->nativeInitialized());
         if (!$this->nativeInitialized()) { $this->nativeUnavailable(); return; }
         try {
             $store = $this->nativeStore(); $store->invalidate();
             if (!$this->ReadPropertyBoolean('Enabled')) { $this->SetStatus(104); $this->SetValue('Status', 'Native vault disabled; sessions and approvals invalidated.'); return; }
             $this->SetStatus(201); $this->SetValue('Status', 'Native encrypted vault: recovery check pending.');
-            if (IPS_GetKernelRunlevel() === 10103) $this->SetTimerInterval('Recovery', 100);
+            $this->SetTimerInterval('Recovery', IPS_GetKernelRunlevel() === 10103 ? 100 : 1000);
         } catch (Throwable $e) { $this->SetStatus(200); $this->SetValue('Status', 'Native vault locked: ' . $e->getMessage()); }
     }
     private function nativeRecover(): bool
     {
         $this->SetTimerInterval('Recovery', 0);
         if (!$this->nativeInitialized()) { $this->nativeUnavailable(); return false; }
-        if (!$this->ReadPropertyBoolean('Enabled')) return false;
+        if (!$this->ReadPropertyBoolean('Enabled')) { $this->SetValue('VaultError', true); return false; }
         try {
             if ($this->GetBuffer('Runtime') === '') $this->SetBuffer('Runtime', SecretsBackendCodec::b64(random_bytes(32)));
             $this->syncNativePeerHook(true);
@@ -87,16 +90,35 @@ trait SecretsBackendNativeBackend
                 if(!SecretsBackendSecurityConfiguration::sameFoundation($profile['settings'],$this->configuration()))throw new RuntimeException('Pinned native foundation changed.');
             });
             $this->SetTimerInterval('NativeJobs', 10000);
+            $this->SetValue('VaultError', IPS_HasChanges($this->InstanceID));
             $this->SetStatus(102); $this->SetValue('Status', 'Native encrypted vault ready. Standalone; optional peers can be paired in the HTML page.');
             $this->SetValue('StorageStatus', 'Private encrypted snapshot journal and separate keys. Independent full-state rollback detection is unavailable in standalone mode.');
             return true;
-        } catch (Throwable $e) { $this->SetStatus(200); $this->SetValue('Status', 'Native vault locked: ' . $e->getMessage()); return false; }
+        } catch (Throwable $e) { $this->SetValue('VaultError', true); $this->SetStatus(200); $this->SetValue('Status', 'Native vault locked: ' . $e->getMessage()); return false; }
     }
     /** Public metadata only; no key, credential, session or secret value. */
+    public function GetMeshHealth(): string
+    {
+        $this->nativeApplication();$store=$this->nativeStore();$state=$store->read()['state'];
+        $front=$this->ReadPropertyInteger('FrontendInstanceID');$frontend=['instance'=>$front,'available'=>IPS_InstanceExists($front)];
+        if($frontend['available'])foreach(['Enabled','BackendInstanceID','AdminOrigin']as$key)$frontend[$key]=IPS_GetProperty($front,$key);
+        $peers=[];foreach($state['pairing']['peers']as$p)$peers[]=['id'=>$p['id'],'name'=>$p['name'],'active'=>$p['active'],'state'=>$p['state'],'scope'=>$p['pair']['scope'],'endpoint'=>$p['descriptor']['endpoint'],'routes'=>$p['routes']['endpoints']??[$p['descriptor']['endpoint']],'httpsPolicy'=>array_intersect_key($p['httpsPolicy']??['mode'=>'strict'],array_flip(['mode','fingerprint']))];
+        $configuration=['backend'=>$this->InstanceID,'enabled'=>$this->ReadPropertyBoolean('Enabled'),'pendingSettings'=>IPS_HasChanges($this->InstanceID),'origin'=>$this->ReadPropertyString('AdminOrigin'),'frontend'=>$frontend,'backupOrigin'=>$state['policy']['backupOrigin']['origin']??null,'backupStatus'=>$state['policy']['backupOrigin']['status']??'none','peers'=>$peers,'emergencyApprovals'=>SecretsBackendEmergency::publicMetadata($state)];
+        return SecretsBackendCodec::json((new SecretsBackendMeshStatus($store,$this->nativePeer($store)))->view($state)+['configuration'=>$configuration,'requestDiagnostics'=>json_decode($this->GetRequestDiagnostics(),true,16,JSON_THROW_ON_ERROR),'transportDiagnostics'=>json_decode($this->GetTransportDiagnostics(),true,16,JSON_THROW_ON_ERROR)]);
+    }
+    public function ExportMeshConfiguration(): string
+    {
+        $report=json_decode($this->GetMeshHealth(),true,32,JSON_THROW_ON_ERROR);
+        $json=SecretsBackendCodec::json(['schema'=>'SECB.MeshConfigurationReport.v1','collectedUtc'=>gmdate('c'),'configuration'=>$report['configuration'],'health'=>array_diff_key($report,['configuration'=>true])]);
+        $this->UpdateFormField('ExportJSON','value',$json);return $json;
+    }
     public function GetNativeInfo(): string
     {
         $result = ['nativeMode' => $this->ReadAttributeBoolean('GuidedV2Only'), 'initialized' => $this->nativeInitialized(), 'ready' => false,
-            'platform' => SecretsBackendNativePlatform::capabilities(), 'backend' => $this->InstanceID];
+            'platform' => SecretsBackendNativePlatform::capabilities(), 'backend' => $this->InstanceID,
+            'availability' => json_decode($this->GetAvailability(), true),
+            'consistency' => SecretsBackendNativeHealth::guarantees(),
+            'emergency' => json_decode($this->GetEmergencyStatus(),true)];
         if ($result['initialized']) {
             try { $store = $this->nativeStore(); $meta = $store->metadata(); $result += $meta;$result['storage']=$store->storagePaths(); $result['ready'] = $this->ReadPropertyBoolean('Enabled');
                 $result['backupOrigin']=$store->read()['state']['policy']['backupOrigin']??null;
