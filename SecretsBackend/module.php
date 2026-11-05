@@ -5,12 +5,14 @@ require_once __DIR__ . '/SecurityConfiguration.php';
 require_once __DIR__ . '/StoragePaths.php';
 require_once __DIR__ . '/NativeBackend.php';
 require_once __DIR__ . '/NativeRuntime.php';
+require_once __DIR__ . '/Availability.php';
 require_once __DIR__ . '/LegacyRuntime.php';
 
 class SecretsBackend extends IPSModule
 {
     use SecretsBackendNativeBackend;
     use SecretsBackendNativeRuntime;
+    use SecretsBackendAvailability;
     use SecretsBackendLegacyRuntime;
     public const FRONTEND = '{8D6AE8F7-EA3A-4513-AA14-C3F9613B0E83}';
     private const STRINGS = ['DataDirectory', 'KeyDirectory', 'AdminOrigin', 'AnchorURL', 'AnchorPublicKey', 'AnchorKeyID', 'ClientCertificatePath', 'ClientKeyPath', 'AnchorCAFile', 'HardwareRootsDirectory', 'HardwareAAGUIDs', 'HardwareTrustVersion'];
@@ -35,6 +37,9 @@ class SecretsBackend extends IPSModule
         $this->RegisterVariableString('Status', 'Backend status', '', 10);
         $this->RegisterVariableString('StorageStatus', 'Vault / key storage', '', 20);
         $this->RegisterVariableString('Debug', 'Debug', '~TextBox', 50);
+        $this->RegisterVariableString('Availability', 'Vault availability', '~TextBox', 25);
+        $this->RegisterTimer('Availability', 0, 'SECB_CheckAvailability($_IPS[\'TARGET\']);');
+        $this->RegisterMessage(0, 10001); // IPS_KERNELSTARTED
         $this->RegisterTimer('Recovery', 0, 'SECB_Recover($_IPS[\'TARGET\']);');
         $this->RegisterTimer('NativeJobs', 0, 'SECB_RunNativeJobs($_IPS[\'TARGET\']);');
         $this->RegisterMessage(0, 10103);
@@ -68,7 +73,7 @@ class SecretsBackend extends IPSModule
     }
     public function MessageSink($TimeStamp, $SenderID, $Message, $Data): void
     {
-        if ((int)$SenderID === 0 && (int)$Message === 10103 && $this->ReadPropertyBoolean('Enabled') && (!$this->ReadAttributeBoolean('GuidedV2Only') || $this->nativeInitialized())) $this->SetTimerInterval('Recovery', 100);
+        if ((int)$SenderID === 0 && in_array((int)$Message, [10103, 10001], true) && $this->ReadPropertyBoolean('Enabled') && (!$this->ReadAttributeBoolean('GuidedV2Only') || $this->nativeInitialized())) $this->SetTimerInterval('Recovery', 100);
     }
     private function nativeUnavailable(): void
     {
@@ -175,6 +180,11 @@ class SecretsBackend extends IPSModule
     }
     public function Recover(): bool
     {
+        // During boot keep a retry armed even if the readiness notification is missed.
+        if (IPS_GetKernelRunlevel() !== 10103) {
+            $this->SetTimerInterval('Recovery', $this->ReadPropertyBoolean('Enabled') && $this->nativeInitialized() ? 1000 : 0);
+            return false;
+        }
         // Finish an already-authorized path/property handoff before taking the
         // lifecycle semaphore: IPS_ApplyChanges needs that same semaphore.
         if($this->ReadAttributeBoolean('GuidedV2Only')&&$this->nativeInitialized()&&$this->ReadPropertyBoolean('Enabled')){

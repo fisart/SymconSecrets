@@ -122,6 +122,28 @@ try {
     $back->ApplyChanges();$back->Recover();
     $rejected=$gateway->invoke($front,['action'=>'session','data'=>[]]+$request);secExpect($rejected['status']!==200,'Native restart retained a session.');
     secReject(static fn()=>$invoke('sessionReveal',['operation'=>$sessionRead]),'Restarted backend accepted an old session for a reveal.');
+    // Production incident: ApplyChanges during boot, no readiness notification delivered.
+    $GLOBALS['testRunlevel']=10102;
+    $back->ApplyChanges();
+    secExpect($back->timers['Recovery']===1000 && $back->timers['Availability']===30000,'Boot left recovery/watchdog disabled.');
+    secExpect(!$back->Recover() && $back->timers['Recovery']===1000,'Recovery ran before kernel readiness.');
+    $GLOBALS['testRunlevel']=10103; // Deliberately omit MessageSink.
+    $health=json_decode($back->CheckAvailability(),true);
+    secExpect($health['ready'] && $back->status===102 && $back->timers['NativeJobs']===10000,'Independent watchdog failed to activate the existing vault.');
+    if (!function_exists('SECB_GetAvailability')) { function SECB_GetAvailability(int $id):string { return $GLOBALS['instances'][$id]->GetAvailability(); } }
+    secExpect(json_decode($front->CheckBackendAvailability(),true)['ready'],'Frontend observer missed healthy backend.');
+    $savedHealth=$back->buffers['AvailabilityState'];$stale=json_decode($savedHealth,true);$stale['checkedAt']=time()-100;$back->buffers['AvailabilityState']=json_encode($stale);
+    $observed=json_decode($front->CheckBackendAvailability(),true);
+    secExpect(!$observed['ready'] && $observed['state']==='HEARTBEAT_STALE','Frontend observer accepted a stopped heartbeat.');
+    $back->buffers['AvailabilityState']=$savedHealth;
+    $beforeFiles=[];foreach(glob($root.'/data/*')?:[]as$file)if(is_file($file))$beforeFiles[basename($file)]=hash_file('sha256',$file);
+    $back->CheckAvailability();
+    $afterFiles=[];foreach(glob($root.'/data/*')?:[]as$file)if(is_file($file))$afterFiles[basename($file)]=hash_file('sha256',$file);
+    secExpect($beforeFiles===$afterFiles,'Healthy availability probe rewrote vault files.');
+    $front->properties['TrustedHTTPSProxyIPs']='["192.0.2.1"]';
+    secExpect(!json_decode($back->CheckAvailability(),true)['ready'],'Availability ignored protected configuration drift.');
+    $front->properties['TrustedHTTPSProxyIPs']='[]';
+    echo "PASS missed startup notification, boot retry, independent watchdog recovery, no healthy journal write, protected configuration refusal\n";
     echo "PASS native wizard, real WebAuthn, encrypted writes/reveal, scoped machine read/write/dedup/revocation, key rotation, authenticated backup/compaction/value recovery and restart fencing; no PDO/SQLite or external authority\n";
 } finally {
     $remove=static function($path)use(&$remove){if(is_dir($path)&&!is_link($path)){foreach(scandir($path)as$n)if($n!=='.'&&$n!=='..')$remove($path.'/'.$n);rmdir($path);}elseif(file_exists($path)||is_link($path))unlink($path);};if(is_dir($root))$remove($root);
