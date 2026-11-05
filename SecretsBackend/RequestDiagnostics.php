@@ -39,10 +39,10 @@ final class SecretsBackendRequestDiagnostics
     {
         return match($code){
             'LOGIN_REQUIRED'=>'Sign in with your administrator passkey, then repeat the action.',
-            'SESSION_EXPIRED'=>'Your administrator session expired. Sign in again, then repeat the action.',
-            'SESSION_INVALID'=>'Your administrator session is no longer valid. Sign in again, then repeat the action.',
+            'SESSION_EXPIRED'=>'Your administrator session expired. Sign in again, then check whether the action completed before repeating it.',
+            'SESSION_INVALID'=>'Your administrator session is no longer valid. Sign in again, then check whether the action completed before repeating it.',
             'CSRF_INVALID'=>'Session verification failed. Reload this page and sign in again before repeating the action.',
-            'APPROVAL_EXPIRED'=>'The one-use approval expired or was already used. Refresh and review the action again.',
+            'APPROVAL_EXPIRED'=>'The one-use approval expired or was already used. Refresh and check whether the action completed before reviewing it again.',
             'APPROVAL_INVALID'=>'This approval does not match the current session or administrator. Refresh and review the action again.',
             'REVISION_CHANGED'=>'The vault changed during the request. Refresh, check whether the action completed, and review it again if needed.',
             'EMERGENCY_OFFER_CHANGED'=>'The emergency offer changed or was already accepted. Refresh Connections and review the current offer.',
