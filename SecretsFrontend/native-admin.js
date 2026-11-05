@@ -12,8 +12,91 @@ function nativeOperationForSelection(kind,extra={}){const scope=$('scope').value
 function nativeSelectionChanged(){if($('globalScopeStatus'))$('globalScopeStatus').hidden=$('scope').value!=='global';const scope=$('scope').value,n=snapshot?.native;const readonly=scope.startsWith('received:')||(scope==='global'&&n&&!n.globalWritable)||(scope.startsWith('owned:')&&n?.ownedTrees.find(t=>t.id===scope.slice(6))?.frozen);$('save').disabled=!!readonly;$('delete').disabled=!!readonly||!selected?.path?.length;if(n){$('nativeMachineScope').value=scope;$('nativeMachinePath').value=$('path').value;}}
 function nativeSuggestProvider(){if(!$('nativeProviderURL').value&&!nativeProviderId){const entries=[];for(const scope of ['local','global'])for(const entry of snapshot[scope]||[])entries.push({scope,path:entry.path,type:entry.type});const find=names=>entries.filter(x=>x.type==='string'&&names.includes(String(x.path.at(-1)).replace(/[^a-z]/gi,'').toLowerCase()));const refresh=find(['refreshtoken']),secret=find(['clientsecret']);if(refresh.length===1){$('nativeProviderRefreshScope').value=refresh[0].scope;$('nativeProviderRefreshPath').value=JSON.stringify(refresh[0].path);$('nativeProviderResultScope').value=refresh[0].scope;$('nativeProviderResultPath').value=JSON.stringify(refresh[0].path.slice(0,-1));}if(secret.length===1){$('nativeProviderSecretScope').value=secret[0].scope;$('nativeProviderSecretPath').value=JSON.stringify(secret[0].path);}}}
 let overviewBusy=false,overviewStale=false;
+let meshAttention=0,meshPending=0,meshFallback=0,meshReceivedAt=0,meshSelected=null,meshFocusSelected=false,meshDescriptions=new Map();
+function renderMeshGraph(nodes,reports,item,fresh,cells,localId){
+ const host=$('meshGraph');host.replaceChildren();const selector=$('meshFocus'),previous=selector.value;selector.replaceChildren();
+ for(const [value,label]of [['all','All connections'],...nodes.map(n=>[n.id,n.name])]){const o=document.createElement('option');o.value=value;o.textContent=label;selector.append(o);}selector.value=!meshFocusSelected&&nodes.length>8?localId:[...selector.options].some(o=>o.value===previous)?previous:(nodes.length>8?localId:'all');
+ const focus=selector.value,ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');
+ const cols=Math.min(4,nodes.length),width=nodes.length<=8?900:Math.max(700,cols*230),height=nodes.length<=1?230:nodes.length<=8?760:Math.ceil(nodes.length/cols)*170+70;
+ svg.setAttribute('viewBox',`0 0 ${width} ${height}`);svg.setAttribute('role','group');svg.setAttribute('aria-label','Interactive secrets mesh health diagram');svg.style.minWidth=nodes.length===1?'280px':'700px';
+ const make=(tag,attrs={},text)=>{const e=document.createElementNS(ns,tag);for(const [k,v]of Object.entries(attrs))e.setAttribute(k,String(v));if(text!==undefined)e.textContent=text;return e;};
+ const colors={ok:'#18864b',error:'#d44035',unknown:'#d99500',none:'#8b929c'},positions=new Map();
+ nodes.forEach((n,i)=>{const angle=-Math.PI/2+2*Math.PI*i/nodes.length;positions.set(n.id,nodes.length===1?[width/2,110]:nodes.length<=8?[width/2+300*Math.cos(angle),height/2+275*Math.sin(angle)]:[120+(i%cols)*230,100+Math.floor(i/cols)*170]);});
+ const interactive=(element,label,selection)=>{element.setAttribute('tabindex','0');element.setAttribute('role','button');element.setAttribute('aria-label',label);element.append(make('title',{},label));meshDescriptions.set(selection,label);const select=()=>{meshSelected=selection;$('meshCellDetail').hidden=false;$('meshCellDetail').textContent=label;};element.addEventListener('click',select);element.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select();}});};
+ for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){
+  const a=nodes[i],b=nodes[j];if(focus!=='all'&&a.id!==focus&&b.id!==focus)continue;
+  const ab=cells.get(a.id+'|'+b.id),ba=cells.get(b.id+'|'+a.id);if(!ab?.paired&&!ba?.paired)continue;
+  const [x1,y1]=positions.get(a.id),[x2,y2]=positions.get(b.id),dx=x2-x1,dy=y2-y1,len=Math.hypot(dx,dy),ux=dx/len,uy=dy/len;
+  for(const [cell,reverse]of [[ab,false],[ba,true]]){if(!cell)continue;const g=make('g',{'class':'meshEdge'});interactive(g,cell.description,'cell|'+cell.key);
+   for(const [index,offset,dashed]of [[0,-5,false],[1,5,true]]){const state=cell.observations[index][1];if(state==='none')continue;const start=reverse?0.5:0,end=reverse?1:0.5;const line=make('line',{x1:x1+dx*start-uy*offset,y1:y1+dy*start+ux*offset,x2:x1+dx*end-uy*offset,y2:y1+dy*end+ux*offset,stroke:colors[state],'stroke-width':3,'stroke-dasharray':dashed?'7 5':'none'});g.append(line);}
+   // Directional authorization badge: the arrow names the consuming row's target.
+   const t=reverse?.64:.36,cx=x1+dx*t,cy=y1+dy*t,sign=reverse?-1:1,state=cell.observations[3][1];g.append(make('circle',{cx,cy,r:12,fill:colors[state],stroke:'white','stroke-width':2}),make('text',{x:cx,y:cy+4,'text-anchor':'middle',fill:'white','font-size':11,'font-weight':700},'A'));
+   const ax=cx+ux*sign*18,ay=cy+uy*sign*18;g.append(make('path',{d:`M ${ax-ux*sign*6-uy*4} ${ay-uy*sign*6+ux*4} L ${ax} ${ay} L ${ax-ux*sign*6+uy*4} ${ay-uy*sign*6-ux*4}`,fill:'none',stroke:colors[state],'stroke-width':2}));svg.append(g);
+  }
+ }
+ for(const n of nodes){const [x,y]=positions.get(n.id),r=reports.get(n.id),g=make('g',{'class':'meshNode'}),current=fresh(r);const summary=[];
+  g.append(make('rect',{x:x-100,y:y-67,width:200,height:134,rx:13,'class':'meshNodeBox',stroke:n.id===localId?'#1d6490':'#a8b4c2','stroke-width':n.id===localId?3:1.5}));
+  const name=n.name.length>26?n.name.slice(0,24)+'…':n.name;g.append(make('text',{x,y:y-43,'text-anchor':'middle','class':'meshNodeName'},name),make('text',{x,y:y-26,'text-anchor':'middle','class':'meshNodeMeta'},current&&r.report.fallback?'Remote fallback active':n.id===localId?'This installation':!n.direct?'Indirect · status unknown':current?'Authenticated peer report':r?'Report stale':'No report yet'));
+  const values=[['Frontend','frontend'],['Backend','backend'],['Vault','vault'],['Source','source'],['Backup','backupService'],['Sync','sync']];
+  const syncState=!current?'unknown':r.report.links.some(l=>l.sync==='mismatch')?'error':r.report.truncated||r.report.links.some(l=>l.sync!=='verified'||l.connection!=='reachable'||!Number.isFinite(l.age)||l.age+r.age+(meshReceivedAt?(Date.now()-meshReceivedAt)/1000:0)>=l.ttl)?'unknown':'ok';
+  values.forEach(([label,key],i)=>{const v=['source','backupService'].includes(key)?r?.report[key]:r?.report.components?.[key],h=key==='sync'?{state:syncState}:item(r,v),cx=x-82+(i%3)*65,cy=y-5+Math.floor(i/3)*24;g.append(make('circle',{cx,cy,r:5,fill:colors[h.state]}),make('text',{x:cx+9,y:cy+4,'class':'meshNodeLabel'},label));summary.push(label+': '+h.state+(key==='source'&&current&&r.report.fallback?' (remote fallback from '+(nodes.find(n=>n.id===r.report.activeSource)?.name||'approved peer')+')':''));});
+  const extra=current?`${r.report.conflicts} conflict(s) · ${r.report.storagePercent===null?'?':r.report.storagePercent}% storage`:'Waiting for a fresh report';g.append(make('text',{x,y:y+49,'text-anchor':'middle','class':'meshNodeMeta',style:'fill:'+(current&&(r.report.conflicts>0||r.report.storagePercent>=90)?colors.error:current&&r.report.storagePercent>=75?colors.unknown:'var(--muted,#566579)')},extra));
+  interactive(g,n.name+'. '+summary.join('. ')+'. '+extra+'. '+(r&&Number.isFinite(r.age)?'Report '+Math.floor(r.age+(meshReceivedAt?(Date.now()-meshReceivedAt)/1000:0))+'s old.':'No authenticated report.'),'node|'+n.id);svg.append(g);
+ }
+ host.append(svg);
+}
+
+function renderMeshMatrix(){
+ const host=$('meshMatrix');if(!host)return;host.replaceChildren();meshDescriptions=new Map();meshAttention=0;meshPending=0;meshFallback=0;const n=snapshot?.native,m=n?.mesh;
+ const info=$('meshMatrixInfo');if(!m){$('meshGraph').replaceChildren();$('meshCellDetail').hidden=true;$('meshCellDetail').textContent='';meshSelected=null;meshFocusSelected=false;info.textContent='Mesh reports are not available yet. Update each installation; unknown health is never treated as healthy.';return;}
+ const elapsed=meshReceivedAt?Math.max(0,(Date.now()-meshReceivedAt)/1000):0,invalid=overviewStale||!meshReceivedAt||Date.now()<meshReceivedAt;
+ const rows=new Map([[m.localId,{id:m.localId,name:'This installation',direct:true}]]),reports=new Map();
+ for(const x of m.reports||[]){reports.set(x.report.id,x);rows.set(x.report.id,{id:x.report.id,name:x.report.name,direct:true});}
+ for(const p of n.peers||[])if(p.state!=='REVOKED')rows.set(p.id,{id:p.id,name:reports.get(p.id)?.report.name||p.name,direct:true});
+ for(const x of m.reports||[])for(const l of x.report.links||[])if(!rows.has(l.id)&&rows.size<64)rows.set(l.id,{id:l.id,name:l.name,direct:false});
+ const nodes=[...rows.values()].sort((a,b)=>a.id===m.localId?-1:b.id===m.localId?1:a.name.localeCompare(b.name));
+ const fresh=x=>!!x&&!invalid&&Number.isFinite(x.age)&&x.age>=0&&x.age+elapsed<x.report.ttl;
+ const age=(x,v)=>x&&Number.isFinite(x.age)&&Number.isFinite(v?.age)?Math.floor(x.age+elapsed+v.age):null;
+ const item=(x,v,ttl=90)=>{const a=age(x,v);return {state:!fresh(x)?'unknown':v?.state==='none'?'none':a===null||a>=ttl?'unknown':v?.state||'unknown',age:a};};
+ const words={ok:'Healthy',error:'Error',unknown:'Unknown / stale',none:'Not configured'};
+ const dot=(state,label,detail='')=>{const span=document.createElement('span');span.className='meshIndicator';span.dataset.state=state;const ball=document.createElement('span');ball.className='meshDot';ball.setAttribute('aria-hidden','true');const text=document.createElement('span');text.textContent=label;span.append(ball,text);span.title=(detail||label+': '+words[state]);span.setAttribute('aria-label',span.title);return span;};
+ const checked=a=>a===null?'No current check':a+'s since check';
+ const table=(caption,heads)=>{const wrap=document.createElement('div');wrap.className='meshScroll';wrap.tabIndex=0;wrap.setAttribute('aria-label',caption+'; scroll horizontally for more nodes');const t=document.createElement('table');t.className='meshTable';const c=document.createElement('caption');c.textContent=caption;t.append(c);const head=document.createElement('thead'),tr=document.createElement('tr');for(const h of heads){const th=document.createElement('th');th.scope='col';th.textContent=h;th.title=h;tr.append(th);}head.append(tr);const body=document.createElement('tbody');t.append(head,body);wrap.append(t);host.append(wrap);return body;};
+ const rowName=(tr,node)=>{const th=document.createElement('th');th.scope='row';th.textContent=node.name+(node.id===m.localId?' (here)':'');th.title=node.name+' · '+node.id+(node.direct?'':' · reported node; no direct pairing');tr.append(th);};
+ const health=table('Node health',['Installation','Frontend','Backend','Vault','Secret source','Backup service','Conflicts','Storage','Report age']);let problems=0;
+ for(const node of nodes){const x=reports.get(node.id),tr=document.createElement('tr');rowName(tr,node);
+  for(const key of ['frontend','backend','vault','source','backupService']){const v=key==='source'?x?.report.source:key==='backupService'?x?.report.backupService:x?.report.components?.[key],h=item(x,v),td=document.createElement('td');if(h.state==='error')problems++;if(h.state==='unknown')meshPending++;const label=key==='source'&&fresh(x)&&x.report.fallback?'Remote fallback':words[h.state];td.append(dot(h.state,label,node.name+' · '+key+': '+label+'. '+checked(h.age)+(node.id!==m.localId?'. Reported by this node.':'')));tr.append(td);}
+  if(fresh(x)&&x.report.fallback)meshFallback++;
+  const current=fresh(x),conflicts=current?x.report.conflicts:null,storage=current?x.report.storagePercent:null;
+  for(const [state,label]of [[conflicts===null?'unknown':conflicts?'error':'ok',conflicts===null?'Unknown':String(conflicts)],[storage===null?'unknown':storage>=90?'error':storage>=75?'unknown':'ok',storage===null?'Unknown':storage+'%']]){const td=document.createElement('td');td.append(dot(state,label));tr.append(td);if(state==='error')problems++;}
+  const last=document.createElement('td');last.textContent=x&&Number.isFinite(x.age)?Math.floor(x.age+elapsed)+'s'+(current?'':' · stale'):'No report';tr.append(last);health.append(tr);
+ }
+ const cells=new Map();
+ const body=table('Connections and emergency read authorizations',['From ↓ / To →',...nodes.map(n=>n.name)]);
+ const detail=$('meshCellDetail');
+ for(const from of nodes){const tr=document.createElement('tr');rowName(tr,from);const x=reports.get(from.id);
+  for(const to of nodes){const td=document.createElement('td');if(from.id===to.id){td.textContent='—';td.className='meshSelf';tr.append(td);continue;}
+   const y=reports.get(to.id),l=x?.report.links?.find(l=>l.id===to.id),reverse=y?.report.links?.find(l=>l.id===from.id),live=fresh(x),other=fresh(y);
+   const primary=item(x,l?.primary,x?.report.ttl||180),backup=item(x,l?.backup,x?.report.ttl||180);
+   if(live&&!l&&!x.report.truncated){primary.state='none';backup.state='none';}
+   const a=age(x,l);const sync=live&&!l&&!x.report.truncated?'none':!live||!l||a===null||a>=l.ttl?'unknown':l.sync==='mismatch'||l.connection==='unreachable'?'error':l.sync==='verified'&&l.connection==='reachable'?'ok':'unknown';
+   let auth='unknown',authText='Authorization cannot be confirmed from fresh reports.';
+   if(live&&other&&(!x.report.truncated||l)&&(!y.report.truncated||reverse)){const enabled=l?.consumes&&l.clientGrant;const granted=enabled&&reverse?.grants&&reverse.grantIds?.includes(l.clientGrant);auth=enabled&&granted?'ok':enabled?'error':!reverse?.grants?'none':'unknown';authText=auth==='ok'?'Exact emergency read grant approved on both installations.':auth==='none'?'Emergency reads are not configured in this direction.':auth==='error'?'The consuming installation’s exact grant is no longer approved by the provider.':'Only the provider is configured. Accept its offer on the consuming installation.';}
+   const observations=[['P',primary.state,'Primary route: '+words[primary.state]+'. '+checked(primary.age)],['B',backup.state,'Backup route: '+words[backup.state]+'. '+checked(backup.age)],['S',sync,'Global synchronization: '+(live&&l?l.sync:'unknown')+'. '+checked(a)],['A',auth,authText]];
+   for(const o of observations){if(o[1]==='error')problems++;if(o[1]==='unknown')meshPending++;}
+   const button=document.createElement('button');button.type='button';button.className='meshCell';const description=from.name+' → '+to.name+'. '+observations.map(o=>o[2]).join(' ')+(from.id!==m.localId?' Observations reported by '+from.name+'.':' Observed on this installation.');cells.set(from.id+'|'+to.id,{key:from.id+'|'+to.id,observations,description,paired:!!l?.paired});button.title=description;button.setAttribute('aria-label',description);
+   for(const [label,state,text]of observations)button.append(dot(state,label,text));meshDescriptions.set('cell|'+from.id+'|'+to.id,description);button.addEventListener('click',()=>{meshSelected='cell|'+from.id+'|'+to.id;detail.hidden=false;detail.textContent=description;});td.append(button);tr.append(td);
+  }body.append(tr);
+ }
+ renderMeshGraph(nodes,reports,item,fresh,cells,m.localId);
+ if(meshSelected&&meshDescriptions.has(meshSelected)){detail.hidden=false;detail.textContent=meshDescriptions.get(meshSelected);}else{detail.hidden=true;detail.textContent='';}
+ meshAttention=problems;
+ info.textContent=(m.unavailable?'Mesh diagnostics are temporarily unavailable. ':'')+(invalid?'Refresh failed or page data is stale. ':'')+nodes.length+' known node(s). '+(problems?problems+' health warning(s). ':'')+'Rows show the observing installation; A means the row may read Global secrets from the column. Reports are authenticated observations, not proof of current availability. '+(nodes.some(n=>!n.direct)?'Indirect nodes remain unknown until directly paired. ':'')+([...reports.values()].some(x=>x.report.truncated)?'Some remote detail is omitted to protect journal capacity; missing details remain unknown. ':'')+(rows.size>=64?'Display limited to 64 known nodes. ':'');
+}
+
 function renderNativeOverview(){
  if(snapshot?.native&&$('nativeEmergencyPanel'))renderEmergencyAccess();
+ renderMeshMatrix();
  const n=snapshot?.native,show=!!n;$('nativeOverview').hidden=!show;$('overviewRefresh').hidden=!show;
  if(!show){$('readiness').classList.remove('success');for(const id of ['globalCount','localCount','overviewConnections','overviewConnectionDetail','overviewMagic','overviewMagicDetail','overviewMagicURL','overviewConflicts','overviewConflictDetail','overviewStorage','overviewStorageDetail','overviewAccess','overviewEffects','overviewChecked'])$(id).textContent='';$('overviewPeerList').replaceChildren();return;}
  const o=n.overview||{},peers=(n.peers||[]).filter(p=>p.state!=='REVOKED'),active=peers.filter(p=>p.active&&p.state==='ACTIVE'),pending=peers.filter(p=>!p.active||p.state!=='ACTIVE');
@@ -32,8 +115,8 @@ function renderNativeOverview(){
  $('overviewAccess').textContent=(o.credentials??snapshot.credentials.filter(c=>c.active).length)+' tested passkey(s) · '+(o.hardwareCredentials??snapshot.credentials.filter(c=>c.active&&c.hardware).length)+' hardware · '+(o.machines??n.machines?.filter(m=>m.active).length??0)+' automation grant(s) · '+(o.providers??n.providers?.filter(p=>p.active).length??0)+' OAuth provider(s).';
  $('overviewEffects').textContent=o.providerIssues?o.providerIssues+' OAuth provider(s) need review in OAuth providers.':o.pendingEffects?o.pendingEffects+' OAuth operation(s) in progress.':'';
  const healthProblems=active.filter(p=>p.health&&(p.health.problem||['unreachable','retrying'].includes(p.health.connection)||p.health.synchronization==='mismatch'));
- const issues=[...(healthProblems.length?[healthProblems.length+' platform(s) need synchronization attention — see Connection status below']:[]),...(blocked.length?['delivery blocked']:[]),...(expired.length?['expired connection approval']:[]),...(conflicts?['secret conflicts']:[]),...(relayProblem?['Magic connection unavailable']:[]),...(magicMissing?['Magic passkey unavailable']:[]),...(percent>=75?['storage nearing capacity']:[]),...(n.globalWritable===false?['Global changes paused']:[]),...(o.providerIssues?['OAuth providers need review']:[]),...(active.length&&n.remoteHttpsAvailable===false?['connection transport unavailable']:[])];
- const inProgress=o.pendingEffects||pending.length||active.length>ready.length||p?.status==='pending'||routePending;
+ const issues=[...(meshAttention?[meshAttention+' mesh health issue(s)']:[]),...(meshFallback?[meshFallback+' installation(s) using emergency fallback']:[]),...(healthProblems.length?[healthProblems.length+' platform(s) need synchronization attention — see Connection status below']:[]),...(blocked.length?['delivery blocked']:[]),...(expired.length?['expired connection approval']:[]),...(conflicts?['secret conflicts']:[]),...(relayProblem?['Magic connection unavailable']:[]),...(magicMissing?['Magic passkey unavailable']:[]),...(percent>=75?['storage nearing capacity']:[]),...(n.globalWritable===false?['Global changes paused']:[]),...(o.providerIssues?['OAuth providers need review']:[]),...(active.length&&n.remoteHttpsAvailable===false?['connection transport unavailable']:[])];
+ const inProgress=meshPending||o.pendingEffects||pending.length||active.length>ready.length||p?.status==='pending'||routePending;
  $('readiness').textContent=overviewStale?'Status could not be refreshed. These figures may be out of date. Sign in again or select Refresh status.':issues.length?'Needs attention · '+issues.join(' · ')+'.':inProgress?'Setup or synchronization in progress.':'Vault ready.';
  $('readiness').classList.toggle('success',!overviewStale&&!issues.length&&!inProgress);
  $('overviewChecked').textContent=(n.serverTime?'Last checked '+new Date(n.serverTime*1000).toLocaleString()+'. ':'')+'Updates every 10 seconds while this tab is open. Synchronization is checked in the background every '+(active.find(p=>p.health)?.health.intervalSeconds||60)+' seconds, even with this page closed.';
@@ -42,10 +125,11 @@ function renderNativeOverview(){
 }
 async function refreshNativeOverview(ticket=generation){
  if(overviewBusy||!snapshot?.native||document.hidden||!pageActive||$('review').open||ceremonyActive)return;overviewBusy=true;
- try{const r=await api('nativeOverviewStatus',{},ticket);if(!r.overview||!Array.isArray(r.peers))throw Error('Update this module and refresh.');Object.assign(snapshot.native,r);overviewStale=false;renderNativeOverview();if(!$('nativePeers').hidden){renderPeerConnections();renderPeerWizard();}}
+ try{const r=await api('nativeOverviewStatus',{},ticket);if(!r.overview||!Array.isArray(r.peers))throw Error('Update this module and refresh.');Object.assign(snapshot.native,r);meshReceivedAt=Date.now();overviewStale=false;renderNativeOverview();if(!$('nativePeers').hidden){renderPeerConnections();renderPeerWizard();}}
  catch(error){if(ticket===generation&&snapshot?.native&&error.name!=='AbortError'){overviewStale=true;renderNativeOverview();if(!$('nativePeers').hidden){renderPeerConnections();$('nativeDeliveryInfo').textContent='Status could not be refreshed. Last shown checks may be out of date. Sign in again or refresh.';}}}
  finally{overviewBusy=false;}
 }
+$('meshFocus').addEventListener('change',()=>{meshFocusSelected=true;renderMeshMatrix();});
 run($('overviewRefresh'),ticket=>refreshNativeOverview(ticket));
 let compatViewKey='';
 function legacyAccessTargets(){
@@ -75,7 +159,7 @@ function renderEmergencyAccess(){
  const clients=$('nativeEmergencyClients');clients.replaceChildren();for(const c of e.clients||[])nativeRow(clients,c.name,'Approved Global read source.',[['Remove source',()=>review({kind:'nativeEmergencyRemove',peerId:c.peerId},'Stop using this vault for emergency reads.')]]);if(!clients.children.length)clients.textContent='No emergency sources configured.';
  const grants=$('nativeEmergencyGrants');grants.replaceChildren();for(const g of e.grants||[])nativeRow(grants,g.name+(g.active?' · enabled':' · revoked'),'Read-only Global access from this vault.',g.active?[['Revoke emergency access',()=>review({kind:'nativeEmergencyRevoke',id:g.id},'Revoke this exact emergency credential immediately on this vault.')]]:[]);if(!grants.children.length)grants.textContent='No emergency access granted.';
 }
-function renderNative(){overviewStale=false;renderNativeOverview();scheduleGlobalRefresh();const n=snapshot?.native;for(const id of ['nativePeersNav','nativeRecoveryNav','nativeMachinesNav','nativeKeysNav','nativeProvidersNav'])$(id).hidden=!n;if(!n)return;renderEmergencyAccess();
+function renderNative(){meshReceivedAt=Date.now();overviewStale=false;renderNativeOverview();scheduleGlobalRefresh();const n=snapshot?.native;for(const id of ['nativePeersNav','nativeRecoveryNav','nativeMachinesNav','nativeKeysNav','nativeProvidersNav'])$(id).hidden=!n;if(!n)return;renderEmergencyAccess();
  renderConnect();renderLegacyImports();
  $('nativePeerURL').value=n.peerEndpoint;$('nativeStorageInfo').textContent='Vault '+n.info.vaultId+' · '+Math.ceil(n.info.usedBytes/1024)+' / '+Math.floor(n.info.capacityBytes/1024)+' KiB · '+(n.info.directorySync?'file and directory synchronization':'file synchronization; platform qualification required')+' · standalone full-state rollback detection unavailable.'+(n.storage?' Vault folder: '+n.storage.vaultDirectory+'. Key folder: '+n.storage.keyDirectory+'.':'');
  const scopes=[['global','Global'],['local','Local']];nativeSelect('scope',scopes);nativeSelect('nativeMachineScope',scopes);nativeSelectionChanged();renderTree();renderGlobalConflicts();
@@ -229,6 +313,7 @@ function renderGlobalConflicts(){
 
 let globalRefreshTimer=null;
 function scheduleGlobalRefresh(){clearTimeout(globalRefreshTimer);if(!snapshot?.native||!pageActive||!window.document)return;globalRefreshTimer=setTimeout(async()=>{
+ renderMeshMatrix();
  try{if(!document.hidden&&(!$('overview').hidden||!$('nativePeers').hidden)){await refreshNativeOverview(generation);return;}if(document.hidden||!fullAdministration()||($('secrets').hidden&&$('conflicts').hidden)||$('review').open||!$('browserForm').hidden||!$('revealed').hidden||$('nativeSensitiveDialog').open)return;
  const ticket=generation,r=await api('nativeGlobalStatus',{},ticket);if(r.revision===snapshot.revision)return;
  snapshot.revision=r.revision;revision=r.revision;snapshot.global=r.global;snapshot.local=r.local;snapshot.native.sharedGlobal=r.sharedGlobal;clearSecrets();renderTree();renderGlobalConflicts();

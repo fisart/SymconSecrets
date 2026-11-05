@@ -11,13 +11,31 @@ trait SecretsBackendNativeRuntime
         return new SecretsBackendNativePeer($store??$this->nativeStore(),($origin??$this->ReadPropertyString('AdminOrigin')).'/hook/secrets_peer_'.$this->InstanceID,
             function(array $target,string $bytes,array $policy=['mode'=>'strict']):string{
                 $id=(int)$target['backend'];
-                if(function_exists('SECB_GetNativePublicDescriptor')&&function_exists('SECB_ReceiveNativePeer')&&IPS_InstanceExists($id)
+                if((json_decode($bytes,true,16)['kind']??'')!=='MESH_STATUS'&&function_exists('SECB_GetNativePublicDescriptor')&&function_exists('SECB_ReceiveNativePeer')&&IPS_InstanceExists($id)
                     &&strtoupper(IPS_GetInstance($id)['ModuleInfo']['ModuleID']??'')==='{52165EDD-B2C0-40EC-8A59-42A97319B6E2}'){
                     try{$local=json_decode(SECB_GetNativePublicDescriptor($id),true);}catch(Throwable $ignored){$local=null;}
                     if(is_array($local)&&SecretsBackendNativePeer::authority($local)===SecretsBackendNativePeer::authority($target))return SECB_ReceiveNativePeer($id,$bytes);
                 }
                 return self::nativeHTTPS($target['endpoint'],$bytes,$policy);
-            });
+            },true,fn(array $state)=>$this->meshRuntimeStatus($state));
+    }
+    private function meshRuntimeStatus(array $state):array
+    {
+        $unknown=['state'=>'unknown','age'=>null];$now=time();
+        $indicator=static function(array $h)use($now):array{$at=(int)($h['checkedAt']??0);$age=$at>0&&$now>=$at?$now-$at:null;return ['state'=>$age===null||$age>90||($h['stale']??false)?'unknown':(($h['ready']??false)?'ok':'error'),'age'=>$age===null?null:min(86400,$age)];};
+        $vault=$indicator(json_decode($this->GetAvailability(),true));$frontend=$unknown;
+        $id=$this->ReadPropertyInteger('FrontendInstanceID');
+        try{
+            if(!IPS_InstanceExists($id))$frontend=['state'=>'error','age'=>0];
+            elseif(function_exists('SECF_GetFrontendHealth')){$h=json_decode(SECF_GetFrontendHealth($id),true);if(($h['backend']??null)!==$this->InstanceID)$h['ready']=false;$frontend=$indicator($h);}
+        }catch(Throwable $ignored){}
+        $backend=['state'=>$this->ReadPropertyBoolean('Enabled')&&IPS_GetKernelRunlevel()===10103&&!IPS_HasChanges($this->InstanceID)&&(int)IPS_GetInstance($this->InstanceID)['InstanceStatus']===102?'ok':'error','age'=>0];
+        $p=$state['policy']['backupOrigin']??null;$backup=['state'=>'none','age'=>0];
+        if($p!==null&&($p['status']??'')!=='revoked'){
+            $backup=$unknown;
+            if(($p['status']??'')==='active'){try{$c=SecretsFrontendConnectDiscovery::local();$backup=['state'=>($c['available']??false)&&($c['origin']??null)===$p['origin']?'ok':'error','age'=>0];}catch(Throwable $ignored){}}
+        }
+        $emergency=json_decode($this->GetEmergencyStatus(),true);return ['components'=>['frontend'=>$frontend,'backend'=>$backend,'vault'=>$vault],'backupService'=>$backup,'source'=>$indicator($emergency),'activeSource'=>($emergency['mode']??'')==='REMOTE'?($emergency['sourceVault']??null):null,'fallback'=>($emergency['mode']??'')==='REMOTE'&&($emergency['ready']??false)&&!($emergency['stale']??true)];
     }
     public static function nativeHTTPS(string $endpoint,string $bytes,array $policy=['mode'=>'strict']): string
     {
@@ -42,7 +60,7 @@ trait SecretsBackendNativeRuntime
     public function RunNativeJobs(): string
     {
         $lock='SECB.NativeJobs.'.$this->InstanceID;if(!IPS_SemaphoreEnter($lock,1))return '[]';
-        try{if(!$this->ReadPropertyBoolean('Enabled')||!$this->nativeInitialized())return '[]';$this->nativeApplication();$store=$this->nativeStore();$peer=$this->nativePeer($store);$result=$peer->dispatch(1);$result[]=(new SecretsBackendNativeHealth($store,$peer))->tick();$effects=new SecretsBackendNativeEffects($store,static fn($effect)=>self::nativeProviderHTTPS($effect));$result[]=$effects->tick();return SecretsBackendCodec::json($result);}
+        try{if(!$this->ReadPropertyBoolean('Enabled')||!$this->nativeInitialized())return '[]';$this->nativeApplication();$store=$this->nativeStore();$peer=$this->nativePeer($store);$result=$peer->dispatch(1);$result[]=(new SecretsBackendNativeHealth($store,$peer))->tick();try{$result[]=(new SecretsBackendMeshStatus($store,$peer))->tick();}catch(Throwable $ignored){$result[]=['status'=>'MESH_UNAVAILABLE'];}$effects=new SecretsBackendNativeEffects($store,static fn($effect)=>self::nativeProviderHTTPS($effect));$result[]=$effects->tick();return SecretsBackendCodec::json($result);}
         catch(Throwable $e){$this->debug('request-rejected');return '[{"status":"RECOVERY_REQUIRED"}]';}
         finally{IPS_SemaphoreLeave($lock);}
     }

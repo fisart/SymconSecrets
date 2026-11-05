@@ -118,3 +118,7 @@ The native mesh currently acknowledges local durable writes and synchronizes asy
 ## Emergency Global access
 
 [Availability-first fallback](EMERGENCY_GLOBAL_ACCESS.md) supports existing Global SEC application reads through independently approved peers when the local vault cannot open. It requires two explicit approvals, uses separate encrypted credentials, works with one approved peer, and exposes alarm variables. There is no quorum or automatic Local/admin/capability fallback. Remote freshness is uncertain; known older/conflicting data is refused.
+
+## Graphical mesh health
+
+Overview now includes a graphical network with component lights, primary/backup route lines, directional emergency authorization arrows and an expandable comparison matrix. See [Mesh health display](MESH_HEALTH_DISPLAY.md) for interpretation, refresh intervals and limits.

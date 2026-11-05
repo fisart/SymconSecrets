@@ -4,6 +4,7 @@ require_once __DIR__ . '/NativeStore.php';
 require_once __DIR__ . '/Tree.php';
 require_once __DIR__ . '/SharedGlobal.php';
 require_once __DIR__ . '/NativeHealth.php';
+require_once __DIR__ . '/MeshStatus.php';
 require_once __DIR__ . '/BackupOriginPolicy.php';
 require_once __DIR__ . '/NativeTransfer.php';
 require_once __DIR__ . '/NativeLegacyHTTPS.php';
@@ -38,7 +39,11 @@ final class SecretsBackendNativePeer
 {
     use SecretsBackendNativeTransfer;
     private $transport;
-    public function __construct(private SecretsBackendNativeStore $store, private string $endpoint, ?callable $transport = null, private bool $automaticGlobal=true) { self::endpoint($endpoint); $this->transport = $transport; }
+    public function __construct(private SecretsBackendNativeStore $store, private string $endpoint, ?callable $transport = null, private bool $automaticGlobal=true,private $meshComponents=null) { self::endpoint($endpoint); $this->transport = $transport; }
+    public function meshReport(array $state):array {
+        try{$runtime=$this->meshComponents!==null?($this->meshComponents)($state):[];}catch(Throwable $ignored){$runtime=[];}
+        return (new SecretsBackendMeshStatus($this->store,$this))->report($state,$runtime);
+    }
     public static function exact(array $value, array $keys): void { if (array_diff(array_keys($value),$keys) || array_diff($keys,array_keys($value))) throw new RuntimeException('Unexpected native protocol fields.'); }
     public static function uuid(string $value): void { if (!preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/D',$value)) throw new RuntimeException('Invalid native UUID.'); }
     public static function decimal(string $value): void { if (!preg_match('/^(?:0|[1-9][0-9]{0,17})$/D',$value)) throw new RuntimeException('Invalid native sequence.'); }
@@ -142,7 +147,7 @@ final class SecretsBackendNativePeer
         self::exact($m,['format','kind','sender','receiver','pairingId','epoch','id','sequence','payload','signature']);
         foreach(['sender','receiver','pairingId','id']as$key){if(!is_string($m[$key]))throw new RuntimeException('Invalid peer identity.');self::uuid($m[$key]);}
         self::decimal($m['epoch']);self::decimal($m['sequence']);
-        if($m['format']!=='SECB.Peer.1'||$m['receiver']!==$this->descriptor()['vaultId']||!in_array($m['kind'],['EMERGENCY_OFFER','HEALTH','ROUTES','GLOBAL_ENABLE','PAIR_REQUEST','PAIR_ACCEPT','SYNC','STATUS','RESYNC','REVOKE','OWNER_OFFER','TREE_SYNC'],true))throw new RuntimeException('Wrong native peer purpose or recipient.');
+        if($m['format']!=='SECB.Peer.1'||$m['receiver']!==$this->descriptor()['vaultId']||!in_array($m['kind'],['MESH_STATUS','EMERGENCY_OFFER','HEALTH','ROUTES','GLOBAL_ENABLE','PAIR_REQUEST','PAIR_ACCEPT','SYNC','STATUS','RESYNC','REVOKE','OWNER_OFFER','TREE_SYNC'],true))throw new RuntimeException('Wrong native peer purpose or recipient.');
         if($m['kind']==='TREE_SYNC')return $this->receiveOwnedTree($m);
         $current=$this->store->read();$peer=$current['state']['pairing']['peers'][$m['sender']]??null;
         if($m['kind']!=='PAIR_REQUEST'){
@@ -207,6 +212,10 @@ final class SecretsBackendNativePeer
         }
         if($m['kind']==='OWNER_OFFER'&&isset($current['state']['native']['sharedGlobal']))throw new RuntimeException('Shared Global does not accept single-owner offers.');
         if($m['kind']==='OWNER_OFFER')return $this->receiveOwnerOffer($m,$payload,$peer,$current,$digest);
+        if($m['kind']==='MESH_STATUS'){
+            self::exact($payload,['format']);if($payload['format']!==SecretsBackendMeshStatus::FORMAT||!self::shared($peer)||$peer['state']!=='ACTIVE')throw new RuntimeException('Wrong mesh status scope.');
+            return $this->reply($m,$peer['descriptor'],$digest,['status'=>'MESH_STATUS','report'=>$this->meshReport($current['state'])]);
+        }
         if($m['kind']==='HEALTH'){
             self::exact($payload,['format']);if($payload['format']!==SecretsBackendNativeHealth::FORMAT||!self::shared($peer))throw new RuntimeException('Wrong health protocol or sharing scope.');
             return $this->reply($m,$peer['descriptor'],$digest,['status'=>'GLOBAL_HEALTH','format'=>SecretsBackendNativeHealth::FORMAT]+SecretsBackendNativeHealth::stamp($current['state']));
