@@ -20,7 +20,10 @@ try {
     secExpect(($login['data']['status']??'')==='COMMITTED'&&($login['data']['authenticated']??false),'Code-free native initialization failed: '.json_encode($login).' '.($front->values['Status']??''));
     secExpect(!file_exists($root.'/data/vault.sqlite')&&is_file($root.'/data/native.json'),'Native setup entered SQLite.');
     $request['cookie']=explode(';',$login['cookie'])[0];$request['csrf']=$login['data']['csrf'];
-    $listed=$invoke('session')['data'];secExpect($listed['revision']==='0','Fresh native session failed.');
+    $listed=$invoke('session')['data'];
+    secExpect(($listed['native']['consistency']['strictEmergencyReadSupported']??null)===false, 'Session metadata advertised strict remote freshness.');
+    secExpect((json_decode($back->GetNativeInfo(),true)['consistency']['quorumCommit']??null)===false, 'Native info advertised quorum writes.');
+    secExpect($listed['revision']==='0','Fresh native session failed.');
     $discovery=$invoke('connectDiscovery')['data'];secExpect(($discovery['available']??null)===false,'Missing Connect instance produced an address.');
     $savedCookie=$request['cookie'];$request['cookie']='';secReject(static fn()=>$invoke('connectDiscovery'),'Unauthenticated Connect discovery was allowed.');$request['cookie']=$savedCookie;
     $savedCsrf=$request['csrf'];$request['csrf']='wrong';secReject(static fn()=>$invoke('connectDiscovery'),'Connect discovery accepted invalid CSRF.');$request['csrf']=$savedCsrf;

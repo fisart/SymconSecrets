@@ -100,7 +100,8 @@ trait SecretsBackendNativeBackend
     {
         $result = ['nativeMode' => $this->ReadAttributeBoolean('GuidedV2Only'), 'initialized' => $this->nativeInitialized(), 'ready' => false,
             'platform' => SecretsBackendNativePlatform::capabilities(), 'backend' => $this->InstanceID,
-            'availability' => json_decode($this->GetAvailability(), true)];
+            'availability' => json_decode($this->GetAvailability(), true),
+            'consistency' => SecretsBackendNativeHealth::guarantees()];
         if ($result['initialized']) {
             try { $store = $this->nativeStore(); $meta = $store->metadata(); $result += $meta;$result['storage']=$store->storagePaths(); $result['ready'] = $this->ReadPropertyBoolean('Enabled');
                 $result['backupOrigin']=$store->read()['state']['policy']['backupOrigin']??null;

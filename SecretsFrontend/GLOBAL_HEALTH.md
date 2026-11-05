@@ -14,7 +14,7 @@ secret value or version clock is exposed to the browser.
 
 | Synchronization | Meaning |
 |---|---|
-| Verified in sync | A fresh authenticated response matched the complete current shared state. |
+| Verified in sync | A recent authenticated response matched this vault’s shared state at the comparison. Remote changes after that response are not ruled out. |
 | Synchronizing | The known states differ and normal causal synchronization is running. |
 | Not synchronized | Differences persisted through repeated checks, or inconsistent history was detected. |
 | Status unknown | No fresh comparison is available. A failed connection does not prove different data. |
@@ -97,3 +97,16 @@ reply/request replay, sanitized failures, revocation races, replacement pairs an
 restart fencing. Magic routing tests check fresh health without primary hostname
 attempts. DOM tests verify Overview alerts, timestamps and pending counts, separate
 conflicts, live Connections refresh and stale-page handling.
+
+## Emergency-read limit
+
+This protocol provides asynchronous causal replication, not quorum commit or
+linearizable reads. Even a live majority can agree on an older value if the
+latest writer acknowledged its local change before losing connectivity. A cached
+matching HEALTH response, a completed outbox, or a wall-clock timestamp is not
+an emergency-read authorization. `consistency` metadata in native info/session
+and pairing progress makes these limits explicit; its fields are diagnostics,
+not a signed certificate. No remote secret read endpoint or fallback is enabled.
+
+See [strict mesh consistency verification](STRICT_MESH_CONSISTENCY.md) for the
+four-vault counterexamples, implementation prerequisites and acceptance tests.
