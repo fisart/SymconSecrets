@@ -30,6 +30,10 @@ class SecretsFrontend extends IPSModule
         $this->RegisterVariableString('IntegrationStatus', 'Portal / documentation / backup', '~TextBox', 30);
         $this->RegisterVariableString('Debug', 'Debug', '~TextBox', 50);
         $this->RegisterVariableString('BackendAvailability', 'Backend availability', '~TextBox', 35);
+        $this->RegisterVariableBoolean('BackendError', 'Backend error', '~Alert', 36);
+        $this->RegisterVariableBoolean('FrontendError', 'Frontend error', '~Alert', 37);
+        $this->SetValue('BackendError', true);
+        $this->SetValue('FrontendError', true);
         $this->RegisterTimer('BackendAvailability', 0, 'SECF_CheckBackendAvailability($_IPS[\'TARGET\']);');
         $this->RegisterTimer('BootstrapRecovery', 0, 'SECF_RecoverBootstrap($_IPS[\'TARGET\']);');
         $this->RegisterTimer('Setup', 0, 'SECF_Refresh($_IPS[\'TARGET\']);'); $this->RegisterMessage(0, 10103);
@@ -37,6 +41,8 @@ class SecretsFrontend extends IPSModule
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
+        $this->SetValue('BackendError', true);
+        $this->SetValue('FrontendError', true);
         $this->SetTimerInterval('BackendAvailability', $this->ReadPropertyBoolean('Enabled') ? 30000 : 0);
         $this->forgetGuidedSetup();
         $this->SetTimerInterval('BootstrapRecovery', 1000);
@@ -61,6 +67,7 @@ class SecretsFrontend extends IPSModule
                     $out=json_decode(SECB_GetAvailability($id),true,16,JSON_THROW_ON_ERROR);
                     if (!is_array($out) || !isset($out['state'],$out['ready'])) throw new RuntimeException('Invalid health response.');
                     if ($out['stale']??true) { $out['state']='HEARTBEAT_STALE'; $out['ready']=false; }
+                    elseif ((int)IPS_GetInstance($id)['InstanceStatus'] !== 102) { $out['state']='BACKEND_NOT_READY'; $out['ready']=false; }
                     elseif (!$out['ready'] && $out['state']==='READY') $out['state']='NOT_READY';
                 }
             }
@@ -71,7 +78,17 @@ class SecretsFrontend extends IPSModule
             IPS_LogMessage('SecretsFrontend '.$this->InstanceID,'Backend availability: '.$out['state']);
         $this->SetBuffer('BackendAvailabilityState',$out['state']);
         $this->SetValue('BackendAvailability',$json);
+        $this->SetValue('BackendError', !($out['ready'] ?? false));
+        $this->updateFrontendError();
         return $json;
+    }
+    /** Local module readiness; external HTTPS reachability requires a remote observer. */
+    private function updateFrontendError(): void
+    {
+        $this->SetValue('FrontendError', !$this->ReadPropertyBoolean('Enabled')
+            || IPS_GetKernelRunlevel() !== 10103
+            || IPS_HasChanges($this->InstanceID)
+            || (int)IPS_GetInstance($this->InstanceID)['InstanceStatus'] !== 102);
     }
     private function settings(): array
     {
@@ -152,11 +169,11 @@ class SecretsFrontend extends IPSModule
             if ($settings['AdminOrigin'] !== '') $this->updateWizardLinks();
             $this->SetValue('Status', !$settings['Enabled'] ? 'Disabled.' : ($this->ReadAttributeBoolean('GuidedV2Only') ? 'Native HTML setup and administration available; the backend checks every operation.' : 'Development frontend available. Backend authorizes every administrative operation.'));
             $this->SetValue('IntegrationStatus', 'Portal: use Add to Portal below. Documentation: bundled manual and catalog entry. Central backup: registration review required; exports contain configuration only.');
-            $this->SetStatus($settings['Enabled'] ? 102 : 104); $this->debug('configuration-checked'); return true;
+            $this->SetStatus($settings['Enabled'] ? 102 : 104); $this->updateFrontendError(); $this->debug('configuration-checked'); return true;
         } catch (Throwable $exception) {
             // An invalid configuration must remove only this instance's old hook.
             try { $this->syncHook(false); } catch (Throwable $ignored) { }
-            $this->SetStatus(200); $this->SetValue('Status', $exception->getMessage()); $this->debug('configuration-refused'); return false;
+            $this->SetStatus(200); $this->SetValue('FrontendError', true); $this->SetValue('Status', $exception->getMessage()); $this->debug('configuration-refused'); return false;
         }
     }
     private function syncHook(bool $enabled): void

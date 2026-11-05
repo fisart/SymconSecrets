@@ -79,7 +79,7 @@ trait SecretsBackendNativeBackend
     {
         $this->SetTimerInterval('Recovery', 0);
         if (!$this->nativeInitialized()) { $this->nativeUnavailable(); return false; }
-        if (!$this->ReadPropertyBoolean('Enabled')) return false;
+        if (!$this->ReadPropertyBoolean('Enabled')) { $this->SetValue('VaultError', true); return false; }
         try {
             if ($this->GetBuffer('Runtime') === '') $this->SetBuffer('Runtime', SecretsBackendCodec::b64(random_bytes(32)));
             $this->syncNativePeerHook(true);
@@ -89,10 +89,11 @@ trait SecretsBackendNativeBackend
                 if(!SecretsBackendSecurityConfiguration::sameFoundation($profile['settings'],$this->configuration()))throw new RuntimeException('Pinned native foundation changed.');
             });
             $this->SetTimerInterval('NativeJobs', 10000);
+            $this->SetValue('VaultError', IPS_HasChanges($this->InstanceID));
             $this->SetStatus(102); $this->SetValue('Status', 'Native encrypted vault ready. Standalone; optional peers can be paired in the HTML page.');
             $this->SetValue('StorageStatus', 'Private encrypted snapshot journal and separate keys. Independent full-state rollback detection is unavailable in standalone mode.');
             return true;
-        } catch (Throwable $e) { $this->SetStatus(200); $this->SetValue('Status', 'Native vault locked: ' . $e->getMessage()); return false; }
+        } catch (Throwable $e) { $this->SetValue('VaultError', true); $this->SetStatus(200); $this->SetValue('Status', 'Native vault locked: ' . $e->getMessage()); return false; }
     }
     /** Public metadata only; no key, credential, session or secret value. */
     public function GetNativeInfo(): string
