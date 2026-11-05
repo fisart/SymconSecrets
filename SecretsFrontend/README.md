@@ -110,3 +110,7 @@ component tests. They are never a native-mode fallback or runtime requirement.
 New connections merge Global across platforms. Local stays private. Concurrent
 versions are preserved for explicit conflict resolution. Existing active connections join automatically in the background.
 See [the automatic operation, security contract and tests](SHARED_GLOBAL.md).
+
+## Mesh consistency and emergency reads
+
+The native mesh currently acknowledges local durable writes and synchronizes asynchronously. A matching peer-health check is not a guarantee of the latest committed value. See [strict mesh verification and required protocol upgrade](STRICT_MESH_CONSISTENCY.md) for the four-vault counterexamples, approved current-or-unavailable target and acceptance tests. Automatic emergency remote secret reads remain unavailable.

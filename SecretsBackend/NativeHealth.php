@@ -6,6 +6,22 @@ require_once __DIR__.'/SharedGlobal.php';
 final class SecretsBackendNativeHealth
 {
     public const FORMAT='SECB.GlobalHealth.1';
+    /** Observations are not a quorum certificate or permission to serve emergency reads. */
+    public static function guarantees(): array
+    {
+        return [
+            'protocol' => SecretsBackendSharedGlobal::SCOPE,
+            'replication' => 'asynchronous',
+            'writeAcknowledgement' => 'local-durable',
+            'readGuarantee' => 'local-authenticated-snapshot',
+            'healthGuarantee' => 'matched-at-check',
+            'quorumCommit' => false,
+            'linearizableRead' => false,
+            'strictEmergencyReadSupported' => false,
+            'emergencyReadReason' => 'QUORUM_COMMIT_READ_PROTOCOL_REQUIRED',
+        ];
+    }
+
     private $clock;
     public function __construct(private SecretsBackendNativeStore $store,private SecretsBackendNativePeer $peer,?callable $clock=null){$this->clock=$clock??static fn():int=>time();}
     private function now():int{return ($this->clock)();}
