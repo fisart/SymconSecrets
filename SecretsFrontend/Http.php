@@ -97,7 +97,8 @@ final class SecretsFrontendHttp
         $escape = static fn(string $text): string => htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $links = '';
         foreach (['Portal' => $portal, 'Dokumentation' => $documentation] as $label => $target) {
-            if (preg_match('~^/hook/[A-Za-z0-9_-]+$~D', $target)) $links .= '<a href="' . $escape($target) . '">' . $label . '</a>';
+            if (preg_match('~^/hook/[A-Za-z0-9_-]+$~D', $target)) $links .= '<a'.($label==='Portal'?' id="portalLink"':'').' href="' . $escape($target) . '">' . $label . '</a>';
+            elseif ($label==='Portal') $links .= '<span id="portalLinkUnavailable" class="navUnavailable" title="Select an enabled Portal instance in the frontend configuration and check its registered webhook and Secrets source.">Portal unavailable</span>';
         }
         $html = str_replace(['%%NONCE%%', '%%BOOT%%', '%%NAVIGATION%%', '%%NATIVE_PANELS%%', '/* %%NATIVE_ADMIN%% */', '/* %%PAIRING_WIZARD%% */', '/* %%PAIRING_COORDINATOR%% */', '/* %%BOOTSTRAP%% */'], [$escape($nonce), $boot, $links, (string)file_get_contents(__DIR__ . '/native-panels.html'), (string)file_get_contents(__DIR__ . '/native-admin.js'), (string)file_get_contents(__DIR__ . '/pairing-wizard.js'), (string)file_get_contents(__DIR__ . '/pairing-coordinator.js'), (string)file_get_contents(__DIR__ . '/bootstrap.js')], (string)file_get_contents(__DIR__ . '/page.html'));
         return ['status' => 200, 'headers' => $headers, 'body' => $html];

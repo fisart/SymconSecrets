@@ -122,3 +122,11 @@ The native mesh currently acknowledges local durable writes and synchronizes asy
 ## Graphical mesh health
 
 Overview now includes a graphical network with component lights, primary/backup route lines, directional emergency authorization arrows and an expandable comparison matrix. See [Mesh health display](MESH_HEALTH_DISPLAY.md) for interpretation, refresh intervals and limits.
+
+## Portal link on the administration page
+
+1. Select the local SystemPortal instance under Portal in the frontend configuration and Apply.
+2. Enable/configure that Portal with either the old SecretsManager or the new Secrets backend (Portal 1.5 supports both). Its webhook must be registered.
+3. Reload Secrets administration. **Portal** appears in the header beside **Dokumentation**, at the top right on desktop and below the title on narrow screens. **Add to Portal** creates the opposite link, from Portal to Secrets administration.
+
+The frontend uses its own native-aware metadata lookup so inactive old manager properties do not suppress the link. If no eligible registered Portal is found, the header shows Portal unavailable with a setup hint. Navigation does not grant access; Portal validates its own session. Original legacy helper files remain unchanged.
