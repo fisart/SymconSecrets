@@ -1,6 +1,9 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/SymconHarness.php';
+if (!function_exists('IPS_GetConfiguration')) {
+    function IPS_GetConfiguration(int $id): string { return json_encode($GLOBALS['instances'][$id]->properties, JSON_THROW_ON_ERROR); }
+}
 require_once __DIR__.'/../module.php';
 require_once __DIR__.'/../../SecretsBackend/module.php';
 function backupExpect(bool $value,string $message): void { if (!$value) throw new RuntimeException($message); }
