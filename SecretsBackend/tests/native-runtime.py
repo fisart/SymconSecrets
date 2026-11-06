@@ -22,7 +22,10 @@ for name in ['SecretsFrontend/tests/configuration-backup.php', 'SecretsBackend/t
     if name in ['SecretsBackend/tests/native-legacy-https.php']:
         print('SKIP retired-manager integration: ' + name + '; native-only replacement rejects old TLS discovery',flush=True)
         continue
-    subprocess.run(command + [str(root / name)], cwd=root, check=True, timeout=90)
+    # The four-vault fixture publishes many fsynced encrypted journals; Windows
+    # runner storage needs more time than the ordinary single-vault checks.
+    timeout = 300 if name == 'SecretsBackend/tests/automatic-setup.php' else 90
+    subprocess.run(command + [str(root / name)], cwd=root, check=True, timeout=timeout)
 
 subprocess.run([sys.executable, str(root / '.migration/tests/build.py')], cwd=root, check=True, timeout=30)
 subprocess.run([sys.executable, str(root / '.migration/tests/read-load.py'), '--php', args.php, '--reads', '30'], cwd=root, check=True, timeout=120)
