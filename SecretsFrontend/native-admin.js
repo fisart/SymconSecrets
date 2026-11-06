@@ -175,7 +175,12 @@ function renderLegacyAccess(){
 }
 function renderEmergencyAccess(){
  const e=snapshot?.native?.emergency||{},peers=(snapshot?.native?.peers||[]).filter(p=>p.active&&p.state==='ACTIVE'&&peerShared(p));
- nativeSelect('nativeEmergencyPeer',peers.map(p=>[p.id,p.name+' · '+new URL(p.descriptor.endpoint).origin]));$('nativeEmergencyGrant').disabled=!peers.length;
+ const granted=new Set((e.grants||[]).filter(grant=>grant.active).map(grant=>grant.source));
+ const awaitingPermission=peers.filter(peer=>!granted.has(peer.id));
+ const options=awaitingPermission.map(peer=>[peer.id,peer.name+' · '+new URL(peer.descriptor.endpoint).origin]);
+ nativeSelect('nativeEmergencyPeer',options.length?options:[['','No connections awaiting permission']]);
+ $('nativeEmergencyPeer').disabled=!options.length;
+ $('nativeEmergencyGrant').disabled=!options.length;
  const r=e.runtime;$('nativeEmergencyRuntime').textContent=r?(r.ready?(r.mode==='REMOTE'?'Using remote source: '+r.activeSource+'. Freshness is uncertain.':'Local secrets source is available.'):'Availability check: '+(r.reason||r.mode||'pending')+'.'):'No emergency availability check recorded yet.';
  const offers=$('nativeEmergencyOffers');offers.replaceChildren();for(const o of e.offers||[])nativeRow(offers,o.name,'Approve this source for Global SEC application reads. No Local values or writes.',[['Enable this emergency source',()=>review({kind:'nativeEmergencyAccept',peerId:o.peerId,digest:o.digest},'Approve availability-first emergency reads from '+o.name+'. The separate encrypted credentials remain usable when this vault cannot open. A remote copy is not guaranteed to include an unreachable writer’s latest change.')]]);if(!offers.children.length)offers.textContent='No offers awaiting approval.';
  const clients=$('nativeEmergencyClients');clients.replaceChildren();for(const c of e.clients||[])nativeRow(clients,c.name,'Approved Global read source.',[['Remove source',()=>review({kind:'nativeEmergencyRemove',peerId:c.peerId},'Stop using this vault for emergency reads.')]]);if(!clients.children.length)clients.textContent='No emergency sources configured.';
