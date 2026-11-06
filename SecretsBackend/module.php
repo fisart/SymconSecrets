@@ -6,6 +6,7 @@ require_once __DIR__ . '/StoragePaths.php';
 require_once __DIR__ . '/NativeBackend.php';
 require_once __DIR__ . '/NativeRuntime.php';
 require_once __DIR__ . '/LegacyRuntime.php';
+require_once __DIR__ . '/../SecretsFrontend/ConfigurationBackup.php';
 
 class SecretsBackend extends IPSModule
 {
@@ -390,12 +391,28 @@ class SecretsBackend extends IPSModule
         $json = SecretsFrontendConfiguration::encode(['schema' => 'SECB.Config.v1', 'configuration' => $this->configuration()]);
         $this->UpdateFormField('ExportJSON', 'value', $json); return $json;
     }
-    public function ImportConfiguration(string $JSON): bool
+    public function ExportConfigurationBackup(): string
+    {
+        if (IPS_HasChanges($this->InstanceID)) throw new RuntimeException('Apply or discard pending configuration edits before backup.');
+        return SecretsConfigurationBackup::export('{52165EDD-B2C0-40EC-8A59-42A97319B6E2}',
+            ['schema' => 'SECB.Config.v1', 'configuration' => $this->configuration()],
+            json_decode(IPS_GetConfiguration($this->InstanceID), true, 128, JSON_THROW_ON_ERROR), []);
+    }
+    private static function parseConfigurationImport(string $JSON): array
     {
         $data = SecretsFrontendConfiguration::decode($JSON);
         if (count($data) !== 2 || ($data['schema'] ?? '') !== 'SECB.Config.v1' || !is_array($data['configuration'] ?? null)) throw new InvalidArgumentException('Expected SECB.Config.v1.');
+        return self::validate($data['configuration']);
+    }
+    public function ValidateConfigurationBackup(string $JSON): string
+    {
+        $payload = SecretsFrontendConfiguration::decode($JSON);
+        return SecretsConfigurationBackup::validation($payload, static function () use ($JSON): void { self::parseConfigurationImport($JSON); });
+    }
+    public function ImportConfiguration(string $JSON): bool
+    {
         if (IPS_HasChanges($this->InstanceID)) throw new RuntimeException('Apply or discard pending console edits before import.');
-        $settings = self::validate($data['configuration']); $settings['Enabled'] = false;
+        $settings = self::parseConfigurationImport($JSON); $settings['Enabled'] = false;
         if ($this->nativeInitialized()) {
             $approved = $this->nativeStore()->storageHandoff()['profile']['settings'];
         } elseif ($this->ReadAttributeBoolean('GuidedV2Only') && $this->ReadAttributeString('StorageBinding') === '' && !$this->ReadAttributeBoolean('ProvisioningSealed')) {
