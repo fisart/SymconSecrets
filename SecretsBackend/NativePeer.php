@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/NativeStore.php';
+require_once __DIR__ . '/PeerName.php';
 require_once __DIR__ . '/Tree.php';
 require_once __DIR__ . '/SharedGlobal.php';
 require_once __DIR__ . '/NativeHealth.php';
@@ -42,7 +43,7 @@ final class SecretsBackendNativePeer
     public function __construct(private SecretsBackendNativeStore $store, private string $endpoint, ?callable $transport = null, private bool $automaticGlobal=true,private $meshComponents=null) { self::endpoint($endpoint); $this->transport = $transport; }
     public function meshReport(array $state,bool $detailed=true,bool $mailbox=false):array {
         try{$runtime=$this->meshComponents!==null?($this->meshComponents)($state):[];}catch(Throwable $ignored){$runtime=[];}
-        $report=(new SecretsBackendMeshStatus($this->store,$this))->report($state,$runtime);if(!$detailed)foreach($report['links']as&$l)foreach(['primary','backup']as$k)$l[$k]=array_intersect_key($l[$k],array_flip(['state','age']));unset($l);if($mailbox){$report['mailbox']=SecretsBackendMailbox::local($state);while(strlen(SecretsBackendCodec::json($report))>24000&&$report['mailbox']['rows']){array_pop($report['mailbox']['rows']);$report['mailbox']['partial']=true;}while(strlen(SecretsBackendCodec::json($report))>24000&&$report['links']){array_pop($report['links']);$report['truncated']=true;}}return $report;
+        $report=(new SecretsBackendMeshStatus($this->store,$this))->report($state,$runtime);if(!$detailed)foreach($report['links']as&$l)foreach(['primary','backup']as$k)$l[$k]=array_intersect_key($l[$k],array_flip(['state','age']));unset($l);if($mailbox){$report['mailbox']=SecretsBackendMailbox::local($state,true,(bool)$this->store->pendingBackupCandidates());while(strlen(SecretsBackendCodec::json($report))>24000&&$report['mailbox']['rows']){array_pop($report['mailbox']['rows']);$report['mailbox']['partial']=true;}while(strlen(SecretsBackendCodec::json($report))>24000&&$report['links']){array_pop($report['links']);$report['truncated']=true;}}return $report;
     }
     public static function exact(array $value, array $keys): void { if (array_diff(array_keys($value),$keys) || array_diff($keys,array_keys($value))) throw new RuntimeException('Unexpected native protocol fields.'); }
     public static function uuid(string $value): void { if (!preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/D',$value)) throw new RuntimeException('Invalid native UUID.'); }
@@ -170,7 +171,7 @@ final class SecretsBackendNativePeer
                     $invite=$s['native']['invites'][$payload['invitationId']]??null;if(!is_array($invite)||($invite['usedBy']??null)!==null||(int)$invite['expires']<time())throw new RuntimeException('Invitation changed during pairing.');
                     $s['native']['invites'][$payload['invitationId']]['usedBy']=$m['sender'];unset($s['native']['invites'][$payload['invitationId']]['secret']);
                     $s=self::retireRevocation($s,$m['sender']);
-                    $row=self::peerRecord($pair,$pair['b'],'Peer '.substr($m['sender'],0,8),'PENDING_APPROVAL');$row+=['requestDigest'=>$digest,'requestId'=>$m['id'],'invitationId'=>$payload['invitationId'],'expires'=>$payload['expires']];
+                    $row=self::peerRecord($pair,$pair['b'],SecretsBackendPeerName::address($pair['b']['endpoint']),'PENDING_APPROVAL');$row+=['requestDigest'=>$digest,'requestId'=>$m['id'],'invitationId'=>$payload['invitationId'],'expires'=>$payload['expires']];
                     // Preserve only an already approved local TLS policy for this exact HTTPS authority.
                     $previous=$s['pairing']['peers'][$m['sender']]??null;
                     if(isset($previous['httpsPolicy'])&&SecretsBackendNativeLegacyHTTPS::origin($previous['descriptor']['endpoint'])===SecretsBackendNativeLegacyHTTPS::origin($row['descriptor']['endpoint']))$row['httpsPolicy']=$previous['httpsPolicy'];

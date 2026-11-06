@@ -1,6 +1,6 @@
 # Mailbox and HTML support reports
 
-The native Secrets page has a Mailbox tab. It projects saved pairing, emergency access, backup-access setup, ownership transfer and uncertain OAuth workflows. Opening it never grants authority. `Open workflow` takes a local administrator to the existing exact review/passkey flow. Remote approvals must be made on their own server.
+The native Secrets page has a Mailbox tab. It projects saved pairing, emergency access, backup-access setup, ownership transfer and uncertain OAuth workflows. Opening it never grants authority. Each available local decision includes a detailed scope description and an approval button. `Approve with passkey` prepares the exact action, requests the existing passkey or hardware-key assertion, submits it and refreshes the entry directly in Mailbox; it does not open a separate approval workflow. Cancellation, stale state and hardware requirements retain the same enforcement as other approval paths. Tested backup candidates are shown with their exact credential fingerprint; setup without a tested candidate is waiting for setup, rather than ready for approval. OAuth captured-result application and abandonment are separate explicit decisions. Remote approvals must be made on their own server.
 
 ## Reading the state
 
@@ -25,5 +25,7 @@ In Mailbox, choose the discovered Configuration Backup instance, review the repo
 This calls the existing `MCB_UploadSecretsDiagnostics` uploader. Configuration Backup must support that API, have saved settings, and have **Readable Secrets diagnostics** enabled. Its private-repository verification and data allowlist remain authoritative. The readable report contains diagnostics and redacted configuration for Secrets backends on this installation; encrypted vault backup and complete configuration recovery backups remain separate artifacts.
 
 The browser shows success only after the uploader returns a GitHub commit SHA. Failed/unconfirmed requests are not automatically repeated. Check Configuration Backup's Secrets diagnostics status before retrying an uncertain upload. The API requires an authenticated full administrator and same-origin CSRF validation, verifies the selected instance belongs to Configuration Backup, and limits repeated uploads. Raw dependency errors are never returned to the browser.
+
+Incoming connection placeholders are displayed using their saved server hostname and port, preferring the approved primary address to a Magic relay. Custom names are preserved. This also corrects existing entries without altering pairing identity or grants.
 
 No new module properties, configuration formats or restore behavior are introduced. Existing module-owned configuration export and read-only validation remain unchanged.

@@ -6,7 +6,7 @@ final class SecretsBackendMailbox
 {
     public const LIMIT=32;
     public const STATES=['APPROVAL_REQUIRED','WAITING_REMOTE','SENDING','CONFIRMATION_PENDING','COMPLETED','EXPIRED','REVOKED','UNKNOWN'];
-    public static function local(array $s,bool $bounded=true):array {
+    public static function local(array $s,bool $bounded=true,bool $backupReady=false):array {
         $rows=[];$local=$s['native']['vaultId'];
         $add=static function(string $id,string $type,string $state,?string $peer,string $direction,string $action,?int $expires=null)use(&$rows):void{
             $rows[]=['id'=>$id,'type'=>$type,'state'=>$state,'peerId'=>$peer,'direction'=>$direction,'action'=>$action,'requestedAt'=>null,'expiresAt'=>$expires];
@@ -32,7 +32,7 @@ final class SecretsBackendMailbox
             $add('grant:'.$c['grantId'],'emergency',($p['active']??false)&&($p['pairingId']??null)===$c['pairingId']?'CONFIRMATION_PENDING':'REVOKED',$id,'consumer','nativePeers');
         }
         foreach($s['native']['transfers']??[]as$id=>$t)$add('transfer:'.$id,'ownership',match($t['state']){'PENDING_APPROVAL'=>'APPROVAL_REQUIRED','ACCEPTED','TRANSFERRED'=>'COMPLETED',default=>$queued('OWNER_OFFER',$t['peerId']??'')?'SENDING':'WAITING_REMOTE'},$t['peerId']??null,$t['direction']==='incoming'?'consumer':'provider','nativePeers');
-        $p=$s['policy']['backupOrigin']??null;if(is_array($p))$add('magic:'.$local,'backup-access',match($p['status']){'pending'=>'APPROVAL_REQUIRED','active'=>'COMPLETED',default=>'REVOKED'},null,'local','nativeKeys');
+        $p=$s['policy']['backupOrigin']??null;if(is_array($p))$add('magic:'.$local,'backup-access',match($p['status']){'pending'=>$backupReady?'APPROVAL_REQUIRED':'CONFIRMATION_PENDING','active'=>'COMPLETED',default=>'REVOKED'},null,'local','nativeKeys');
         foreach($s['native']['effects']??[]as$e)if(in_array($e['state'],['PREPARED','SENT_UNKNOWN','RETRY_SAFE','QUARANTINED'],true))$add('effect:'.$e['id'],'provider-operation',$e['state']==='SENT_UNKNOWN'?'UNKNOWN':($e['state']==='QUARANTINED'?'APPROVAL_REQUIRED':'SENDING'),null,'local','nativeProviders');
         // Consumer acceptance supersedes an older offer for the same grant.
         $unique=[];foreach($rows as$r)$unique[$r['id'].':'.$r['direction']]=$r;$rows=array_values($unique);
@@ -42,15 +42,15 @@ final class SecretsBackendMailbox
     public static function validate(array $m):void {
         SecretsBackendNativePeer::exact($m,['rows','partial']);if(!is_bool($m['partial'])||!is_array($m['rows'])||!array_is_list($m['rows'])||count($m['rows'])>self::LIMIT)throw new RuntimeException('Invalid mailbox summary.');
         foreach($m['rows']as$r){SecretsBackendNativePeer::exact($r,['id','type','state','peerId','direction','action','requestedAt','expiresAt']);
-            if(!is_string($r['id'])||!preg_match('/^(pair|grant|transfer|magic|effect):[a-f0-9-]{36}$/D',$r['id'])||!in_array($r['type'],['pairing','emergency','ownership','backup-access','provider-operation'],true)||!in_array($r['state'],self::STATES,true)||!in_array($r['direction'],['connection','provider','consumer','local'],true)||!in_array($r['action'],['nativePeers','nativeKeys','nativeProviders'],true))throw new RuntimeException('Invalid mailbox entry.');
+            if(!is_string($r['id'])||!preg_match('/^(?:(pair|grant|transfer|magic):[a-f0-9-]{36}|effect:[a-f0-9]{64})$/D',$r['id'])||!in_array($r['type'],['pairing','emergency','ownership','backup-access','provider-operation'],true)||!in_array($r['state'],self::STATES,true)||!in_array($r['direction'],['connection','provider','consumer','local'],true)||!in_array($r['action'],['nativePeers','nativeKeys','nativeProviders'],true))throw new RuntimeException('Invalid mailbox entry.');
             if($r['peerId']!==null)SecretsBackendNativePeer::uuid($r['peerId']);foreach(['requestedAt','expiresAt']as$k)if($r[$k]!==null&&(!is_int($r[$k])||$r[$k]<0))throw new RuntimeException('Invalid mailbox time.');
         }
     }
-    public static function view(array $s,array $mesh):array {
+    public static function view(array $s,array $mesh,bool $backupReady=false):array {
         $nodes=[];$now=time();$local=$s['native']['vaultId'];$reports=[];
         foreach($mesh['reports']??[]as$entry)$reports[$entry['report']['id']]=$entry;
         foreach([$local,...array_keys($s['pairing']['peers'])]as$id){
-            $own=$id===$local;$entry=$reports[$id]??null;$r=$entry['report']??[];$age=$entry['age']??null;$fresh=$own||($age!==null&&$age<($r['ttl']??0));$m=$own?self::local($s,false):($r['mailbox']??null);
+            $own=$id===$local;$entry=$reports[$id]??null;$r=$entry['report']??[];$age=$entry['age']??null;$fresh=$own||($age!==null&&$age<($r['ttl']??0));$m=$own?self::local($s,false,$backupReady):($r['mailbox']??null);
             $rows=$m['rows']??[];
             foreach($rows as&$row){
                 if(!$fresh){$row['lastKnownState']=$row['state'];$row['state']='UNKNOWN';continue;}
@@ -61,7 +61,7 @@ final class SecretsBackendMailbox
                 if($otherFresh&&$link&&($row['direction']==='provider'?($link['clientGrant']??null)===$grant:in_array($grant,$link['grantIds']??[],true)))$row['state']='COMPLETED';
                 elseif(!$otherFresh){$row['lastKnownState']=$row['state'];$row['state']='UNKNOWN';}
             }unset($row);
-            $nodes[]=['id'=>$id,'name'=>$own?(string)parse_url($s['policy']['origin'],PHP_URL_HOST):($s['pairing']['peers'][$id]['name']??substr($id,0,8)),'local'=>$own,'fresh'=>$fresh,'available'=>$m!==null,'checkedAt'=>$own?$now:($age!==null?$now-$age:null),'partial'=>$m['partial']??false,'rows'=>$rows];
+            $nodes[]=['id'=>$id,'name'=>$own?SecretsBackendPeerName::address($s['policy']['origin']):SecretsBackendPeerName::display($s['pairing']['peers'][$id]),'local'=>$own,'fresh'=>$fresh,'available'=>$m!==null,'checkedAt'=>$own?$now:($age!==null?$now-$age:null),'partial'=>$m['partial']??false,'rows'=>$rows];
         }
         return ['nodes'=>$nodes,'observedAt'=>$now];
     }

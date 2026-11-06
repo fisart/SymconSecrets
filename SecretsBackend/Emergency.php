@@ -39,7 +39,7 @@ final class SecretsBackendEmergency
     public static function grant(array $s,string $source): array {
         $p=self::pair($s,$source);
         if(count($s['native']['emergencyGrants']??[])>=64)throw new RuntimeException('Emergency grant capacity reached.');
-        return ['id'=>SecretsBackendCodec::uuid(),'source'=>$source,'pairingId'=>$p['pairingId'],'token'=>SecretsBackendCodec::b64(random_bytes(32)),'name'=>$p['name']];
+        return ['id'=>SecretsBackendCodec::uuid(),'source'=>$source,'pairingId'=>$p['pairingId'],'token'=>SecretsBackendCodec::b64(random_bytes(32)),'name'=>SecretsBackendPeerName::display($p)];
     }
     public static function applyGrant(array $s,array $grant): array {
         $p=self::pair($s,$grant['source']);if($p['pairingId']!==$grant['pairingId'])throw new RuntimeException('Emergency pairing changed.');
@@ -59,7 +59,7 @@ final class SecretsBackendEmergency
         if($p['pairingId']!==$g['pairingId']||SecretsBackendNativePeer::authority($p['descriptor'])!==SecretsBackendNativePeer::authority($g['receiver']))throw new RuntimeException('Emergency peer identity changed.');
         $signature=$g['signature'];unset($g['signature']);
         if(!sodium_crypto_sign_verify_detached(SecretsBackendCodec::unb64($signature,64),'SECB.EMERGENCY.GRANT.1\0'.SecretsBackendNativeStore::canonical($g),SecretsBackendCodec::unb64($p['descriptor']['signKey'],32)))throw new RuntimeException('Emergency approval signature invalid.');
-        return ['peerId'=>$p['id'],'pairingId'=>$p['pairingId'],'grantId'=>$g['id'],'token'=>$g['token'],'name'=>$p['name']];
+        return ['peerId'=>$p['id'],'pairingId'=>$p['pairingId'],'grantId'=>$g['id'],'token'=>$g['token'],'name'=>SecretsBackendPeerName::display($p)];
     }
     public static function clients(array $s): array {
         $out=[];foreach($s['native']['emergencyClients']??[]as$id=>$c){
@@ -72,9 +72,9 @@ final class SecretsBackendEmergency
         return hash('sha256',SecretsBackendNativeStore::canonical([$s['native']['legacyAccess']??[],$s['native']['emergencyClients']??[],self::clients($s)]));
     }
     public static function publicMetadata(array $s): array {
-        $clients=[];foreach(self::clients($s)as$id=>$c)$clients[]=['peerId'=>$id,'name'=>$c['name'],'grantId'=>$c['grantId']];
-        $grants=[];foreach($s['native']['emergencyGrants']??[]as$g)$grants[]=array_intersect_key($g,array_flip(['id','source','name','active']));
-        $offers=[];foreach($s['native']['emergencyOffers']??[]as$id=>$o){try{$p=self::pair($s,$id);$c=self::importGrant($s,$o['package']);$offers[]=['peerId'=>$id,'name'=>$p['name'],'grantId'=>$c['grantId'],'digest'=>hash('sha256',$o['package'])];}catch(Throwable $ignored){}}
+        $clients=[];foreach(self::clients($s)as$id=>$c)$clients[]=['peerId'=>$id,'name'=>SecretsBackendPeerName::display($s['pairing']['peers'][$id]),'grantId'=>$c['grantId']];
+        $grants=[];foreach($s['native']['emergencyGrants']??[]as$g)$grants[]=array_replace(array_intersect_key($g,array_flip(['id','source','name','active'])),['name'=>isset($s['pairing']['peers'][$g['source']])?SecretsBackendPeerName::display($s['pairing']['peers'][$g['source']]):$g['name']]);
+        $offers=[];foreach($s['native']['emergencyOffers']??[]as$id=>$o){try{$p=self::pair($s,$id);$c=self::importGrant($s,$o['package']);$offers[]=['peerId'=>$id,'name'=>SecretsBackendPeerName::display($p),'grantId'=>$c['grantId'],'digest'=>hash('sha256',$o['package'])];}catch(Throwable $ignored){}}
         return ['offers'=>$offers,'supported'=>true,'scope'=>'Global application reads','clients'=>$clients,'grants'=>$grants,'freshness'=>'best-available-not-guaranteed-current'];
     }
     public static function serve(SecretsBackendNativeStore $store,string $bytes): string {

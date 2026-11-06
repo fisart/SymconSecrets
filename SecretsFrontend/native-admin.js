@@ -358,8 +358,10 @@ run($('compatApprove'),()=>{
  return review({kind:'nativeLegacyAccess',instance:target.instance,mode:target.mode,enabled:$('compatEnabled').checked,read:$('compatRead').checked,write:$('compatWrite').checked,portal:$('compatPortal').checked,frozen:$('compatFrozen').checked,bulk:$('compatBulk').checked},'Change application access for the automatically detected instance. Local scripts may read application Global and Local secrets. This does not switch existing applications.');
 });
 
+let mailboxApprovalBusy=false;
 const mailboxLabels={APPROVAL_REQUIRED:'Your approval required',WAITING_REMOTE:'Waiting for the other server',SENDING:'Sending / retrying delivery',CONFIRMATION_PENDING:'Approval sent — confirmation pending',COMPLETED:'Completed',EXPIRED:'Expired',REVOKED:'Revoked',UNKNOWN:'Status unknown — confirmation outstanding'};
 function renderMailbox(){
+ if(mailboxApprovalBusy)return;
  const m=snapshot?.native?.mailbox,nodes=m?.nodes||[],local=nodes.find(n=>n.local),localActions=(local?.rows||[]).filter(r=>r.state==='APPROVAL_REQUIRED').length;
  const pending=nodes.reduce((sum,n)=>sum+(n.rows||[]).filter(r=>['WAITING_REMOTE','SENDING','CONFIRMATION_PENDING','UNKNOWN'].includes(r.state)).length,0);
  $('nativeMailboxNav').textContent='Mailbox'+(localActions?' · '+localActions+' to approve':'')+(pending?' · '+pending+' waiting':'');
@@ -374,12 +376,17 @@ function renderMailbox(){
   for(const row of node.rows||[]){if($('mailboxState').value==='outstanding'&&['COMPLETED','REVOKED','EXPIRED'].includes(row.state))continue;count++;
    const peer=nodes.find(n=>n.id===row.peerId),peerName=peer?.name||row.peerId||'';
    const title=row.type==='emergency'?((row.direction==='provider'?peerName:node.name)+' may read Global from '+(row.direction==='provider'?node.name:peerName)):({'pairing':'Connect platforms','ownership':'Transfer ownership','backup-access':'Magic backup access','provider-operation':'OAuth operation'}[row.type]||row.type)+(peerName?' · '+peerName:'');
-   let state=overviewStale?'UNKNOWN':row.state;const status=state==='APPROVAL_REQUIRED'&&!node.local?'Approval required on '+node.name:mailboxLabels[state]||'Status unknown';
-   const actions=node.local?[['Open workflow',()=>tab(row.action)]]:[];
+   let state=overviewStale?'UNKNOWN':row.state;const status=row.type==='backup-access'&&state==='CONFIRMATION_PENDING'?'Waiting for a tested backup passkey':state==='APPROVAL_REQUIRED'&&!node.local?'Approval required on '+node.name:mailboxLabels[state]||'Status unknown';
+   const approvals=node.local&&!overviewStale?(m.approvals?.[row.id]||[]):[];
+   const actions=approvals.map(a=>[a.label||'Approve with passkey',()=>approveMailboxEntry(a)]);
+   if(node.local&&!actions.length)actions.push([row.type==='backup-access'&&row.state==='CONFIRMATION_PENDING'?'Continue backup setup':row.state==='APPROVAL_REQUIRED'?'Refresh approval details':'Open workflow',()=>row.state==='APPROVAL_REQUIRED'?refreshNativeOverview(generation):tab(row.action)]);
    nativeRow(list,title,status+(row.lastKnownState?' · last known: '+(mailboxLabels[row.lastKnownState]||row.lastKnownState):''),actions);
-   const card=list.lastElementChild,detail=card.querySelector('p');detail.classList.add('mailboxStatus');const facts=document.createElement('dl');facts.className='mailboxFacts';
+   const card=list.lastElementChild,detail=card.querySelector('p');
+   for(const a of approvals){const instructions=document.createElement('p');instructions.className='break';instructions.textContent=a.summary+' Select “'+(a.label||'Approve with passkey')+'”, then confirm with your passkey or the required hardware key. The result will appear here.';card.insertBefore(instructions,card.lastElementChild);}
+   detail.classList.add('mailboxStatus');const facts=document.createElement('dl');facts.className='mailboxFacts';
    const fields=[];
    if(row.type==='emergency')fields.push(['Provider approval',row.state==='REVOKED'?'Revoked or pairing retired':row.direction==='provider'?'Granted on this server':'Signed offer received'],['Consumer acceptance',row.state==='COMPLETED'?'Confirmed':row.state==='REVOKED'?'Inactive':row.direction==='consumer'&&row.state!=='APPROVAL_REQUIRED'?'Approved locally; confirmation pending':'Awaiting confirmation']);
+   if(row.type==='backup-access'&&row.state==='CONFIRMATION_PENDING')fields.push(['Next step','Create and test the backup passkey before activation can be approved.']);
    fields.push(['Responsible server',state==='WAITING_REMOTE'?peerName:node.name],['Requested',row.requestedAt?new Date(row.requestedAt*1000).toLocaleString():'Time not recorded'],['Last confirmed update',stamp]);
    if(row.expiresAt)fields.push(['Expires',new Date(row.expiresAt*1000).toLocaleString()]);
    for(const [label,value]of fields){const field=document.createElement('div'),term=document.createElement('dt'),definition=document.createElement('dd');term.textContent=label;definition.textContent=value;field.append(term,definition);facts.append(field);}detail.after(facts);
@@ -387,6 +394,17 @@ function renderMailbox(){
   }
  }
  if(!count){const empty=document.createElement('p');empty.textContent='No matching requests in the available summaries. Unknown or incomplete servers may still have outstanding approvals.';list.append(empty);}
+}
+async function approveMailboxEntry(action){
+ if(mailboxApprovalBusy||!fullAdministration())return;
+ mailboxApprovalBusy=true;const ticket=generation;
+ for(const button of $('mailboxRows').querySelectorAll('button'))button.disabled=true;
+ try{
+  message('Preparing this exact approval…');
+  const prepared=await api('prepare',{operation:action.operation},ticket);
+  message((prepared.reviewSummary?(peerWizardApprovalText(prepared.reviewSummary)||JSON.stringify(prepared.reviewSummary,null,2))+'\n\n':'')+action.summary+'\nConfirm with your passkey'+(prepared.requiresHardware?' using an approved hardware key':'')+'.');
+  await finishApproval({...prepared,uiOperation:action.operation},ticket);
+ }finally{mailboxApprovalBusy=false;renderMailbox();}
 }
 for(const id of ['mailboxServer','mailboxState'])$(id).addEventListener('change',renderMailbox);
 run($('mailboxRefresh'),async ticket=>{await refreshNativeOverview(ticket);await loadSupportTargets(ticket);});

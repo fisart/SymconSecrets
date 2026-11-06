@@ -315,6 +315,26 @@ final class SecretsBackendNativeOperations
     private function meshMetadata(array $state):array {
         try{return (new SecretsBackendMeshStatus($this->store,$this->peer))->view($state);}catch(Throwable $ignored){return ['localId'=>$state['native']['vaultId'],'reports'=>[],'observedAt'=>time(),'unavailable'=>true];}
     }
+    /** Only local, full-administrator action inputs; these are never included in mesh reports. */
+    private function mailboxMetadata(array $s,array $mesh):array {
+        $candidates=$this->store->pendingBackupCandidates();$m=SecretsBackendMailbox::view($s,$mesh,(bool)$candidates);$m['approvals']=[];
+        if($this->session==='')return $m;
+        $session=$this->store->get($this->session,'session');
+        if(!SecretsBackendBackupOriginPolicy::credentialFull($s,$s['identity']['credentials'][$session['credential']]??[]))return $m;
+        $add=static function(string $id,array $op,string $summary,string $label='Approve with passkey')use(&$m):void{$m['approvals'][$id][]=['operation'=>$op,'summary'=>$summary,'label'=>$label];};
+        foreach($s['pairing']['peers']as$p)if($p['state']==='PENDING_APPROVAL'&&(!isset($p['expires'])||(int)$p['expires']>=time()))$add('pair:'.$p['pairingId'],['kind'=>'nativeAcceptPair','peerId'=>$p['id']],'Approve the connection to '.SecretsBackendPeerName::display($p).'. Server address: '.$p['descriptor']['endpoint'].'. Comparison code: '.SecretsBackendNativePeer::comparison($p['pair']).'. This connects the platforms and shares Global secrets; Local secrets stay private.');
+        foreach(SecretsBackendEmergency::publicMetadata($s)['offers']as$o)$add('grant:'.$o['grantId'],['kind'=>'nativeEmergencyAccept','peerId'=>$o['peerId'],'digest'=>$o['digest']],'Allow this server to use Global application secrets from '.$o['name'].' in an emergency. Local secrets and writes are excluded. A remote copy may be older than an unreachable writer.');
+        if(!isset($s['native']['sharedGlobal']))foreach($s['native']['transfers']as$id=>$t)if($t['direction']==='incoming'&&$t['state']==='PENDING_APPROVAL')$add('transfer:'.$id,['kind'=>'nativeTransferAccept','transferId'=>$id],'Accept ownership of tree '.$t['certificate']['treeId'].' from '.SecretsBackendPeerName::display($s['pairing']['peers'][$t['peerId']]).' on this server. The new owner is vault '.$t['certificate']['newOwner']['vaultId'].' at epoch '.$t['certificate']['newEpoch'].'. The listed subscribers keep receiving the tree; other trees are unaffected.');
+        foreach($candidates as$id=>$c)if($c['entry']['administrator']===$session['administrator']){
+            $fingerprint=hash('sha256',$c['entry']['publicKey']);
+            $add('magic:'.$s['native']['vaultId'],['kind'=>'nativeConnectActivate','candidate'=>$id,'digest'=>SecretsBootstrapVerifier::digest($c)],'Compare this exact credential fingerprint with the backup window: '.$fingerprint.'. Activate backup passkey “'.$c['entry']['label'].'” at '.$c['origin'].' for the existing administrator, with these rights: '.implode(', ',$c['rights']).'.','Approve backup passkey · '.substr($fingerprint,0,12));
+        }
+        foreach($s['native']['effects']as$id=>$e)if(in_array($e['state'],['PREPARED','SENT_UNKNOWN','RETRY_SAFE','QUARANTINED'],true)){
+            if($this->store->hasCapturedEffect($id))$add('effect:'.$id,['kind'=>'nativeEffectApply','id'=>$id],'Apply only the authenticated captured response if its provider policy and predecessor still match. No external request is sent.','Apply captured result with passkey');
+            $add('effect:'.$id,['kind'=>'nativeEffectAbandon','id'=>$id],'Keep the uncertainty tombstone and require a newly authorized refresh token. This does not retry the uncertain request.','Abandon with passkey');
+        }
+        return $m;
+    }
     private function emergencyMetadata(array $state): array { return SecretsBackendEmergency::publicMetadata($state)+['runtime'=>$this->emergencyHealth!==null?($this->emergencyHealth)():null]; }
     private function emergencyResult(bool $create): array {
         if($this->emergencyApplied===null)throw new RuntimeException('Emergency credential provisioning is unavailable in this context.');
@@ -479,11 +499,11 @@ final class SecretsBackendNativeOperations
         $received=[];foreach($state['native']['received']as$id=>$r)$received[]=['id'=>$id,'owner'=>$r['owner'],'revision'=>$r['revision'],'pairingId'=>$r['pairingId']??null,'at'=>$r['at']];
         $delivery=$this->peer->deliveryStatus($state);
         $health=(new SecretsBackendNativeHealth($this->store,$this->peer))->statuses($state);
-        $peers=array_values(array_map(static fn($p)=>$p+['comparison'=>SecretsBackendNativePeer::comparison($p['pair']),'delivery'=>$delivery[$p['id']]??null],$state['pairing']['peers']));
+        $peers=array_values(array_map(static fn($p)=>array_replace($p,['name'=>SecretsBackendPeerName::display($p)])+['comparison'=>SecretsBackendNativePeer::comparison($p['pair']),'delivery'=>$delivery[$p['id']]??null],$state['pairing']['peers']));
         foreach($peers as&$peer){if(isset($health[$peer['id']]))$peer['health']=$health[$peer['id']];try{$peer['connectionDebug']=$this->store->get('peer-tls-debug:'.$peer['pairingId'],'peer-tls-debug');}catch(Throwable $ignored){}}unset($peer);
         $sent=[];foreach($state['native']['deliveryReceipts']as$id=>$receipt)$sent[]=['peerId'=>$id]+array_intersect_key($receipt,array_flip(['pairingId','requestKind','status','treeId','revision']));
         $mesh=$this->meshMetadata($state);
-        return ['mailbox'=>SecretsBackendMailbox::view($state,$mesh),'fullAdministrator'=>$this->session!==''&&SecretsBackendBackupOriginPolicy::credentialFull($state,$state['identity']['credentials'][$this->store->get($this->session,'session')['credential']]??[]),'sharedGlobalSupported'=>true,'consistency'=>SecretsBackendNativeHealth::guarantees(),'emergency'=>$this->emergencyMetadata($state),'mesh'=>$mesh,'globalConflictCount'=>count(SecretsBackendSharedGlobal::metadata($state)['conflicts']??[]),'serverTime'=>time(),'peers'=>$peers,'pairingReceived'=>$received,'pairingSent'=>$sent,'globalTreeId'=>$state['native']['globalTreeId'],'globalRevision'=>$state['stream']['globalRevision'],'remoteHttpsAvailable'=>SecretsBackendNativeLegacyHTTPS::available(),'remoteHttpsTransport'=>'php-streams','peerTransportVersion'=>'php-streams-ye2-1','globalWritable'=>$state['native']['globalWritable'],
+        return ['mailbox'=>$this->mailboxMetadata($state,$mesh),'fullAdministrator'=>$this->session!==''&&SecretsBackendBackupOriginPolicy::credentialFull($state,$state['identity']['credentials'][$this->store->get($this->session,'session')['credential']]??[]),'sharedGlobalSupported'=>true,'consistency'=>SecretsBackendNativeHealth::guarantees(),'emergency'=>$this->emergencyMetadata($state),'mesh'=>$mesh,'globalConflictCount'=>count(SecretsBackendSharedGlobal::metadata($state)['conflicts']??[]),'serverTime'=>time(),'peers'=>$peers,'pairingReceived'=>$received,'pairingSent'=>$sent,'globalTreeId'=>$state['native']['globalTreeId'],'globalRevision'=>$state['stream']['globalRevision'],'remoteHttpsAvailable'=>SecretsBackendNativeLegacyHTTPS::available(),'remoteHttpsTransport'=>'php-streams','peerTransportVersion'=>'php-streams-ye2-1','globalWritable'=>$state['native']['globalWritable'],
             'outbox'=>array_values(array_map(static fn($j)=>array_intersect_key($j,array_flip(['id','receiverId','kind','sequence','status'])),$state['outbox']['jobs']))];
     }
     private function legacyTargets(array $state,int $backend): array

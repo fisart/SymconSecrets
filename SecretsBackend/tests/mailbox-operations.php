@@ -15,6 +15,8 @@ $view=SecretsBackendMailbox::view($stores[0]->read()['state'],['reports'=>[]]);$
 $ok($stores[0]->head()===$head,'Mailbox mutated approved state.');
 $bad=SecretsBackendMailbox::local($stores[0]->read()['state']);$bad['rows'][0]['token']='PRIVATE-CANARY';$no(fn()=>SecretsBackendMailbox::validate($bad),'Mailbox accepted an unapproved field.');
 $sample=$stores[0]->read()['state'];$transfer=SecretsBackendCodec::uuid();$sample['native']['transfers'][$transfer]=['state'=>'TRANSFERRED','direction'=>'outgoing','peerId'=>$b];$rows=SecretsBackendMailbox::local($sample)['rows'];$ok(count(array_filter($rows,static fn($r)=>$r['id']==='transfer:'.$transfer&&$r['state']==='COMPLETED'))===1,'Transferred ownership remained pending.');
+$sample['native']['effects'][str_repeat('a',64)]=['id'=>str_repeat('a',64),'state'=>'QUARANTINED'];SecretsBackendMailbox::validate(SecretsBackendMailbox::local($sample));
+$sample['policy']['backupOrigin']=['status'=>'pending'];$waiting=SecretsBackendMailbox::local($sample)['rows'];$ok(count(array_filter($waiting,static fn($r)=>$r['type']==='backup-access'&&$r['state']==='CONFIRMATION_PENDING'))===1,'Untested backup setup claimed approval was ready.');
 $report=$peers[1]->meshReport($stores[1]->read()['state'],true,true);SecretsBackendMeshStatus::validate($report,$b);
 $report['mailbox']['rows'][0]['state']='PRIVATE-CANARY';$no(fn()=>SecretsBackendMeshStatus::validate($report,$b),'Signed mesh accepted arbitrary mailbox data.');
 echo "PASS mailbox: delivery vs approval, bilateral identity, stale/missing peers, secret exclusion and read-only projection\n";

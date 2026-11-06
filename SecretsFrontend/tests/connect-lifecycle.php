@@ -46,6 +46,9 @@ try{
  secReject(static fn()=>$invoke('session'),'Possession-tested candidate obtained general access.');
  secReject(static fn()=>$invoke('connectProof',['test'=>$test['test'],'credential'=>$assertion,'signature'=>secRawSign($browser,$bytes)]),'Possession proof was replayed.');
  $request=$primary;$review=$invoke('connectCandidateReview',['candidate'=>$candidate['candidate']])['data'];secExpect($review['digest']===$candidate['digest'],'Candidate digest differed across origins.');
+ $mailbox=$invoke('nativeOverviewStatus')['data']['mailbox'];$choices=$mailbox['approvals']['magic:'.$mailbox['nodes'][0]['id']]??[];
+ secExpect(count($choices)===1&&$choices[0]['operation']['kind']==='nativeConnectActivate'&&$choices[0]['operation']['candidate']===$candidate['candidate']&&$choices[0]['operation']['digest']===$candidate['digest'],'Mailbox did not expose the exact tested backup activation.');
+ secExpect(str_contains($choices[0]['summary'],$review['fingerprint']),'Mailbox omitted the backup credential fingerprint.');
  secReject(static fn()=>$approved(['kind'=>'nativeConnectActivate','candidate'=>$candidate['candidate'],'digest'=>str_repeat('0',64)]),'Changed candidate digest was admitted.');
  $approved(['kind'=>'nativeConnectActivate','candidate'=>$candidate['candidate'],'digest'=>$candidate['digest']]);
  $primarySession=$invoke('session')['data'];secExpect($primarySession['native']['backupOrigin']['status']==='active','Backup not activated.');

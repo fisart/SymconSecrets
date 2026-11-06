@@ -382,6 +382,18 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
             if ($consume) { unset($this->frame['ephemeral'][$id]); $this->dirty = true; } return $entry['body'];
         });
     }
+    /** Read-only, current-head, tested backup enrollment candidates; never a public report. */
+    public function pendingBackupCandidates():array {
+        return $this->locked(function():array{
+            $this->active();$s=$this->frame['state'];$p=$s['policy']['backupOrigin']??null;$out=[];
+            if(($p['status']??'')!=='pending')return [];
+            foreach($this->frame['ephemeral']as$id=>$e){
+                if($e['kind']!=='connect-candidate'||$e['expires']<time())continue;$c=$e['body'];
+                if(($c['expires']??0)<time()||!SecretsBackendCodec::same($c['head']??[],$this->current()['head'])||($c['origin']??null)!==$p['origin']||($c['generation']??null)!==$p['generation']||($c['entry']['tested']??false)!==true||($c['entry']['administrator']??null)!==$s['identity']['ownerId']||($c['rights']??null)!==SecretsBackendBackupOriginPolicy::rights($p))continue;
+                $out[$id]=$c;
+            }return $out;
+        });
+    }
     public function delete(string $id): void { $this->locked(function () use ($id): void { $this->active(); unset($this->frame['ephemeral'][$id]); $this->dirty = true; }); }
     public function replace(string $id, string $kind, array $body, int $expires): void
     {
@@ -434,6 +446,11 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
         $cipher=openssl_encrypt($plain,'aes-256-gcm',$this->key,OPENSSL_RAW_DATA,$iv,$tag,$context,16);if(!is_string($cipher))throw new RuntimeException('Provider response capture encryption failed.');
         self::publishFile($path,SecretsBackendCodec::json(['requestDigest'=>$requestDigest,'iv'=>SecretsBackendCodec::b64($iv),'tag'=>SecretsBackendCodec::b64($tag),'data'=>SecretsBackendCodec::b64($cipher)]));
         });
+    }
+    /** Presentation hint only; approval still authenticates the exact captured response. */
+    public function hasCapturedEffect(string $id):bool {
+        if(!preg_match('/^[a-f0-9]{64}$/D',$id))return false;
+        return $this->locked(function()use($id):bool{$this->active();return is_file($this->directory.'/completion-'.$id.'.json');});
     }
     public function readCapturedEffect(string $id,string $requestDigest): ?array
     {
