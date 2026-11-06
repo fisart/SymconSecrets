@@ -46,7 +46,7 @@ const {fixture,tick}=require('./ui-native.cjs');
   assert.equal(f.errors.length,0,f.errors.map(e=>e.message).join('\n'));f.dom.window.close();
  }
  // Safe discovery/status recovery retries once; it never asks for approval itself.
- for(const action of ['nativeSetupPreview','nativeSupportUploadStatus']){
+ for(const action of ['nativeSupportUploadStatus']){
   const f=await fixture(),w=f.dom.window,original=w.fetch;let attempts=0;const timers=[];const timeout=w.setTimeout.bind(w);w.setTimeout=(fn,ms,...args)=>ms===5000||ms===10000?(timers.push(fn),-ms):timeout(fn,ms,...args);
   w.fetch=async(url,options)=>{const q=JSON.parse(options.body);
    if(q.action==='nativeSupportUpload')return {ok:true,json:async()=>({job:'test-job',state:'queued'})};
@@ -54,7 +54,7 @@ const {fixture,tick}=require('./ui-native.cjs');
    return original(url,options);
   };
   w.document.querySelector('[data-tab=nativeMailbox]').click();await tick();
-  if(action==='nativeSetupPreview')f.$('setupFinish').click();else f.$('supportUpload').click();
+  f.$('supportUpload').click();
   await tick();await tick();await tick();assert.equal(attempts,2);assert.equal(f.calls.filter(q=>q.action==='approve').length,0);assert.equal(f.errors.length,0);w.close();
  }
  // A failed refresh cannot turn an expired session into an authenticated page.

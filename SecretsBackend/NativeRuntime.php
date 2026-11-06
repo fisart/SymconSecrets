@@ -8,6 +8,7 @@ require_once __DIR__.'/../SecretsFrontend/ConnectDiscovery.php';
 trait SecretsBackendNativeRuntime
 {
     private ?SecretsBackendPeerWork $peerWork=null;
+    private bool $peerSetupWork=false;
     private float $peerRequestStarted=0.0;
     private function nativePeer(?SecretsBackendNativeStore $store=null,?string $origin=null): SecretsBackendNativePeer
     {
@@ -73,8 +74,8 @@ trait SecretsBackendNativeRuntime
         try{
             if(!$this->ReadPropertyBoolean('Enabled')||!$this->nativeInitialized())return '[]';
             $this->nativeApplication();$store=$this->nativeStore();$peer=$this->nativePeer($store);
-            $v=$store->read()['state'];$setup=$peer->automaticSetup()->discoveryPending()||(SecretsBackendAutomaticSetup::enabled($v)&&($v['native']['automaticSetup']['requested']??false))||count(array_filter($v['outbox']['jobs'],static fn($j)=>$j['kind']==='SETUP_OFFER'))>0;if($setup&&function_exists('set_time_limit'))@set_time_limit(100);$max=$setup?SecretsBackendPeerWork::SETUP_BUDGET:SecretsBackendPeerWork::BUDGET;
-            $this->peerWork=new SecretsBackendPeerWork(null,SecretsBackendPeerWork::phpBudget((int)ini_get('max_execution_time'),microtime(true)-$started,$max),$max);
+            $v=$store->read()['state'];$setup=($peer->automaticSetup()->requestPending()||$peer->automaticSetup()->discoveryPending())||(SecretsBackendAutomaticSetup::enabled($v)&&($v['native']['automaticSetup']['requested']??false))||count(array_filter($v['outbox']['jobs'],static fn($j)=>in_array($j['kind'],['SETUP_OFFER','SETUP_ENROLL'],true)))>0;if($setup&&function_exists('set_time_limit'))@set_time_limit(100);$max=$setup?SecretsBackendPeerWork::SETUP_BUDGET:SecretsBackendPeerWork::BUDGET;
+            $this->peerSetupWork=$setup;$this->peerWork=new SecretsBackendPeerWork(null,SecretsBackendPeerWork::phpBudget((int)ini_get('max_execution_time'),microtime(true)-$started,$max),$max);
             $this->SetBuffer('PeerBudgetMs',(string)$this->peerWork->budgetMilliseconds());
             $effects=new SecretsBackendNativeEffects($store,function($effect){$this->peerWork->providerAttempt();return self::nativeProviderHTTPS($effect);});
             $phases=[
@@ -86,7 +87,7 @@ trait SecretsBackendNativeRuntime
             ];
             return SecretsBackendCodec::json($this->peerWork->run((int)$this->GetBuffer('NativeJobsPhase'),$phases,fn(int $next)=>$this->SetBuffer('NativeJobsPhase',(string)$next)));
         }catch(Throwable $e){$this->debug('request-rejected');return '[{"status":"RECOVERY_REQUIRED"}]';}
-        finally{$this->peerWork=null;IPS_SemaphoreLeave($lock);}
+        finally{$this->peerWork=null;$this->peerSetupWork=false;IPS_SemaphoreLeave($lock);}
     }
     protected function peerHTTPSPost(string $endpoint,string $bytes,array $policy,float $timeout):string
     {
@@ -94,7 +95,7 @@ trait SecretsBackendNativeRuntime
     }
     private function timedPeerHTTPS(array $target,string $bytes,array $policy,?SecretsBackendPeerWork $requestWork=null):string
     {
-        $timeout=($this->peerWork??$requestWork)?->attempt($target['endpoint'],str_starts_with((string)(json_decode($bytes,true,16)['kind']??''),'SETUP_'))??SecretsBackendNativeLegacyHTTPS::timeout($target['endpoint']);
+        $timeout=($this->peerWork??$requestWork)?->attempt($target['endpoint'],$this->peerSetupWork||str_starts_with((string)(json_decode($bytes,true,16)['kind']??''),'SETUP_'))??SecretsBackendNativeLegacyHTTPS::timeout($target['endpoint']);
         $started=microtime(true);$outcome='unconfirmed';
         try{$reply=$this->peerHTTPSPost($target['endpoint'],$bytes,$policy,$timeout);$outcome='response';return $reply;}
         catch(SecretsBackendNativePeerDeliveryFailure $e){$outcome=in_array($e->problem,SecretsBackendNativePeerDeliveryFailure::PROBLEMS,true)?$e->problem:'unconfirmed';throw $e;}
@@ -154,7 +155,7 @@ trait SecretsBackendNativeRuntime
         $origin=SecretsFrontendConfiguration::origin('https://'.$host);$primary=$this->ReadPropertyString('AdminOrigin');
         if($origin===$primary)return $origin;
         $s=$this->nativeStore()->read()['state'];$p=$s['policy']['backupOrigin']??null;
-        if(!SecretsBackendBackupOriginPolicy::full($s)||$origin!==$p['origin'])throw new RuntimeException('Unknown or revoked peer origin.');
+        if((!SecretsBackendBackupOriginPolicy::full($s)||$origin!==$p['origin'])&&$origin!==($s['native']['setupPeerBackupOrigin']??null))throw new RuntimeException('Unknown or revoked peer origin.');
         if(!SecretsFrontendConnectDiscovery::secureRoute($server,$origin,$ips,SecretsFrontendConnectDiscovery::local()))throw new RuntimeException('Magic peer transport is unverified.');return $origin;
     }
     protected function ProcessHookData()

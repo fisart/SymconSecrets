@@ -98,7 +98,7 @@ final class SecretsBackendNativeHealth
     public function statuses(array $s):array
     {
         $now=$this->now();$interval=self::interval($s);$local=null;try{$local=self::stamp($s);}catch(Throwable $e){}$out=[];
-        foreach($s['pairing']['peers']as$p){if(!self::eligible($p))continue;$r=$this->record($p);$last=$r['lastSuccessAt']??null;$fresh=$last!==null&&$now>=$last&&$now-$last<$interval*3;$attempt=$r['lastAttemptAt']??null;
+        foreach($s['pairing']['peers']as$p){if(!self::eligible($p))continue;$r=$this->record($p);$last=$r['lastSuccessAt']??null;$freshness=($s['native']['automaticSetup']['requested']??false)?1800:$interval*3;$fresh=$last!==null&&$now>=$last&&$now-$last<$freshness;$attempt=$r['lastAttemptAt']??null;
             $connection=$fresh?(($r['failures']??0)?'retrying':'reachable'):(($r['failures']??0)?'unreachable':'unknown');$sync=$fresh?($r['synchronization']??'unknown'):'unknown';$problem=$r['problem']??null;if(!$fresh&&$problem===null&&(($last!==null)||(!$r&&$p['lastSync']!==null&&$now-(strtotime($p['lastSync'])?:$now)>=$interval*3)))$problem='check-overdue';
             if(!$local){$sync='mismatch';$problem='local-state-invalid';}
             elseif(in_array($problem,['inconsistent-state','local-state-invalid'],true))$sync='mismatch';
@@ -106,7 +106,7 @@ final class SecretsBackendNativeHealth
             elseif($fresh&&$sync==='synchronizing'&&($r['mismatchSince']??null)!==null&&$now>=$r['mismatchSince']&&$now-$r['mismatchSince']>=$interval*3&&($r['mismatchChecks']??0)>=3)$sync='mismatch';
             if(($r['failures']??0)>=3||($attempt!==null&&$now<$attempt)){$connection=($r['failures']??0)>=3?'unreachable':'unknown';if($attempt!==null&&$now<$attempt)$problem='clock-changed';if($problem!=='inconsistent-state'&&$problem!=='local-state-invalid')$sync='unknown';}
             $pending=count(array_filter($s['outbox']['jobs'],static fn($j)=>$j['receiverId']===$p['id']));
-            $out[$p['id']]=['connection'=>$connection,'synchronization'=>$sync,'lastAttemptAt'=>$attempt,'lastSuccessAt'=>$last,'lastVerifiedAt'=>$r['lastVerifiedAt']??null,'pendingMessages'=>$pending,'problem'=>$problem,'failedChecks'=>$r['failures']??0,'intervalSeconds'=>$interval,'staleAfterSeconds'=>$interval*3,'remoteConflicts'=>$fresh?($r['remoteConflicts']??null):null];
+            $out[$p['id']]=['connection'=>$connection,'synchronization'=>$sync,'lastAttemptAt'=>$attempt,'lastSuccessAt'=>$last,'lastVerifiedAt'=>$r['lastVerifiedAt']??null,'pendingMessages'=>$pending,'problem'=>$problem,'failedChecks'=>$r['failures']??0,'intervalSeconds'=>$interval,'staleAfterSeconds'=>$freshness,'remoteConflicts'=>$fresh?($r['remoteConflicts']??null):null];
         }return $out;
     }
 }

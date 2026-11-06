@@ -28,7 +28,7 @@ final class SecretsBackendMeshStatus
         $url=null;foreach($urls as$candidate){$magic=preg_match('/^[a-z0-9]{32}\.ipmagic\.de$/D',(string)parse_url($candidate,PHP_URL_HOST))===1;if($magic===$backup){$url=$candidate;break;}}
         if($url===null)return ['state'=>'none','age'=>null];
         $r=$this->record($p,$url);$age=self::age($this->now(),$r['at']??null);
-        return ['state'=>$age===null||$age>=self::interval($s)*3?'unknown':($r['state']??'unknown'),'age'=>$age]+array_intersect_key($r,array_flip(['problem','httpStatus','certificateReason','failedChecks']))+['lastSuccessAge'=>self::age($this->now(),$r['lastSuccessAt']??null)];
+        return ['state'=>$age===null||$age>=(($s['native']['automaticSetup']['requested']??false)?1800:self::interval($s)*3)?'unknown':($r['state']??'unknown'),'age'=>$age]+array_intersect_key($r,array_flip(['problem','httpStatus','certificateReason','failedChecks']))+['lastSuccessAge'=>self::age($this->now(),$r['lastSuccessAt']??null)];
     }
     /** One exact approved route per worker tick; neither fallback nor a co-located shortcut proves that route. */
     public function tick():array {

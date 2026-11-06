@@ -161,7 +161,7 @@ final class SecretsBackendNativeOperations
         if($kind==='nativeSetupStop'){
             if(($s['native']['automaticSetup']['policy']['id']??$s['native']['setupProposal']['id']??null)!==$op['id'])throw new RuntimeException('Setup plan changed.');
             $s['native']['setupRevokedPlans']=array_values(array_unique([...($s['native']['setupRevokedPlans']??[]),$op['id']]));if(count($s['native']['setupRevokedPlans'])>64)throw new RuntimeException('Stopped-plan retention is full.');
-            unset($s['native']['automaticSetup'],$s['native']['setupProposal'],$s['native']['setupProposalSent']);$s['outbox']['jobs']=array_values(array_filter($s['outbox']['jobs'],static fn($j)=>$j['kind']!=='SETUP_OFFER'));return $s;
+            $s['native']['setupDelegationStopped']=true;unset($s['native']['automaticSetup'],$s['native']['setupProposal'],$s['native']['setupProposalSent'],$s['native']['globalSetupSecret']);$s['outbox']['jobs']=array_values(array_filter($s['outbox']['jobs'],static fn($j)=>!in_array($j['kind'],['SETUP_OFFER','SETUP_ENROLL'],true)));return $s;
         }
         if($kind==='nativeEmergencyGrant'){
             $s=SecretsBackendEmergency::applyGrant($s,$op['grant']);$p=$s['pairing']['peers'][$op['grant']['source']];
@@ -373,7 +373,7 @@ final class SecretsBackendNativeOperations
     {
         if(in_array($action,['nativeSetupPreview','nativeSetupRun'],true)){
             SecretsBackendNativePeer::exact($data,[]);$s=$this->store->read()['state'];$session=$this->store->get($this->session,'session');if(!SecretsBackendBackupOriginPolicy::credentialFull($s,$s['identity']['credentials'][$session['credential']]??[]))throw new RuntimeException('Full administrator access required.');
-            $setup=new SecretsBackendAutomaticSetup($this->store,$this->peer);if($action==='nativeSetupPreview'){return $setup->preview($this->session);}$this->store->rate('setup-start',3);$setup->start();return ['automaticSetup'=>$setup->status($this->store->read()['state'])];
+            $setup=new SecretsBackendAutomaticSetup($this->store,$this->peer);if($action==='nativeSetupPreview'){return $setup->preview($this->session);}$this->store->rate('setup-start',3);$setup->requestStart($session);return ['automaticSetup'=>$setup->status($this->store->read()['state'])];
         }
         if(in_array($action,['nativeSupportStatus','nativeSupportUpload','nativeSupportUploadStatus'],true)){
             SecretsBackendNativePeer::exact($data,$action==='nativeSupportStatus'?[]:($action==='nativeSupportUploadStatus'?['job']:['instance']));

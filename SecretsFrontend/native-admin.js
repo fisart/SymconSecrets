@@ -444,46 +444,33 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden&&supportJo
 let automaticSetupBusy=false,automaticSetupPreview=null,automaticSetupNotice="",automaticSetupTimer=null;
 function renderAutomaticSetup(){
  if(automaticSetupBusy)return;
- const n=snapshot?.native,a=n?.automaticSetup||{},policy=a.policy||automaticSetupPreview;
+ const a=snapshot?.native?.automaticSetup||{},members=a.members||[],ready=members.filter(m=>m.ready&&(m.local||m.fresh)).length;
  $('setupFinish').disabled=!fullAdministration();$('setupStop').hidden=!a.policy;
- $('setupFinish').textContent=!a.authorized&&policy?'Authorize automatic setup on this server':'Finish setup on all servers';
- $('setupProgress').textContent=!policy&&automaticSetupNotice?automaticSetupNotice:!policy?'First, this button finds the servers reached through your existing approved connections. You then review the server list and authorize this installation once.':!a.authorized?'One-time authorization required on this server. Review the exact servers below, then authorize with your passkey.':a.running?'Setup is running in the background. Replies still outstanding remain waiting; unreachable servers are retried.':a.completedAt?'This server’s setup completed at '+new Date(a.completedAt*1000).toLocaleString()+'. Select Finish setup to refresh and verify all servers.':'Automatic setup is authorized. Select Finish setup to continue.';
+ $('setupFinish').textContent='Finish setup on all servers';
+ $('setupProgress').textContent=automaticSetupNotice||(members.length&&ready===members.length&&!a.running?'OK — all '+members.length+' servers completed mesh setup. Primary and backup routes, synchronization and emergency access were verified.':a.running?'Setup is running in the background. '+ready+' of '+members.length+' servers ready. Slow servers are retried automatically.':a.policy||a.report?.state==='incomplete'?'Setup is incomplete. See the connection details and error report below. Select Finish setup to resume.':'Click once to configure the mesh across your existing trusted Global connections.');
  const holder=$('setupMembers');holder.replaceChildren();
- const members=a.members?.length?a.members:(policy?.members||[]).map(m=>({id:m.descriptor.vaultId,name:new URL(m.descriptor.endpoint).host,local:m.descriptor.vaultId===n?.peerDescriptor?.vaultId,url:m.frontend?new URL('/hook/secrets_frontend_'+m.frontend,m.descriptor.endpoint).href:null,authorized:null,backupStatus:'unknown',fresh:false}));
  for(const m of members){
-  const actions=[];if(!m.local&&m.url)actions.push([m.authorized?'Open server / complete device steps':'Authorize on this server',()=>window.open(m.url+'#automatic-setup','_blank','noopener')]);
-  if(m.local&&a.authorized&&!m.backupReady){
-   const choices=n?.mailbox?.approvals?.['magic:'+m.id]||[];
-   for(const choice of choices)actions.push([choice.label,()=>approveMailboxEntry(choice)]);
-   if(!choices.length)actions.push(['Continue backup passkey setup',()=>{tab('nativeKeys');if(n.backupOrigin?.status==='pending')$('connectOpen').click();else $('nativeDiscoverConnect').click();}]);
-  }
-  const description=!a.authorized?'Review this server’s HTTPS address and identity before authorizing the plan.':m.deliveryPending?'A confirmation request is still in progress; waiting for this server’s reply.':!m.fresh&&!m.local?(m.deliveryProblem?'Delivery is being retried ('+m.deliveryProblem+'); approval status is unconfirmed. ':'Waiting for a current authenticated reply; the approval status is unconfirmed.'):m.authorized===false?'Waiting for one-time authorization on this server.':m.authorized===null?'Waiting for the server’s first authenticated reply.':!m.backupReady?'Authorization received. Backup access needs a device step on this server.':m.ready?'This server completed its setup.':'Authorized; connections, emergency approvals or background verification are still in progress.';
-  nativeRow(holder,m.name+(m.local?' · this server':''),description+(!m.local&&m.checkedAt?' Last confirmed reply: '+new Date(m.checkedAt*1000).toLocaleString()+'.':''),actions);
+  const details=m.details||{};
+  const description=m.ready&&(m.local||m.fresh)?'Mesh setup verified.':m.deliveryPending?'Waiting for this server’s reply.':m.authorized===false?'Automatic authorization has not been accepted. Check delivery errors and the installed module version.':!m.fresh&&!m.local?'Waiting for a fresh authenticated reply.':'Completing connections and verification.';
+  nativeRow(holder,m.name+(m.local?' · this server':''),description,[]);
+  if(details.backupRouteProblem)nativeRow(holder,m.name+' · Magic route',details.backupRouteProblem,[]);
+  for(const l of details.links||[])nativeRow(holder,m.name+' → '+l.server,'Connection: '+(l.connected?'active':'pending')+' · Primary: '+l.primary?.state+' · Backup: '+l.backup?.state+' · Synchronization: '+l.synchronization+' · Emergency receive/send: '+(l.emergencyReceive?'OK':'pending')+'/'+(l.emergencySend?'OK':'pending')+' · Route acknowledgement: '+(l.routesAcknowledged?'OK':'pending'),[]);
+  if(details.queuedMessages||details.conflicts)nativeRow(holder,m.name+' · outstanding','Queued messages: '+details.queuedMessages+' · Conflicts: '+details.conflicts,[]);
  }
- if(a.authorized){const ready=members.filter(m=>m.authorized&&m.ready&&(m.local||m.fresh)).length;$('setupProgress').textContent=ready+' of '+members.length+' servers ready. '+(ready===members.length?'Setup is complete.':a.running?'Setup is running; waiting for the steps listed below.':'Select Finish setup to refresh outstanding replies and verification.');}
- if(policy){const p=document.createElement('p');p.className='muted break';p.textContent='Plan '+policy.id+' · '+policy.members.length+' explicitly reviewed server(s). Permissions: connections, signed primary/Magic routes, Global-only emergency reads and confirmed duplicate cleanup. Local values, secret edits, administrator creation, hardware policy and OAuth operations are outside this authorization.';holder.append(p);}
-}
-async function continueSetupDiscovery(ticket){
- if(automaticSetupBusy||ticket!==generation)return;
- clearTimeout(automaticSetupTimer);automaticSetupBusy=true;
- try{
-  const r=await api('nativeSetupPreview',{},ticket);ticket=generation;
-  if(r.complete){automaticSetupPreview=r.policy;automaticSetupNotice='';}
-  else{
-   automaticSetupNotice='Found '+(r.found??'?')+' servers; confirmed '+(r.checked??0)+' connections. '+(r.message||'Waiting for background discovery.');
-   for(const w of r.waiting||[])automaticSetupNotice+=' '+w.server+' · '+w.step+': '+w.message+(w.retryAt?' Next retry after '+new Date(w.retryAt*1000).toLocaleTimeString()+'.':'');
-   if(!r.blocked)automaticSetupTimer=setTimeout(()=>continueSetupDiscovery(ticket),5000);
-  }
- }catch(e){if(ticket===generation){automaticSetupNotice='Discovery progress could not be read: '+e.message+' Confirmed work is retained. Retrying automatically.';automaticSetupTimer=setTimeout(()=>continueSetupDiscovery(ticket),15000);}}
- finally{automaticSetupBusy=false;renderAutomaticSetup();}
+ for(const w of a.report?.discovery?.waiting||[])nativeRow(holder,w.server,w.step+': '+w.message,[]);
+ const errors=[...(a.report?.errors||[]),...members.filter(m=>!m.local).flatMap(m=>m.details?.errors||[])];
+ const deliveries=members.flatMap(m=>(m.details?.links||[]).filter(l=>l.delivery).map(l=>({server:m.name,target:l.server,...l.delivery})));
+ if(errors.length||deliveries.length){const pre=document.createElement('pre');pre.className='break';pre.textContent='Attempt history (earlier failures may have recovered):\n'+JSON.stringify({errors,deliveries},null,2);holder.append(pre);}
 }
 run($('setupFinish'),async ticket=>{
- if(automaticSetupBusy)return;
+ if(automaticSetupBusy)return;automaticSetupBusy=true;automaticSetupNotice='';
+ try{const r=await api('nativeSetupRun',{},ticket);snapshot.native.automaticSetup=r.automaticSetup;message('Mesh setup started. Progress and the final result will appear here.');}
+ catch(e){automaticSetupNotice='Setup request was not confirmed: '+e.message+' Refresh status before retrying; the server may already be working.';}
+ finally{automaticSetupBusy=false;renderAutomaticSetup();}
+});
+$('setupReport').addEventListener('click',()=>{
  const a=snapshot?.native?.automaticSetup||{};
- if(a.authorized){automaticSetupBusy=true;try{const r=await api('nativeSetupRun',{},ticket);snapshot.native.automaticSetup=r.automaticSetup;message('Setup requested across the approved servers. Progress will update here.');}finally{automaticSetupBusy=false;renderAutomaticSetup();}return;}
- const p=a.policy||automaticSetupPreview;
- if(p){await approveMailboxEntry({operation:{kind:'nativeSetupAuthorize',policy:p},summary:'Authorize only the displayed '+p.members.length+' server(s) for full-mesh connections, approved routes, reciprocal Global-only emergency reads and confirmed obsolete-grant cleanup. Credentials stay private. Browser passkey steps remain on their own installation.'});automaticSetupPreview=null;renderAutomaticSetup();return;}
- await continueSetupDiscovery(ticket);
-
+ const blob=new Blob([JSON.stringify({generatedAt:new Date().toISOString(),setup:a},null,2)],{type:'application/json'});
+ const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download='mesh-setup-report.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
 run($('setupStop'),()=>{const a=snapshot?.native?.automaticSetup;if(!a?.policy)return;return approveMailboxEntry({operation:{kind:'nativeSetupStop',id:a.policy.id},summary:'Stop this server’s automatic setup and invalidate its private setup capabilities. Existing connections and emergency approvals are retained.'});});

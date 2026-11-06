@@ -15,6 +15,7 @@ require_once __DIR__ . '/../SecretsFrontend/Configuration.php';
 /** Public delivery diagnostics contain fixed categories and numeric codes only. */
 final class SecretsBackendNativePeerDeliveryFailure extends RuntimeException
 {
+    public array $attempts=[];
     public const PROBLEMS=['dns','connect','timeout','certificate','tls','http','response-size','invalid-reply','transport','unconfirmed'];
     public const CERTIFICATE_REASONS=['issuer-untrusted','chain-unverified','hostname-mismatch','expired','not-yet-valid','self-signed','revoked','ca-store-unavailable','pin-mismatch','unknown'];
     public function __construct(public readonly string $problem, public readonly int $httpStatus=0, public readonly int $curlCode=0,
@@ -150,7 +151,7 @@ final class SecretsBackendNativePeer
         self::exact($m,['format','kind','sender','receiver','pairingId','epoch','id','sequence','payload','signature']);
         foreach(['sender','receiver','pairingId','id']as$key){if(!is_string($m[$key]))throw new RuntimeException('Invalid peer identity.');self::uuid($m[$key]);}
         self::decimal($m['epoch']);self::decimal($m['sequence']);
-        if($m['format']!=='SECB.Peer.1'||$m['receiver']!==$this->descriptor()['vaultId']||!in_array($m['kind'],['SETUP_INFO','SETUP_OFFER','SETUP_HELLO','SETUP_ADVANCE','SETUP_PRUNE','MESH_STATUS','EMERGENCY_OFFER','HEALTH','ROUTES','GLOBAL_ENABLE','PAIR_REQUEST','PAIR_ACCEPT','SYNC','STATUS','RESYNC','REVOKE','OWNER_OFFER','TREE_SYNC'],true))throw new RuntimeException('Wrong native peer purpose or recipient.');
+        if($m['format']!=='SECB.Peer.1'||$m['receiver']!==$this->descriptor()['vaultId']||!in_array($m['kind'],['SETUP_INFO','SETUP_ENROLL','SETUP_OFFER','SETUP_HELLO','SETUP_ADVANCE','SETUP_PRUNE','MESH_STATUS','EMERGENCY_OFFER','HEALTH','ROUTES','GLOBAL_ENABLE','PAIR_REQUEST','PAIR_ACCEPT','SYNC','STATUS','RESYNC','REVOKE','OWNER_OFFER','TREE_SYNC'],true))throw new RuntimeException('Wrong native peer purpose or recipient.');
         if(in_array($m['kind'],['SETUP_HELLO','SETUP_ADVANCE','SETUP_PRUNE'],true)){
             $cur=$this->store->read();$policy=$cur['state']['native']['setupProposal']??null;$sender=null;
             if($policy&&$policy['id']===$m['pairingId'])foreach($policy['members']as$member)if($member['descriptor']['vaultId']===$m['sender'])$sender=$member['descriptor'];
@@ -200,6 +201,12 @@ final class SecretsBackendNativePeer
             return $this->reply($m,$peer['descriptor'],$digest,['status'=>'EMERGENCY_OFFER_RECEIVED','grantId'=>$payload['grantId']]);
         }
         if($m['kind']==='SETUP_INFO'){self::exact($payload,['format']);if($payload['format']!==SecretsBackendAutomaticSetup::FORMAT)throw new RuntimeException('Invalid setup discovery purpose.');return $this->reply($m,$peer['descriptor'],$digest,['status'=>'SETUP_INFO']+$this->automaticSetup()->info($current['state']));}
+        if($m['kind']==='SETUP_ENROLL'){
+            self::exact($payload,['policy','token']);$setup=$this->automaticSetup();
+            if(in_array($payload['policy']['id']??'', $current['state']['native']['setupRevokedPlans']??[],true))return $this->reply($m,$peer['descriptor'],$digest,['status'=>'SETUP_STOPPED']);
+            $this->store->change($current['head'],$m['id'],$digest,fn($s)=>$setup->enroll($s,$payload['policy'],$payload['token'],null,$m['sender']),['action'=>'setup-enroll-trusted-mesh','actor'=>$m['sender'],'target'=>$m['pairingId']]);
+            return $this->reply($m,$peer['descriptor'],$digest,['status'=>'SETUP_ENROLLED']);
+        }
         if($m['kind']==='SETUP_OFFER'){
             self::exact($payload,['policy']);$setup=$this->automaticSetup();
             if(in_array($payload['policy']['id']??'', $current['state']['native']['setupRevokedPlans']??[],true))return $this->reply($m,$peer['descriptor'],$digest,['status'=>'SETUP_STOPPED']);
@@ -300,14 +307,14 @@ final class SecretsBackendNativePeer
     {
         $target=$peer['descriptor'];$m=$this->envelope($target,$kind,$peer['pairingId'],$peer['epoch'],$id,$sequence,$payload);$bytes=SecretsBackendCodec::json($m);
         if($this->transport===null)throw new SecretsBackendNativePeerDeliveryFailure('transport');
-        $routes=$peer['routes']['endpoints']??[$target['endpoint']];$failure=null;foreach($routes as$endpoint){$route=$target;$route['endpoint']=$endpoint;
-        $responded=false;try{$policy=SecretsBackendNativeLegacyHTTPS::origin($endpoint)===SecretsBackendNativeLegacyHTTPS::origin($target['endpoint'])?($peer['httpsPolicy']??['mode'=>'strict']):['mode'=>'strict'];$response=($this->transport)($route,$bytes,$policy);$responded=true;
+        $routes=$peer['routes']['endpoints']??[$target['endpoint']];$failure=null;$attempts=[];foreach($routes as$endpoint){$route=$target;$route['endpoint']=$endpoint;
+        $started=microtime(true);$responded=false;try{$policy=SecretsBackendNativeLegacyHTTPS::origin($endpoint)===SecretsBackendNativeLegacyHTTPS::origin($target['endpoint'])?($peer['httpsPolicy']??['mode'=>'strict']):['mode'=>'strict'];$response=($this->transport)($route,$bytes,$policy);$responded=true;
 $reply=SecretsFrontendConfiguration::decodeBounded($response,65536,32);self::exact($reply,['format','kind','sender','receiver','pairingId','epoch','id','sequence','payload','signature']);
         if($reply['format']!=='SECB.Peer.1'||$reply['kind']!=='REPLY'||$reply['sender']!==$target['vaultId']||$reply['receiver']!==$this->descriptor()['vaultId']||$reply['pairingId']!==$peer['pairingId']||$reply['epoch']!==$peer['epoch']||$reply['id']!==$id||$reply['sequence']!==$sequence)throw new RuntimeException('Peer reply was misbound.');
         self::verify($reply,$target['signKey']);$body=SecretsFrontendConfiguration::decode($this->store->openPeer($reply['payload']));
         if(($body['requestId']??'')!==$id||($body['requestKind']??'')!==$kind||($body['requestDigest']??'')!==self::logical($m,$payload))throw new RuntimeException('Peer acknowledgement does not match the immutable request.');
         return $body;
-        }catch(Throwable $e){$failure=$e instanceof SecretsBackendNativePeerDeliveryFailure?$e:new SecretsBackendNativePeerDeliveryFailure($responded?'invalid-reply':'unconfirmed');}}throw $failure??new SecretsBackendNativePeerDeliveryFailure('transport');
+        }catch(Throwable $e){$failure=$e instanceof SecretsBackendNativePeerDeliveryFailure?$e:new SecretsBackendNativePeerDeliveryFailure($responded?'invalid-reply':'unconfirmed');$attempts[]=['route'=>$endpoint,'elapsedMs'=>(int)round((microtime(true)-$started)*1000),'code'=>in_array($failure->problem,SecretsBackendNativePeerDeliveryFailure::PROBLEMS,true)?$failure->problem:'unconfirmed','httpStatus'=>max(0,min(599,$failure->httpStatus)),'certificateReason'=>in_array($failure->certificateReason,SecretsBackendNativePeerDeliveryFailure::CERTIFICATE_REASONS,true)?$failure->certificateReason:'unknown'];$failure->attempts=$attempts;}}throw $failure??new SecretsBackendNativePeerDeliveryFailure('transport');
     }
     private function recoverGlobalGap(array $peer,array $job): void
     {
@@ -324,8 +331,9 @@ $reply=SecretsFrontendConfiguration::decodeBounded($response,65536,32);self::exa
     public function ownRoutes(array $state): array
     {
         $primary=$this->store->identity()['binding']['origin'].'/hook/secrets_peer_'.$this->descriptor()['backend'];$routes=[];
-        if(SecretsBackendBackupOriginPolicy::full($state))$routes[]=$state['policy']['backupOrigin']['origin'].'/hook/secrets_peer_'.$this->descriptor()['backend'];
-        $routes[]=$primary;return array_values(array_unique($routes));
+        $backup=$state['native']['setupPeerBackupOrigin']??(SecretsBackendBackupOriginPolicy::full($state)?$state['policy']['backupOrigin']['origin']:null);
+        if(is_string($backup)&&preg_match('~^https://[a-z0-9]{32}\.ipmagic\.de$~D',$backup))$routes[]=$backup.'/hook/secrets_peer_'.$this->descriptor()['backend'];
+        $routes[]=$primary;return array_values(array_unique(isset($state['native']['setupPeerBackupOrigin'])?[$primary,...$routes]:$routes));
     }
     private function queueRoutes(): void
     {
@@ -359,7 +367,7 @@ $reply=SecretsFrontendConfiguration::decodeBounded($response,65536,32);self::exa
             if(!is_array($peer)||$peer['pairingId']!==$job['pairingId']||$peer['epoch']!==$job['epoch']||(!$peer['active']&&!in_array($job['kind'],['PAIR_REQUEST','REVOKE'],true)))break;
             try{$reply=$this->exchange($peer,$job['kind'],$job['payload'],$job['id'],$job['sequence']);
                 if($this->automaticGlobal&&$job['kind']==='SYNC'&&($reply['status']??'')==='RESYNC_REQUIRED'){$this->recoverGlobalGap($peer,$job);$results[]=['id'=>$job['id'],'status'=>'RESYNCHRONIZING'];continue;}
-                $expected=match($job['kind']){'SETUP_OFFER'=>['SETUP_OFFER_RECEIVED','SETUP_STOPPED'],'EMERGENCY_OFFER'=>['EMERGENCY_OFFER_RECEIVED'],'ROUTES'=>['ROUTES_ACCEPTED'],'GLOBAL_ENABLE'=>['GLOBAL_ENABLED'],'PAIR_REQUEST'=>['PENDING_APPROVAL','ACTIVE'],'PAIR_ACCEPT'=>['ACTIVE'],'SYNC','RESYNC'=>['APPLIED'],'REVOKE'=>['REVOKED'],'OWNER_OFFER'=>['OFFER_RECEIVED'],'TREE_SYNC'=>['TREE_APPLIED'],default=>[]};
+                $expected=match($job['kind']){'SETUP_ENROLL'=>['SETUP_ENROLLED','SETUP_STOPPED'],'SETUP_OFFER'=>['SETUP_OFFER_RECEIVED','SETUP_STOPPED'],'EMERGENCY_OFFER'=>['EMERGENCY_OFFER_RECEIVED'],'ROUTES'=>['ROUTES_ACCEPTED'],'GLOBAL_ENABLE'=>['GLOBAL_ENABLED'],'PAIR_REQUEST'=>['PENDING_APPROVAL','ACTIVE'],'PAIR_ACCEPT'=>['ACTIVE'],'SYNC','RESYNC'=>['APPLIED'],'REVOKE'=>['REVOKED'],'OWNER_OFFER'=>['OFFER_RECEIVED'],'TREE_SYNC'=>['TREE_APPLIED'],default=>[]};
                 if(!in_array($reply['status']??'',$expected,true))throw new RuntimeException('Peer did not acknowledge the expected operation.');
                 if(in_array($job['kind'],['SYNC','RESYNC','TREE_SYNC'],true)&&(($reply['treeId']??'')!==($job['payload']['treeId']??$job['payload']['tree']['treeId'])||($reply['revision']??'')!==($job['payload']['revision']??$job['payload']['tree']['revision'])||($reply['sequence']??'')!==$job['sequence']||($reply['nodeDigest']??'')!==($job['payload']['nodeDigest']??$job['payload']['tree']['nodeDigest'])))throw new RuntimeException('Peer receipt names another snapshot.');
                 $latest=$this->store->read();$this->store->change($latest['head'],$job['ackId'],self::digest($reply),static function($s)use($job,$reply){
@@ -373,7 +381,7 @@ $reply=SecretsFrontendConfiguration::decodeBounded($response,65536,32);self::exa
                 $key='backoff:'.$job['id'];try{$backoff=$this->store->get($key,'delivery-backoff');}catch(Throwable $ignored){$backoff=['attempts'=>0];}
                 $attempts=min(20,$backoff['attempts']+1);$body=['attempts'=>$attempts,'lastAttemptAt'=>time(),'nextAttemptAt'=>time()+min(300,2**$attempts),
                     'problem'=>$e instanceof SecretsBackendNativePeerDeliveryFailure&&in_array($e->problem,SecretsBackendNativePeerDeliveryFailure::PROBLEMS,true)?$e->problem:'unconfirmed',
-                    'httpStatus'=>$e instanceof SecretsBackendNativePeerDeliveryFailure?$e->httpStatus:0,'curlCode'=>$e instanceof SecretsBackendNativePeerDeliveryFailure?$e->curlCode:0];
+                    'httpStatus'=>$e instanceof SecretsBackendNativePeerDeliveryFailure?$e->httpStatus:0,'curlCode'=>$e instanceof SecretsBackendNativePeerDeliveryFailure?$e->curlCode:0,'routeAttempts'=>$e instanceof SecretsBackendNativePeerDeliveryFailure?$e->attempts:[]];
                 $body+=SecretsBackendNativePeerDeliveryFailure::tlsDetails($e instanceof SecretsBackendNativePeerDeliveryFailure?['tlsVerifyResult'=>$e->tlsVerifyResult,'certificateReason'=>$e->certificateReason,'caTrust'=>$e->caTrust]:[]);
                 try{$this->store->replace($key,'delivery-backoff',$body,time()+3600);}catch(Throwable $ignored){$this->store->put($key,'delivery-backoff',$body,time()+3600);}
                 $results[]=['id'=>$job['id'],'status'=>'RETRY_PENDING'];break;
@@ -390,7 +398,7 @@ $reply=SecretsFrontendConfiguration::decodeBounded($response,65536,32);self::exa
                 foreach(['attempts','lastAttemptAt','nextAttemptAt','httpStatus','curlCode']as$key)$safe[$key]=max(0,(int)($b[$key]??0));
                 $safe['problem']=in_array($b['problem']??'',SecretsBackendNativePeerDeliveryFailure::PROBLEMS,true)?$b['problem']:'unconfirmed';
             }catch(Throwable $ignored){}
-            $safe+=SecretsBackendNativePeerDeliveryFailure::tlsDetails($b??[]);unset($b);
+            $safe['routeAttempts']=$b['routeAttempts']??[];$safe+=SecretsBackendNativePeerDeliveryFailure::tlsDetails($b??[]);unset($b);
             $out[$job['receiverId']]=$safe;
         }return $out;
     }
