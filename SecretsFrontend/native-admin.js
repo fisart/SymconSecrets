@@ -13,6 +13,20 @@ function nativeSelectionChanged(){if($('globalScopeStatus'))$('globalScopeStatus
 function nativeSuggestProvider(){if(!$('nativeProviderURL').value&&!nativeProviderId){const entries=[];for(const scope of ['local','global'])for(const entry of snapshot[scope]||[])entries.push({scope,path:entry.path,type:entry.type});const find=names=>entries.filter(x=>x.type==='string'&&names.includes(String(x.path.at(-1)).replace(/[^a-z]/gi,'').toLowerCase()));const refresh=find(['refreshtoken']),secret=find(['clientsecret']);if(refresh.length===1){$('nativeProviderRefreshScope').value=refresh[0].scope;$('nativeProviderRefreshPath').value=JSON.stringify(refresh[0].path);$('nativeProviderResultScope').value=refresh[0].scope;$('nativeProviderResultPath').value=JSON.stringify(refresh[0].path.slice(0,-1));}if(secret.length===1){$('nativeProviderSecretScope').value=secret[0].scope;$('nativeProviderSecretPath').value=JSON.stringify(secret[0].path);}}}
 let overviewBusy=false,overviewStale=false;
 let meshAttention=0,meshPending=0,meshFallback=0,meshReceivedAt=0,meshSelected=null,meshFocusSelected=false,meshDescriptions=new Map();
+function renderMeshDetails(){
+ const description=meshDescriptions.get(meshSelected)||'',detail=$('meshCellDetail'),dialog=$('meshDetailsDialog');
+ detail.hidden=!description;
+ detail.textContent=description;
+ $('meshDetailsText').textContent=description;
+ if(!description&&dialog.open)dialog.close();
+}
+function showMeshDetails(selection){
+ meshSelected=selection;
+ renderMeshDetails();
+ const dialog=$('meshDetailsDialog');
+ if($('meshDetailsText').textContent&&!dialog.open)dialog.showModal();
+}
+$('meshDetailsClose').addEventListener('click',()=>$('meshDetailsDialog').close());
 function renderMeshGraph(nodes,reports,item,fresh,cells,localId){
  const host=$('meshGraph');host.replaceChildren();const selector=$('meshFocus'),previous=selector.value;selector.replaceChildren();
  for(const [value,label]of [['all','All connections'],...nodes.map(n=>[n.id,n.name])]){const o=document.createElement('option');o.value=value;o.textContent=label;selector.append(o);}selector.value=!meshFocusSelected&&nodes.length>8?localId:[...selector.options].some(o=>o.value===previous)?previous:(nodes.length>8?localId:'all');
@@ -22,7 +36,13 @@ function renderMeshGraph(nodes,reports,item,fresh,cells,localId){
  const make=(tag,attrs={},text)=>{const e=document.createElementNS(ns,tag);for(const [k,v]of Object.entries(attrs))e.setAttribute(k,String(v));if(text!==undefined)e.textContent=text;return e;};
  const colors={ok:'#18864b',error:'#d44035',unknown:'#d99500',none:'#8b929c'},positions=new Map();
  nodes.forEach((n,i)=>{const angle=-Math.PI/2+2*Math.PI*i/nodes.length;positions.set(n.id,nodes.length===1?[width/2,110]:nodes.length<=8?[width/2+300*Math.cos(angle),height/2+275*Math.sin(angle)]:[120+(i%cols)*230,100+Math.floor(i/cols)*170]);});
- const interactive=(element,label,selection)=>{element.setAttribute('tabindex','0');element.setAttribute('role','button');element.setAttribute('aria-label',label);element.append(make('title',{},label));meshDescriptions.set(selection,label);const select=()=>{meshSelected=selection;$('meshCellDetail').hidden=false;$('meshCellDetail').textContent=label;};element.addEventListener('click',select);element.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select();}});};
+ const interactive=(element,label,selection)=>{
+  element.setAttribute('tabindex','0');element.setAttribute('role','button');element.setAttribute('aria-label',label);
+  element.setAttribute('aria-haspopup','dialog');element.setAttribute('aria-controls','meshDetailsDialog');
+  meshDescriptions.set(selection,label);
+  element.addEventListener('click',()=>showMeshDetails(selection));
+  element.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();showMeshDetails(selection);}});
+ };
  for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){
   const a=nodes[i],b=nodes[j];if(focus!=='all'&&a.id!==focus&&b.id!==focus)continue;
   const ab=cells.get(a.id+'|'+b.id),ba=cells.get(b.id+'|'+a.id);if(!ab?.paired&&!ba?.paired)continue;
@@ -48,7 +68,7 @@ function renderMeshGraph(nodes,reports,item,fresh,cells,localId){
 
 function renderMeshMatrix(){
  const host=$('meshMatrix');if(!host)return;host.replaceChildren();$('meshWarnings').replaceChildren();$('meshWarnings').hidden=true;meshDescriptions=new Map();meshAttention=0;meshPending=0;meshFallback=0;const n=snapshot?.native,m=n?.mesh;
- const info=$('meshMatrixInfo');if(!m){$('meshGraph').replaceChildren();$('meshCellDetail').hidden=true;$('meshCellDetail').textContent='';meshSelected=null;meshFocusSelected=false;info.textContent='Mesh reports are not available yet. Update each installation; unknown health is never treated as healthy.';return;}
+ const info=$('meshMatrixInfo');if(!m){$('meshGraph').replaceChildren();meshSelected=null;renderMeshDetails();meshFocusSelected=false;info.textContent='Mesh reports are not available yet. Update each installation; unknown health is never treated as healthy.';return;}
  const elapsed=meshReceivedAt?Math.max(0,(Date.now()-meshReceivedAt)/1000):0,invalid=overviewStale||!meshReceivedAt||Date.now()<meshReceivedAt;
  const rows=new Map([[m.localId,{id:m.localId,name:'This installation',direct:true}]]),reports=new Map();
  for(const x of m.reports||[]){reports.set(x.report.id,x);rows.set(x.report.id,{id:x.report.id,name:x.report.name,direct:true});}
@@ -91,7 +111,7 @@ function renderMeshMatrix(){
   }body.append(tr);
  }
  renderMeshGraph(nodes,reports,item,fresh,cells,m.localId);
- if(meshSelected&&meshDescriptions.has(meshSelected)){detail.hidden=false;detail.textContent=meshDescriptions.get(meshSelected);}else{detail.hidden=true;detail.textContent='';}
+ renderMeshDetails();
  meshAttention=problems;
  info.textContent=(m.unavailable?'Mesh diagnostics are temporarily unavailable. ':'')+(invalid?'Refresh failed or page data is stale. ':'')+nodes.length+' known node(s). '+(problems?problems+' health warning(s). ':'')+'Rows show the observing installation; A means the row may read Global secrets from the column. Reports are authenticated observations, not proof of current availability. '+(nodes.some(n=>!n.direct)?'Indirect nodes remain unknown until directly paired. ':'')+([...reports.values()].some(x=>x.report.truncated)?'Some remote detail is omitted to protect journal capacity; missing details remain unknown. ':'')+(rows.size>=64?'Display limited to 64 known nodes. ':'');
 }
