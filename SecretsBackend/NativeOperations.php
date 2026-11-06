@@ -359,7 +359,7 @@ final class SecretsBackendNativeOperations
             SecretsBackendNativePeer::exact($data,$action==='nativeSupportStatus'?[]:['instance']);
             $s=$this->store->read()['state'];$session=$this->store->get($this->session,'session');
             if(!SecretsBackendBackupOriginPolicy::credentialFull($s,$s['identity']['credentials'][$session['credential']]??[]))throw new RuntimeException('Full administrator access required.');
-            if($action==='nativeSupportStatus')return ['targets'=>SecretsBackendSupportReport::targets()];
+            if($action==='nativeSupportStatus')return SecretsBackendSupportReport::discovery()+['platform'=>$s['policy']['origin']];
             if(!is_int($data['instance']))throw new RuntimeException('Select a Configuration Backup installation.');
             $this->store->rate('support-upload:'.$s['native']['vaultId'],2);
             return SecretsBackendSupportReport::upload($data['instance']);

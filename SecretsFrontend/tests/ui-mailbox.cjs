@@ -17,7 +17,9 @@ const {fixture,tick}=require('./ui-native.cjs');
  assert.equal($('supportUpload').disabled,true);$('supportConsent').checked=true;$('supportConsent').dispatchEvent(new f.dom.window.Event('change'));assert.equal($('supportUpload').disabled,false);
  $('supportUpload').click();await tick();$('supportUpload').click();assert.equal(uploads,1);assert.match($('supportResult').textContent,/waiting for GitHub/);
  resolve({ok:true,json:async()=>({ok:true,repository:targets[0].repository,branch:'main',commit:'a'.repeat(40)})});await tick();await tick();assert.match($('supportResult').textContent,/Saved to.*commit a{40}/);assert.equal($('supportConsent').checked,false);assert.equal($('supportUpload').disabled,true);
- targets[0].enabled=false;$('mailboxRefresh').click();await tick();await tick();assert.match($('supportDestination').textContent,/Enable and save/);assert.equal($('supportUpload').disabled,true);
+ targets[0].enabled=false;$('mailboxRefresh').click();await tick();await tick();assert.match($('supportDestination').textContent,/3. Choose uploads and diagnostics.*Upload readable Secrets diagnostics.*Apply changes/);assert.equal($('supportUpload').disabled,true);
+ targets=[];$('supportRefresh').click();await tick();await tick();assert.match($('supportDestination').textContent,/No Configuration Backup instance was found on this server/);assert.match($('supportDestination').textContent,/https:\/\/secrets.example.test/);
+ targets=[{id:123,name:'Existing backup',repository:'fisart/private',branch:'main',enabled:false,code:'CONFIGURATION_UNREADABLE'}];$('supportRefresh').click();await tick();await tick();assert.match($('supportDestination').textContent,/Found Existing backup.*configuration could not be read/);assert.doesNotMatch($('supportDestination').textContent,/No Configuration Backup instance was found/);
  assert.equal(f.errors.length,0,f.errors.map(e=>e.message).join('\n'));f.dom.window.close();
  // A cancelled passkey must never submit approval or leave the Mailbox.
  const cancelled=await fixture(),c=cancelled.$;

@@ -408,17 +408,32 @@ async function approveMailboxEntry(action){
 }
 for(const id of ['mailboxServer','mailboxState'])$(id).addEventListener('change',renderMailbox);
 run($('mailboxRefresh'),async ticket=>{await refreshNativeOverview(ticket);await loadSupportTargets(ticket);});
-let supportTargets=[],supportBusy=false;
+let supportTargets=[],supportBusy=false,supportLookupBusy=false,supportLookupAt=0,supportDiscovery={code:'NOT_CHECKED'};
 function renderSupportTargets(){
- const target=supportTargets.find(t=>String(t.id)===$('supportTarget').value);
- $('supportDestination').textContent=target?target.repository+' · branch '+target.branch+(target.enabled?'':' · Enable and save readable Secrets diagnostics in Configuration Backup first.'):'No compatible Configuration Backup instance found. Install or update Configuration Backup and enable readable Secrets diagnostics.';
- $('supportUpload').disabled=supportBusy||!target?.enabled||!$('supportConsent').checked;
+ const target=supportTargets.find(t=>String(t.id)===$('supportTarget').value),platform=supportDiscovery.platform||snapshot?.native?.primaryOrigin||boot.origin;
+ const setup='In the Symcon console on this server, open the Configuration Backup instance in the object tree → “3. Choose uploads and diagnostics” → enable “Upload readable Secrets diagnostics to the private repository (no secrets)” → Apply changes. Then return here and select Refresh upload destination.';
+ const remedies={UPDATE_BACKUP_REQUIRED:'The backup instance was found, but its diagnostic upload function is unavailable. In this server’s Symcon console, update the Symcon-Backup-Module repository on main using module management, then refresh this page.',SETTINGS_NOT_APPLIED:'The backup instance was found with unsaved settings. Open it in this server’s Symcon console and select Apply changes, then Refresh upload destination here.',DIAGNOSTICS_DISABLED:setup,CONFIGURATION_UNREADABLE:'The backup instance was found, but its configuration could not be read. Open the instance in this server’s Symcon console and check its status; this is a detection/read problem, not evidence that diagnostics are disabled.'};
+ let text='Checking Symcon server: '+platform+'. ';
+ if(target)text+='Found '+target.name+' (instance '+target.id+'). '+(target.repository!=='/'?target.repository+' · branch '+target.branch+'. ':'')+(target.enabled?'Ready to send.':remedies[target.code]||setup);
+ else if(supportDiscovery.code==='NO_INSTANCE_ON_THIS_SERVER')text+='No Configuration Backup instance was found on this server. A backup instance on another Symcon installation cannot be used here. In this server’s Symcon console, check the object tree for Module Configuration Backup. If it is absent, install/update Symcon-Backup-Module on main in module management and add a Module Configuration Backup instance. '+setup;
+ else if(supportDiscovery.code==='NOT_CHECKED')text+='Select Refresh upload destination to check the backup instance.';
+ else if(supportDiscovery.code==='LOADING')text+='Checking the installed backup instance…';
+ else text+='The backup instance check failed. This does not mean no instance exists or the setting is disabled. Select Refresh upload destination; if it fails again, update Secrets on this server and check its backend status. '+(supportDiscovery.error||'');
+ $('supportDestination').textContent=text;
+ $('supportRefresh').disabled=supportBusy||supportLookupBusy;
+ $('supportUpload').disabled=supportBusy||supportLookupBusy||!target?.enabled||!$('supportConsent').checked;
 }
 async function loadSupportTargets(ticket=generation){
+ if(supportLookupBusy||supportBusy)return;
  if(!fullAdministration()){$('supportDestination').textContent='Full administrator access is required.';return;}
- try{const r=await api('nativeSupportStatus',{},ticket);supportTargets=r.targets||[];nativeSelect('supportTarget',supportTargets.map(t=>[String(t.id),t.name]));renderSupportTargets();}
- catch(e){if(ticket===generation){supportTargets=[];renderSupportTargets();$('supportResult').textContent='Could not load the upload destination. '+e.message;}}
+ supportLookupBusy=true;supportLookupAt=Date.now();supportDiscovery={code:'LOADING',platform:supportDiscovery.platform};$('supportConsent').checked=false;renderSupportTargets();
+ try{const r=await api('nativeSupportStatus',{},ticket);if(!Array.isArray(r.targets))throw Error('The Secrets backend did not return backup discovery information. Update Secrets on this server and reload this page.');supportTargets=r.targets;supportDiscovery={code:r.code||(r.targets.length?'INSTANCES_FOUND':'NO_INSTANCE_ON_THIS_SERVER'),platform:r.platform};nativeSelect('supportTarget',supportTargets.map(t=>[String(t.id),t.name]));renderSupportTargets();}
+ catch(e){if(ticket===generation){supportTargets=[];supportDiscovery={code:'LOOKUP_FAILED',error:e.message};nativeSelect('supportTarget',[]);renderSupportTargets();$('supportResult').textContent='Could not check the upload destination. '+e.message;}}
+ finally{supportLookupBusy=false;renderSupportTargets();}
 }
+run($('supportRefresh'),ticket=>loadSupportTargets(ticket));
+function recheckSupportOnReturn(){if(!document.hidden&&snapshot?.native&&!$('nativeMailbox').hidden&&!mailboxApprovalBusy&&!supportBusy&&Date.now()-supportLookupAt>1000)loadSupportTargets(generation);}
+window.addEventListener('focus',recheckSupportOnReturn);document.addEventListener('visibilitychange',recheckSupportOnReturn);
 $('supportTarget').addEventListener('change',()=>{$('supportConsent').checked=false;renderSupportTargets();});$('supportConsent').addEventListener('change',renderSupportTargets);
 $('supportUpload').addEventListener('click',async()=>{
  const ticket=generation;
