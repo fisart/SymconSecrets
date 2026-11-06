@@ -5,18 +5,19 @@ declare(strict_types=1);
 final class SecretsBackendPeerWork
 {
     public const BUDGET=45.0;
-    public const PHASES=['delivery','health','mesh','providers'];
+    public const SETUP_BUDGET=90.0;
+    public const PHASES=['delivery','health','mesh','providers','setup'];
     private float $deadline;
     private int $attempts=0;
     private float $budget;
     private $clock;
-    public function __construct(?callable $clock=null,?float $budget=null) { $this->clock=$clock??static fn():float=>microtime(true);$this->budget=min(self::BUDGET,max(0.0,$budget??self::BUDGET));$this->deadline=($this->clock)()+$this->budget; }
-    public static function phpBudget(int $limit,float $elapsed=0.0):float { return $limit>0?min(self::BUDGET,max(0.0,$limit-5.0-max(0.0,$elapsed))):self::BUDGET; }
+    public function __construct(?callable $clock=null,?float $budget=null,float $maximum=self::BUDGET) { $this->clock=$clock??static fn():float=>microtime(true);$this->budget=min(min(self::SETUP_BUDGET,max(0.0,$maximum)),max(0.0,$budget??self::BUDGET));$this->deadline=($this->clock)()+$this->budget; }
+    public static function phpBudget(int $limit,float $elapsed=0.0,float $maximum=self::BUDGET):float { return $limit>0?min($maximum,max(0.0,$limit-5.0-max(0.0,$elapsed))):$maximum; }
     public function budgetMilliseconds():int { return (int)round($this->budget*1000); }
     public function remaining():float { return max(0.0,$this->deadline-($this->clock)()); }
-    public function attempt(string $endpoint):float {
+    public function attempt(string $endpoint,bool $setup=false):float {
         $left=$this->remaining();if($left<0.1)throw new SecretsBackendNativePeerDeliveryFailure('timeout');
-        ++$this->attempts;return min($left,SecretsBackendNativeLegacyHTTPS::timeout($endpoint));
+        ++$this->attempts;return min($left,$setup?(SecretsBackendNativeLegacyHTTPS::timeout($endpoint)===25.0?60.0:45.0):SecretsBackendNativeLegacyHTTPS::timeout($endpoint));
     }
     public function providerAttempt():void { ++$this->attempts; }
     /** Idle phases are cheap; stop after one phase actually attempted network I/O. */

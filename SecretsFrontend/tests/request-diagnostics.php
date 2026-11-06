@@ -13,7 +13,7 @@ try{
     $request['cookie']=explode(';',$login['cookie'])[0];$request['csrf']=$login['data']['csrf'];
     $r=$call('session',[],$request);secExpect($r['status']===200,'Initial session failed.');
     $support=$call('nativeSupportStatus',[],$request);secExpect($support['status']===200&&$support['data']['targets']===[],'Authenticated support discovery failed.');
-    foreach(['nativeSupportStatus','nativeSupportUpload']as$action){
+    foreach(['nativeSupportStatus','nativeSupportUpload','nativeSetupPreview','nativeSetupRun']as$action){
         $data=$action==='nativeSupportUpload'?['instance'=>123]:[];
         $anonymous=$request;$anonymous['cookie']='';$refused=$call($action,$data,$anonymous);secExpect($refused['data']['code']==='LOGIN_REQUIRED','Support API bypassed login.');
         $wrong=$request;$wrong['csrf']='INVALID-CSRF';$refused=$call($action,$data,$wrong);secExpect($refused['data']['code']==='CSRF_INVALID','Support API bypassed CSRF.');

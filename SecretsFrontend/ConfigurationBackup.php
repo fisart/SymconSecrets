@@ -25,7 +25,7 @@ final class SecretsConfigurationBackup
         return self::canonical(['schema' => self::SCHEMA, 'moduleID' => $module, 'format' => $payload['schema'],
             'payload' => $payload, 'sourceHash' => self::sourceHash($properties, $attributes), 'attributeNames' => array_keys($attributes),
             'restoreMode' => 'manual-native-import',
-            'exclusions' => ['vault-contents', 'private-key-material', 'administrator-credentials', 'sessions', 'runtime-state'],
+            'exclusions' => ['vault-contents', 'private-key-material', 'administrator-credentials', 'sessions', 'runtime-state', 'automatic-setup-authorizations-and-capabilities'],
             'notes' => ['Configuration only; vault recovery uses the separate encrypted vault backup.', 'Native import leaves Enabled false and preserves existing provisioning protections.']]);
     }
     public static function validation(array $payload, callable $validate): string

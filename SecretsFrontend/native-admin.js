@@ -362,7 +362,8 @@ let mailboxApprovalBusy=false;
 const mailboxLabels={APPROVAL_REQUIRED:'Your approval required',WAITING_REMOTE:'Waiting for the other server',SENDING:'Sending / retrying delivery',CONFIRMATION_PENDING:'Approval sent — confirmation pending',COMPLETED:'Completed',EXPIRED:'Expired',REVOKED:'Revoked',UNKNOWN:'Status unknown — confirmation outstanding'};
 function renderMailbox(){
  if(mailboxApprovalBusy)return;
- const m=snapshot?.native?.mailbox,nodes=m?.nodes||[],local=nodes.find(n=>n.local),localActions=(local?.rows||[]).filter(r=>r.state==='APPROVAL_REQUIRED').length;
+ renderAutomaticSetup();
+ const m=snapshot?.native?.mailbox,nodes=m?.nodes||[],local=nodes.find(n=>n.local),localActions=(local?.rows||[]).filter(r=>r.state==='APPROVAL_REQUIRED'&&!(r.type==='emergency'&&snapshot?.native?.automaticSetup?.authorized&&(snapshot.native.automaticSetup.policy?.members||[]).some(m=>m.descriptor.vaultId===r.peerId))).length+(snapshot?.native?.automaticSetup?.policy&&!snapshot.native.automaticSetup.authorized?1:0);
  const pending=nodes.reduce((sum,n)=>sum+(n.rows||[]).filter(r=>['WAITING_REMOTE','SENDING','CONFIRMATION_PENDING','UNKNOWN'].includes(r.state)).length,0);
  $('nativeMailboxNav').textContent='Mailbox'+(localActions?' · '+localActions+' to approve':'')+(pending?' · '+pending+' waiting':'');
  const selected=$('mailboxServer').value;nativeSelect('mailboxServer',[['all','All servers'],['local','This server'],...nodes.filter(n=>!n.local).map(n=>[n.id,n.name])]);if(selected==='local')$('mailboxServer').value='local';
@@ -377,12 +378,14 @@ function renderMailbox(){
    const peer=nodes.find(n=>n.id===row.peerId),peerName=peer?.name||row.peerId||'';
    const title=row.type==='emergency'?((row.direction==='provider'?peerName:node.name)+' may read Global from '+(row.direction==='provider'?node.name:peerName)):({'pairing':'Connect platforms','ownership':'Transfer ownership','backup-access':'Magic backup access','provider-operation':'OAuth operation'}[row.type]||row.type)+(peerName?' · '+peerName:'');
    let state=overviewStale?'UNKNOWN':row.state;const status=row.type==='backup-access'&&state==='CONFIRMATION_PENDING'?'Waiting for a tested backup passkey':state==='APPROVAL_REQUIRED'&&!node.local?'Approval required on '+node.name:mailboxLabels[state]||'Status unknown';
-   const approvals=node.local&&!overviewStale?(m.approvals?.[row.id]||[]):[];
+   const managed=row.type==='emergency'&&snapshot?.native?.automaticSetup?.authorized&&(snapshot.native.automaticSetup.policy?.members||[]).some(m=>m.descriptor.vaultId===row.peerId);
+   const approvals=node.local&&!overviewStale&&!managed?(m.approvals?.[row.id]||[]):[];
    const actions=approvals.map(a=>[a.label||'Approve with passkey',()=>approveMailboxEntry(a)]);
-   if(node.local&&!actions.length)actions.push([row.type==='backup-access'&&row.state==='CONFIRMATION_PENDING'?'Continue backup setup':row.state==='APPROVAL_REQUIRED'?'Refresh approval details':'Open workflow',()=>row.state==='APPROVAL_REQUIRED'?refreshNativeOverview(generation):tab(row.action)]);
+   if(node.local&&!actions.length&&!managed)actions.push([row.type==='backup-access'&&row.state==='CONFIRMATION_PENDING'?'Continue backup setup':row.state==='APPROVAL_REQUIRED'?'Refresh approval details':'Open workflow',()=>row.state==='APPROVAL_REQUIRED'?refreshNativeOverview(generation):tab(row.action)]);
    nativeRow(list,title,status+(row.lastKnownState?' · last known: '+(mailboxLabels[row.lastKnownState]||row.lastKnownState):''),actions);
    const card=list.lastElementChild,detail=card.querySelector('p');
    for(const a of approvals){const instructions=document.createElement('p');instructions.className='break';instructions.textContent=a.summary+' Select “'+(a.label||'Approve with passkey')+'”, then confirm with your passkey or the required hardware key. The result will appear here.';card.insertBefore(instructions,card.lastElementChild);}
+   if(managed){const note=document.createElement('p');note.className='muted';note.textContent='Handled by Finish setup on all servers. No individual approval is needed for this request.';card.insertBefore(note,card.lastElementChild);}
    detail.classList.add('mailboxStatus');const facts=document.createElement('dl');facts.className='mailboxFacts';
    const fields=[];
    if(row.type==='emergency')fields.push(['Provider approval',row.state==='REVOKED'?'Revoked or pairing retired':row.direction==='provider'?'Granted on this server':'Signed offer received'],['Consumer acceptance',row.state==='COMPLETED'?'Confirmed':row.state==='REVOKED'?'Inactive':row.direction==='consumer'&&row.state!=='APPROVAL_REQUIRED'?'Approved locally; confirmation pending':'Awaiting confirmation']);
@@ -444,3 +447,37 @@ $('supportUpload').addEventListener('click',async()=>{
  }catch(e){if(ticket===generation)$('supportResult').textContent='Upload was not confirmed. Check Configuration Backup before trying again. '+e.message;}
  finally{supportBusy=false;$('supportConsent').checked=false;renderSupportTargets();}
 });
+
+let automaticSetupBusy=false,automaticSetupPreview=null;
+function renderAutomaticSetup(){
+ if(automaticSetupBusy)return;
+ const n=snapshot?.native,a=n?.automaticSetup||{},policy=a.policy||automaticSetupPreview;
+ $('setupFinish').disabled=!fullAdministration();$('setupStop').hidden=!a.policy;
+ $('setupFinish').textContent=!a.authorized&&policy?'Authorize automatic setup on this server':'Finish setup on all servers';
+ $('setupProgress').textContent=!policy?'First, this button finds the servers reached through your existing approved connections. You then review the server list and authorize this installation once.':!a.authorized?'One-time authorization required on this server. Review the exact servers below, then authorize with your passkey.':a.running?'Setup is running in the background. Replies still outstanding remain waiting; unreachable servers are retried.':a.completedAt?'This server’s setup completed at '+new Date(a.completedAt*1000).toLocaleString()+'. Select Finish setup to refresh and verify all servers.':'Automatic setup is authorized. Select Finish setup to continue.';
+ const holder=$('setupMembers');holder.replaceChildren();
+ const members=a.members?.length?a.members:(policy?.members||[]).map(m=>({id:m.descriptor.vaultId,name:new URL(m.descriptor.endpoint).host,local:m.descriptor.vaultId===n?.peerDescriptor?.vaultId,url:m.frontend?new URL('/hook/secrets_frontend_'+m.frontend,m.descriptor.endpoint).href:null,authorized:null,backupStatus:'unknown',fresh:false}));
+ for(const m of members){
+  const actions=[];if(!m.local&&m.url)actions.push([m.authorized?'Open server / complete device steps':'Authorize on this server',()=>window.open(m.url+'#automatic-setup','_blank','noopener')]);
+  if(m.local&&a.authorized&&!m.backupReady){
+   const choices=n?.mailbox?.approvals?.['magic:'+m.id]||[];
+   for(const choice of choices)actions.push([choice.label,()=>approveMailboxEntry(choice)]);
+   if(!choices.length)actions.push(['Continue backup passkey setup',()=>{tab('nativeKeys');if(n.backupOrigin?.status==='pending')$('connectOpen').click();else $('nativeDiscoverConnect').click();}]);
+  }
+  const description=!a.authorized?'Review this server’s HTTPS address and identity before authorizing the plan.':m.deliveryPending?'A confirmation request is still in progress; waiting for this server’s reply.':!m.fresh&&!m.local?(m.deliveryProblem?'Delivery is being retried; approval status is unconfirmed.':'Waiting for a current authenticated reply; the approval status is unconfirmed.'):m.authorized===false?'Waiting for one-time authorization on this server.':m.authorized===null?'Waiting for the server’s first authenticated reply.':!m.backupReady?'Authorization received. Backup access needs a device step on this server.':m.ready?'This server completed its setup.':'Authorized; connections, emergency approvals or background verification are still in progress.';
+  nativeRow(holder,m.name+(m.local?' · this server':''),description+(!m.local&&m.checkedAt?' Last confirmed reply: '+new Date(m.checkedAt*1000).toLocaleString()+'.':''),actions);
+ }
+ if(a.authorized){const ready=members.filter(m=>m.authorized&&m.ready&&(m.local||m.fresh)).length;$('setupProgress').textContent=ready+' of '+members.length+' servers ready. '+(ready===members.length?'Setup is complete.':a.running?'Setup is running; waiting for the steps listed below.':'Select Finish setup to refresh outstanding replies and verification.');}
+ if(policy){const p=document.createElement('p');p.className='muted break';p.textContent='Plan '+policy.id+' · '+policy.members.length+' explicitly reviewed server(s). Permissions: connections, signed primary/Magic routes, Global-only emergency reads and confirmed duplicate cleanup. Local values, secret edits, administrator creation, hardware policy and OAuth operations are outside this authorization.';holder.append(p);}
+}
+run($('setupFinish'),async ticket=>{
+ if(automaticSetupBusy)return;
+ const a=snapshot?.native?.automaticSetup||{};
+ if(a.authorized){automaticSetupBusy=true;try{const r=await api('nativeSetupRun',{},ticket);snapshot.native.automaticSetup=r.automaticSetup;message('Setup requested across the approved servers. Progress will update here.');}finally{automaticSetupBusy=false;renderAutomaticSetup();}return;}
+ const p=a.policy||automaticSetupPreview;
+ if(p){await approveMailboxEntry({operation:{kind:'nativeSetupAuthorize',policy:p},summary:'Authorize only the displayed '+p.members.length+' server(s) for full-mesh connections, approved routes, reciprocal Global-only emergency reads and confirmed obsolete-grant cleanup. Credentials stay private. Browser passkey steps remain on their own installation.'});automaticSetupPreview=null;renderAutomaticSetup();return;}
+ automaticSetupBusy=true;
+ try{for(let i=0;i<10;i++){const r=await api('nativeSetupPreview',{},ticket);if(r.blocked)throw Error(r.message||'Discovery could not be confirmed. Check this connection and module versions.');if(r.complete){automaticSetupPreview=r.policy;break;}$('setupProgress').textContent='Found '+r.found+' server(s); checked '+r.checked+' existing connection(s). Discovering the remaining approved neighbors…';}if(!automaticSetupPreview)throw Error('Discovery is incomplete. Check existing connections and module versions, then retry.');}
+ finally{automaticSetupBusy=false;renderAutomaticSetup();}
+});
+run($('setupStop'),()=>{const a=snapshot?.native?.automaticSetup;if(!a?.policy)return;return approveMailboxEntry({operation:{kind:'nativeSetupStop',id:a.policy.id},summary:'Stop this server’s automatic setup and invalidate its private setup capabilities. Existing connections and emergency approvals are retained.'});});

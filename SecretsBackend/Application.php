@@ -86,10 +86,11 @@ final class SecretsBackendApplication
     {
         $ids = []; foreach ($credentials as $credential) if ($credential['active'] && $this->eligibleOrigin($current['state'], $credential,$kind==='login') && (!$hardware || ($credential['hardware'] && $credential['trustVersion'] === ($this->settings['hardwareTrustVersion'] ?? 'none')))) $ids[] = $credential['id'];
         if (!$ids) throw new RuntimeException('No eligible administrator key. Use independent recovery if all keys are lost.');
-        $verifier = $this->webauthn(); $args = $verifier->getGetArgs(array_map([SecretsBackendCodec::class, 'unb64'], $ids), 120, true, true, true, true, true, true);
+        $seconds=$kind==='approval'&&in_array($context['operation']['kind']??'',['nativeSetupAuthorize','nativeSetupStop'],true)?300:120;
+        $verifier = $this->webauthn(); $args = $verifier->getGetArgs(array_map([SecretsBackendCodec::class, 'unb64'], $ids), $seconds, true, true, true, true, true, true);
         $id = SecretsBackendCodec::b64(random_bytes(32));
         $this->store->put($id, $kind, ['challenge' => SecretsBackendCodec::b64($verifier->getChallenge()->getBinaryString()), 'allowed' => $ids,
-            'head' => $current['head'], 'hardware' => $hardware, 'context' => $context, 'origin'=>$this->settings['origin'], 'originGeneration'=>$this->originGeneration($current['state'])], time() + 120);
+            'head' => $current['head'], 'hardware' => $hardware, 'context' => $context, 'origin'=>$this->settings['origin'], 'originGeneration'=>$this->originGeneration($current['state'])], time() + $seconds);
         return ['challengeId' => $id, 'options' => $args->publicKey];
     }
     public function beginEnrollment(string $label, bool $hardware, bool $probe = false, ?array $approval = null): string
@@ -259,7 +260,7 @@ final class SecretsBackendApplication
         if ($this->settings['origin'] !== $this->primaryOrigin() && !SecretsBackendBackupOriginPolicy::credentialFull($current['state'],$current['state']['identity']['credentials'][$session['credential']]) && !in_array($action,['session','list','sessionReveal','sessionTimeout','prepare','approve','logout','nativeOverviewStatus'],true)) throw new RuntimeException('Use the primary address for setup and integration management.');
         if ($action === 'connectCandidateReview') { self::exact($data,['candidate']); $c=$this->connectCandidate($data['candidate'],$current['state']); return ['data'=>['candidate'=>$data['candidate'],'digest'=>SecretsBootstrapVerifier::digest($c),'label'=>$c['entry']['label'],'origin'=>$c['origin'],'administrator'=>$c['entry']['administrator'],'rights'=>$c['rights'],'fingerprint'=>hash('sha256',$c['entry']['publicKey'])]]; }
         if ($action === 'connectDiscovery') { self::exact($data, []); return ['data'=>['permitted'=>true]]; }
-        if ($native instanceof SecretsBackendNativeOperations && in_array($action, ['nativeSupportStatus','nativeSupportUpload','nativeOverviewStatus','nativeGlobalStatus','nativePairingStatus','nativeRetryPeerDelivery','legacySources','legacyPreview','nativeUploadBegin','nativeUploadChunk','nativeUploadFinish','nativeOperationStatus'], true)) return ['data' => $native->request($action, $data)];
+        if ($native instanceof SecretsBackendNativeOperations && in_array($action, ['nativeSetupPreview','nativeSetupRun','nativeSupportStatus','nativeSupportUpload','nativeOverviewStatus','nativeGlobalStatus','nativePairingStatus','nativeRetryPeerDelivery','legacySources','legacyPreview','nativeUploadBegin','nativeUploadChunk','nativeUploadFinish','nativeOperationStatus'], true)) return ['data' => $native->request($action, $data)];
         if (in_array($action,['nativeCandidateOptions','nativeCandidateSubmit'],true)) return ['data'=>$this->nativeCandidate($action,$data,$session,$current)];
         if ($action === 'logout') { self::exact($data, []); $this->store->delete($session['hash']); return ['data' => ['loggedOut' => true], 'cookie' => $this->cookieName() . '=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0']; }
         if ($action === 'sessionTimeout') {

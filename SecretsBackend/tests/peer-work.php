@@ -13,7 +13,7 @@ $assert($work->attempt($backup)===5.0,'Failover exceeded the remaining worker bu
 try{$work->attempt($primary);throw new RuntimeException('Expired budget issued another request.');}catch(SecretsBackendNativePeerDeliveryFailure $e){$assert($e->problem==='timeout','Expired budget had a wrong failure.');}
 // A slow phase cannot occupy all ticks; other work starts first on later ticks.
 $next=0;$called=[];
-for($tick=0;$tick<8;$tick++){
+for($tick=0;$tick<count(SecretsBackendPeerWork::PHASES)*2;$tick++){
  $work=new SecretsBackendPeerWork($clock);$phases=[];
  foreach(SecretsBackendPeerWork::PHASES as$name)$phases[$name]=static function()use($name,&$called,$work,$primary,&$now):array{$called[]=$name;$work->attempt($primary);$now+=15;return [['status'=>$name]];};
  $result=$work->run($next,$phases,static function(int $n)use(&$next):void{$next=$n;});
@@ -32,6 +32,10 @@ class PeerTimingProbe {
     public function SetBuffer(string $name,string $value):void{$this->buffers[$name]=$value;}
     protected function peerHTTPSPost(string $endpoint,string $bytes,array $policy,float $timeout):string{$this->timeout=$timeout;if($this->fail)throw new SecretsBackendNativePeerDeliveryFailure('timeout');return 'RESPONSE-CANARY';}
 }
+$setupNow=0.0;$setupClock=static function()use(&$setupNow):float{return $setupNow;};$setupWork=new SecretsBackendPeerWork($setupClock,90,SecretsBackendPeerWork::SETUP_BUDGET);
+$assert($setupWork->attempt($primary,true)===45.0,'Setup primary allowance is not generous.');$setupNow+=45;$assert($setupWork->attempt($backup,true)===45.0,'Setup failover ignored its remaining 90-second bound.');$setupNow+=45;try{$setupWork->attempt($backup,true);throw new RuntimeException('Setup exceeded its bound.');}catch(SecretsBackendNativePeerDeliveryFailure $expected){}
+$setupWork=new SecretsBackendPeerWork($setupClock,90,SecretsBackendPeerWork::SETUP_BUDGET);$assert($setupWork->attempt($backup,true)===60.0,'Setup Magic allowance is too short.');
+$assert(SecretsBackendPeerWork::phpBudget(100,0,90)===90.0&&SecretsBackendPeerWork::phpBudget(30,0,90)===25.0,'Setup ignored the PHP safety reserve.');
 $probe=new PeerTimingProbe();$method=new ReflectionMethod(PeerTimingProbe::class,'timedPeerHTTPS');
 $target=['vaultId'=>'11111111-1111-4111-8111-111111111111','endpoint'=>$primary];
 $method->invoke($probe,$target,'{"kind":"HEALTH","payload":"REQUEST-CANARY"}',['mode'=>'strict']);
@@ -40,6 +44,7 @@ $target['endpoint']=$backup;$probe->fail=true;
 try{$method->invoke($probe,$target,'{"kind":"MESH_STATUS","payload":"REQUEST-CANARY"}',['mode'=>'strict']);}catch(SecretsBackendNativePeerDeliveryFailure $expected){}
 $report=json_decode($probe->GetTransportDiagnostics(),true);$assert($report['requests'][1]['route']==='backup'&&$report['requests'][1]['timeoutMs']===25000&&$report['requests'][1]['outcome']==='timeout','Route timing omitted the attempted allowance or failure.');
 $assert(!str_contains(json_encode($report),'CANARY')&&!str_contains(json_encode($report),'slow.example'),'Transport timing exposed request/response bytes or arbitrary hostnames.');
+$probe->fail=false;$setupWork=new SecretsBackendPeerWork(null,90,SecretsBackendPeerWork::SETUP_BUDGET);$method->invoke($probe,$target,'{"kind":"SETUP_HELLO","payload":"SETUP-TOKEN-CANARY"}',['mode'=>'strict'],$setupWork);$assert($probe->timeout===60.0,'Native transport did not apply the generous setup Magic timeout.');$timings=json_decode($probe->GetTransportDiagnostics(),true);$last=end($timings['requests']);$assert($last['timeoutMs']===60000&&$last['kind']==='SETUP_HELLO'&&!str_contains(json_encode($timings),'CANARY'),'Setup timing was clipped, misclassified or leaked credentials.');
 $probe->fail=false;for($i=0;$i<70;$i++){$target['vaultId']=sprintf('%08x-1111-4111-8111-111111111111',$i);$method->invoke($probe,$target,'{"kind":"HEALTH"}',['mode'=>'strict']);}
 $assert(count(json_decode($probe->GetTransportDiagnostics(),true)['requests'])===64,'Route timing storage is unbounded.');
 echo "PASS peer latency: 15s primary, 25s Magic, shared 45s budget, exact remaining failover allowance, fair phases, idle skip and no stacked outbound work\n";

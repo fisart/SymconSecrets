@@ -20,7 +20,7 @@ trait SecretsBackendNativeRuntime
                     try{$local=json_decode(SECB_GetNativePublicDescriptor($id),true);}catch(Throwable $ignored){$local=null;}
                     if(is_array($local)&&SecretsBackendNativePeer::authority($local)===SecretsBackendNativePeer::authority($target))return SECB_ReceiveNativePeer($id,$bytes);
                 }
-                if($this->peerWork===null&&$requestWork===null)$requestWork=new SecretsBackendPeerWork(null,SecretsBackendPeerWork::phpBudget((int)ini_get('max_execution_time'),microtime(true)-($this->peerRequestStarted>0?$this->peerRequestStarted:$created)));
+                if($this->peerWork===null&&$requestWork===null){$setup=str_starts_with((string)(json_decode($bytes,true,16)['kind']??''),'SETUP_');if($setup&&function_exists('set_time_limit'))@set_time_limit(100);$max=$setup?SecretsBackendPeerWork::SETUP_BUDGET:SecretsBackendPeerWork::BUDGET;$requestWork=new SecretsBackendPeerWork(null,SecretsBackendPeerWork::phpBudget((int)ini_get('max_execution_time'),microtime(true)-($this->peerRequestStarted>0?$this->peerRequestStarted:$created),$max),$max);}
                 return $this->timedPeerHTTPS($target,$bytes,$policy,$requestWork);
             },true,fn(array $state)=>$this->meshRuntimeStatus($state));
     }
@@ -73,14 +73,16 @@ trait SecretsBackendNativeRuntime
         try{
             if(!$this->ReadPropertyBoolean('Enabled')||!$this->nativeInitialized())return '[]';
             $this->nativeApplication();$store=$this->nativeStore();$peer=$this->nativePeer($store);
-            $this->peerWork=new SecretsBackendPeerWork(null,SecretsBackendPeerWork::phpBudget((int)ini_get('max_execution_time'),microtime(true)-$started));
+            $v=$store->read()['state'];$setup=(SecretsBackendAutomaticSetup::enabled($v)&&($v['native']['automaticSetup']['requested']??false))||count(array_filter($v['outbox']['jobs'],static fn($j)=>$j['kind']==='SETUP_OFFER'))>0;if($setup&&function_exists('set_time_limit'))@set_time_limit(100);$max=$setup?SecretsBackendPeerWork::SETUP_BUDGET:SecretsBackendPeerWork::BUDGET;
+            $this->peerWork=new SecretsBackendPeerWork(null,SecretsBackendPeerWork::phpBudget((int)ini_get('max_execution_time'),microtime(true)-$started,$max),$max);
             $this->SetBuffer('PeerBudgetMs',(string)$this->peerWork->budgetMilliseconds());
             $effects=new SecretsBackendNativeEffects($store,function($effect){$this->peerWork->providerAttempt();return self::nativeProviderHTTPS($effect);});
             $phases=[
                 'delivery'=>fn():array=>$peer->dispatch(1),
                 'health'=>fn():array=>[(new SecretsBackendNativeHealth($store,$peer))->tick()],
                 'mesh'=>function()use($store,$peer):array{try{return [(new SecretsBackendMeshStatus($store,$peer))->tick()];}catch(Throwable $ignored){return [['status'=>'MESH_UNAVAILABLE']];}},
-                'providers'=>fn():array=>[$effects->tick()]
+                'providers'=>fn():array=>[$effects->tick()],
+                'setup'=>fn():array=>[($peer->automaticSetup(fn()=>$this->syncEmergencyAccess(true)))->tick()]
             ];
             return SecretsBackendCodec::json($this->peerWork->run((int)$this->GetBuffer('NativeJobsPhase'),$phases,fn(int $next)=>$this->SetBuffer('NativeJobsPhase',(string)$next)));
         }catch(Throwable $e){$this->debug('request-rejected');return '[{"status":"RECOVERY_REQUIRED"}]';}
@@ -92,7 +94,7 @@ trait SecretsBackendNativeRuntime
     }
     private function timedPeerHTTPS(array $target,string $bytes,array $policy,?SecretsBackendPeerWork $requestWork=null):string
     {
-        $timeout=($this->peerWork??$requestWork)?->attempt($target['endpoint'])??SecretsBackendNativeLegacyHTTPS::timeout($target['endpoint']);
+        $timeout=($this->peerWork??$requestWork)?->attempt($target['endpoint'],str_starts_with((string)(json_decode($bytes,true,16)['kind']??''),'SETUP_'))??SecretsBackendNativeLegacyHTTPS::timeout($target['endpoint']);
         $started=microtime(true);$outcome='unconfirmed';
         try{$reply=$this->peerHTTPSPost($target['endpoint'],$bytes,$policy,$timeout);$outcome='response';return $reply;}
         catch(SecretsBackendNativePeerDeliveryFailure $e){$outcome=in_array($e->problem,SecretsBackendNativePeerDeliveryFailure::PROBLEMS,true)?$e->problem:'unconfirmed';throw $e;}
@@ -100,7 +102,7 @@ trait SecretsBackendNativeRuntime
             try{
                 $rows=json_decode($this->GetBuffer('PeerTimings'),true);$rows=is_array($rows)?$rows:[];
                 $route=SecretsBackendNativeLegacyHTTPS::timeout($target['endpoint'])===25.0?'backup':'primary';
-                $kind=json_decode($bytes,true,16)['kind']??'';$kind=in_array($kind,['MESH_STATUS','HEALTH','SYNC','RESYNC','STATUS','PAIR_REQUEST','PAIR_ACCEPT','ROUTES','EMERGENCY_OFFER','REVOKE','GLOBAL_ENABLE','TREE_SYNC'],true)?$kind:'other';
+                $kind=json_decode($bytes,true,16)['kind']??'';$kind=in_array($kind,['SETUP_INFO','SETUP_OFFER','SETUP_HELLO','SETUP_ADVANCE','SETUP_PRUNE','MESH_STATUS','HEALTH','SYNC','RESYNC','STATUS','PAIR_REQUEST','PAIR_ACCEPT','ROUTES','EMERGENCY_OFFER','REVOKE','GLOBAL_ENABLE','TREE_SYNC'],true)?$kind:'other';
                 $rows[$target['vaultId'].':'.$route]=['peerId'=>$target['vaultId'],'route'=>$route,'kind'=>$kind,'at'=>gmdate('c'),'elapsedMs'=>min(86400000,max(0,(int)round(1000*(microtime(true)-$started)))),'timeoutMs'=>(int)round(1000*$timeout),'outcome'=>$outcome];
                 $this->SetBuffer('PeerTimings',SecretsBackendCodec::json(array_slice($rows,-64,null,true)));
             }catch(Throwable $ignored){}

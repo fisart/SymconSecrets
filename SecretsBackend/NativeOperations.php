@@ -40,6 +40,12 @@ final class SecretsBackendNativeOperations
             if($session['origin']!==$state['policy']['origin']&&!SecretsBackendBackupOriginPolicy::credentialFull($state,$state['identity']['credentials'][$session['credential']]))throw new RuntimeException('Approve backup access at the primary address.');
         }
         switch($kind){
+            case 'nativeSetupAuthorize':
+                SecretsBackendNativePeer::exact($op,['kind','policy']);$session=$this->store->get($this->session,'session');if(!SecretsBackendBackupOriginPolicy::credentialFull($state,$state['identity']['credentials'][$session['credential']]??[]))throw new RuntimeException('Full administrator access required.');
+                (new SecretsBackendAutomaticSetup($this->store,$this->peer))->authorize($state,$op['policy'],$session);$op['credential']=$session['credential'];$op['revocation']=$state['identity']['revocation'];break;
+            case 'nativeSetupStop':
+                $session=$this->store->get($this->session,'session');if(!SecretsBackendBackupOriginPolicy::credentialFull($state,$state['identity']['credentials'][$session['credential']]??[]))throw new RuntimeException('Full administrator access required.');
+                SecretsBackendNativePeer::exact($op,['kind','id']);if(($state['native']['automaticSetup']['policy']['id']??$state['native']['setupProposal']['id']??null)!==$op['id'])throw new RuntimeException('Setup plan changed.');break;
             case 'nativeEmergencyGrant':
                 SecretsBackendNativePeer::exact($op,['kind','peerId']);$op['grant']=SecretsBackendEmergency::grant($state,$op['peerId']);break;
             case 'nativeEmergencyRevoke':
@@ -143,10 +149,20 @@ final class SecretsBackendNativeOperations
         $current=SecretsBackendNativeLegacyHTTPS::proposal($endpoint,$state['pairing']['peers']);
         if($current!==$op['httpsReview'])throw new RuntimeException('HTTPS settings changed after review. Review this connection again.');
     }
-    public function apply(array $op,array $s): array
+    public function apply(array $op,array $s,bool $delegatedSetup=false): array
     {
         $kind=$op['kind'];
+        if(!$delegatedSetup&&str_starts_with($kind,'nativeEmergency')&&isset($s['native']['automaticSetup']))$s['native']['automaticSetup']['enabled']=false;
 
+        if($kind==='nativeSetupAuthorize'){
+            if($s['identity']['revocation']!==$op['revocation']||!($s['identity']['credentials'][$op['credential']]['active']??false))throw new RuntimeException('Setup administrator authority changed.');
+            return (new SecretsBackendAutomaticSetup($this->store,$this->peer))->authorize($s,$op['policy'],['credential'=>$op['credential']]);
+        }
+        if($kind==='nativeSetupStop'){
+            if(($s['native']['automaticSetup']['policy']['id']??$s['native']['setupProposal']['id']??null)!==$op['id'])throw new RuntimeException('Setup plan changed.');
+            $s['native']['setupRevokedPlans']=array_values(array_unique([...($s['native']['setupRevokedPlans']??[]),$op['id']]));if(count($s['native']['setupRevokedPlans'])>64)throw new RuntimeException('Stopped-plan retention is full.');
+            unset($s['native']['automaticSetup'],$s['native']['setupProposal'],$s['native']['setupProposalSent']);$s['outbox']['jobs']=array_values(array_filter($s['outbox']['jobs'],static fn($j)=>$j['kind']!=='SETUP_OFFER'));return $s;
+        }
         if($kind==='nativeEmergencyGrant'){
             $s=SecretsBackendEmergency::applyGrant($s,$op['grant']);$p=$s['pairing']['peers'][$op['grant']['source']];
             $s['outbox']['jobs'][]=SecretsBackendNativePeer::job($p,'EMERGENCY_OFFER',['grantId'=>$op['grant']['id'],'package'=>SecretsBackendEmergency::exportGrant($this->store,$this->peer,$op['grant'])]);return $s;
@@ -154,7 +170,7 @@ final class SecretsBackendNativeOperations
         if($kind==='nativeEmergencyRevoke'){$s['native']['emergencyGrants'][$op['id']]['active']=false;return $s;}
         if(in_array($kind,['nativeEmergencyImport','nativeEmergencyAccept'],true)){
             if($kind==='nativeEmergencyAccept'&&(!isset($s['native']['emergencyOffers'][$op['peerId']])||!hash_equals(hash('sha256',$s['native']['emergencyOffers'][$op['peerId']]['package']),$op['digest'])))throw new RuntimeException('Emergency offer changed before approval.');
-            $c=$op['client'];$p=$s['pairing']['peers'][$c['peerId']]??null;
+            $c=$op['client'];if(in_array($c['grantId'],$s['native']['setupRetiredIncoming'][$c['peerId']]??[],true))throw new RuntimeException('This emergency grant was retired.');$p=$s['pairing']['peers'][$c['peerId']]??null;
             if(!$p||!$p['active']||$p['pairingId']!==$c['pairingId']||!SecretsBackendNativePeer::shared($p))throw new RuntimeException('Emergency source pairing changed.');
             $s['native']['emergencyClients'][$c['peerId']]=$c;unset($s['native']['emergencyOffers'][$c['peerId']]);return $s;
         }
@@ -355,6 +371,10 @@ final class SecretsBackendNativeOperations
     private function hardwareResult(array $profile): array { if($this->hardwareApplied!==null)($this->hardwareApplied)($profile);return ['hardwareProfileApplied'=>true,'reloginRequired'=>true]; }
     public function request(string $action,array $data): array
     {
+        if(in_array($action,['nativeSetupPreview','nativeSetupRun'],true)){
+            SecretsBackendNativePeer::exact($data,[]);$s=$this->store->read()['state'];$session=$this->store->get($this->session,'session');if(!SecretsBackendBackupOriginPolicy::credentialFull($s,$s['identity']['credentials'][$session['credential']]??[]))throw new RuntimeException('Full administrator access required.');
+            $setup=new SecretsBackendAutomaticSetup($this->store,$this->peer);if($action==='nativeSetupPreview'){$this->store->rate('setup-discovery',12);return $setup->preview($this->session);}$this->store->rate('setup-start',3);$setup->start();return ['automaticSetup'=>$setup->status($this->store->read()['state'])];
+        }
         if(in_array($action,['nativeSupportStatus','nativeSupportUpload'],true)){
             SecretsBackendNativePeer::exact($data,$action==='nativeSupportStatus'?[]:['instance']);
             $s=$this->store->read()['state'];$session=$this->store->get($this->session,'session');
@@ -391,6 +411,8 @@ final class SecretsBackendNativeOperations
     public function summary(array $op): array
     {
         $out=['kind'=>$op['kind']];
+        if($op['kind']==='nativeSetupAuthorize')$out+=['servers'=>array_map(static fn($m)=>['address'=>$m['descriptor']['endpoint'],'vault'=>$m['descriptor']['vaultId'],'keyFingerprint'=>hash('sha256',$m['descriptor']['signKey'])],$op['policy']['members']),'scope'=>'Full mesh, approved primary/Magic routes, reciprocal read-only Global emergency access and confirmed obsolete-grant cleanup. No Local access, administrator enrollment, hardware-policy changes, OAuth operations or value changes.','planId'=>$op['policy']['id']];
+        if($op['kind']==='nativeSetupStop')$out+=['planId'=>$op['id'],'effect'=>'Revoke private setup capabilities on this server. Existing connections and emergency permissions remain; no automatic regrant after manual revocation.'];
         if($op['kind']==='nativeEmergencyGrant')$out+=['sourceVault'=>$op['grant']['source'],'sourceName'=>$op['grant']['name'],'scope'=>'All replicated Global application secrets, read only','effect'=>'Allow trusted local SEC applications on this paired installation to read this vault during an emergency. Local secrets, writes and administration are excluded.'];
         if(in_array($op['kind'],['nativeEmergencyImport','nativeEmergencyAccept'],true))$out+=['remoteVault'=>$op['client']['peerId'],'remoteName'=>$op['client']['name'],'grantId'=>$op['client']['grantId'],'scope'=>'Global SEC application reads','effect'=>'Enable availability-first fallback. Keep restricted credentials in separate private encrypted storage. A remote value may be older than an unreachable writer; known older or conflicting versions are refused.'];
         if($op['kind']==='nativeEmergencyRevoke')$out+=['grantId'=>$op['id'],'effect'=>'Immediately revoke this remote emergency read credential on this vault.'];
@@ -503,7 +525,7 @@ final class SecretsBackendNativeOperations
         foreach($peers as&$peer){if(isset($health[$peer['id']]))$peer['health']=$health[$peer['id']];try{$peer['connectionDebug']=$this->store->get('peer-tls-debug:'.$peer['pairingId'],'peer-tls-debug');}catch(Throwable $ignored){}}unset($peer);
         $sent=[];foreach($state['native']['deliveryReceipts']as$id=>$receipt)$sent[]=['peerId'=>$id]+array_intersect_key($receipt,array_flip(['pairingId','requestKind','status','treeId','revision']));
         $mesh=$this->meshMetadata($state);
-        return ['mailbox'=>$this->mailboxMetadata($state,$mesh),'fullAdministrator'=>$this->session!==''&&SecretsBackendBackupOriginPolicy::credentialFull($state,$state['identity']['credentials'][$this->store->get($this->session,'session')['credential']]??[]),'sharedGlobalSupported'=>true,'consistency'=>SecretsBackendNativeHealth::guarantees(),'emergency'=>$this->emergencyMetadata($state),'mesh'=>$mesh,'globalConflictCount'=>count(SecretsBackendSharedGlobal::metadata($state)['conflicts']??[]),'serverTime'=>time(),'peers'=>$peers,'pairingReceived'=>$received,'pairingSent'=>$sent,'globalTreeId'=>$state['native']['globalTreeId'],'globalRevision'=>$state['stream']['globalRevision'],'remoteHttpsAvailable'=>SecretsBackendNativeLegacyHTTPS::available(),'remoteHttpsTransport'=>'php-streams','peerTransportVersion'=>'php-streams-ye2-1','globalWritable'=>$state['native']['globalWritable'],
+        return ['automaticSetup'=>(new SecretsBackendAutomaticSetup($this->store,$this->peer))->status($state),'mailbox'=>$this->mailboxMetadata($state,$mesh),'fullAdministrator'=>$this->session!==''&&SecretsBackendBackupOriginPolicy::credentialFull($state,$state['identity']['credentials'][$this->store->get($this->session,'session')['credential']]??[]),'sharedGlobalSupported'=>true,'consistency'=>SecretsBackendNativeHealth::guarantees(),'emergency'=>$this->emergencyMetadata($state),'mesh'=>$mesh,'globalConflictCount'=>count(SecretsBackendSharedGlobal::metadata($state)['conflicts']??[]),'serverTime'=>time(),'peers'=>$peers,'pairingReceived'=>$received,'pairingSent'=>$sent,'globalTreeId'=>$state['native']['globalTreeId'],'globalRevision'=>$state['stream']['globalRevision'],'remoteHttpsAvailable'=>SecretsBackendNativeLegacyHTTPS::available(),'remoteHttpsTransport'=>'php-streams','peerTransportVersion'=>'php-streams-ye2-1','globalWritable'=>$state['native']['globalWritable'],
             'outbox'=>array_values(array_map(static fn($j)=>array_intersect_key($j,array_flip(['id','receiverId','kind','sequence','status'])),$state['outbox']['jobs']))];
     }
     private function legacyTargets(array $state,int $backend): array
@@ -516,7 +538,7 @@ final class SecretsBackendNativeOperations
         $owned=[];foreach($state['native']['trees']as$id=>$r)$owned[]=['id'=>$id,'owner'=>$r['owner'],'epoch'=>$r['epoch'],'revision'=>$r['revision'],'frozen'=>$r['frozen'],'entries'=>SecretsBackendTree::listing($r['node'])];
         $machines=[];foreach($state['native']['machines']as$m){unset($m['hash']);$machines[]=$m;}
         $progress=$this->pairingStatus($state);$backend=(int)$this->peer->descriptor()['backend'];
-        return ['mailbox'=>$progress['mailbox'],'overview'=>$this->overviewStatus($state),'fullAdministrator'=>$this->session!==''&&SecretsBackendBackupOriginPolicy::credentialFull($state,$state['identity']['credentials'][$this->store->get($this->session,'session')['credential']]??[]),'sharedGlobalSupported'=>true,'consistency'=>SecretsBackendNativeHealth::guarantees(),'emergency'=>$this->emergencyMetadata($state),'mesh'=>$progress['mesh'],'globalConflictCount'=>$progress['globalConflictCount'],'legacyImports'=>array_values($state['native']['legacyImports']??[]),'backupOrigin'=>$state['policy']['backupOrigin']??null,'primaryOrigin'=>$state['policy']['origin'],'info'=>$this->store->metadata(),'storage'=>$this->store->storagePaths(),'peerEndpoint'=>$this->peer->descriptor()['endpoint'],'peerDescriptor'=>$this->peer->descriptor(),'peerRoutes'=>$this->peer->ownRoutes($state),'routeRevision'=>$state['native']['routeRevision']??'0',
+        return ['automaticSetup'=>$progress['automaticSetup'],'mailbox'=>$progress['mailbox'],'overview'=>$this->overviewStatus($state),'fullAdministrator'=>$this->session!==''&&SecretsBackendBackupOriginPolicy::credentialFull($state,$state['identity']['credentials'][$this->store->get($this->session,'session')['credential']]??[]),'sharedGlobalSupported'=>true,'consistency'=>SecretsBackendNativeHealth::guarantees(),'emergency'=>$this->emergencyMetadata($state),'mesh'=>$progress['mesh'],'globalConflictCount'=>$progress['globalConflictCount'],'legacyImports'=>array_values($state['native']['legacyImports']??[]),'backupOrigin'=>$state['policy']['backupOrigin']??null,'primaryOrigin'=>$state['policy']['origin'],'info'=>$this->store->metadata(),'storage'=>$this->store->storagePaths(),'peerEndpoint'=>$this->peer->descriptor()['endpoint'],'peerDescriptor'=>$this->peer->descriptor(),'peerRoutes'=>$this->peer->ownRoutes($state),'routeRevision'=>$state['native']['routeRevision']??'0',
             'sharedGlobal'=>SecretsBackendSharedGlobal::metadata($state),'globalTreeId'=>$state['native']['globalTreeId'],'globalWritable'=>$state['native']['globalWritable'],'ownedTrees'=>$owned,'transfers'=>array_map(static fn($t)=>array_diff_key($t,['node'=>true]),$state['native']['transfers']),
             'serverTime'=>$progress['serverTime'],'peers'=>$progress['peers'],'pairingReceived'=>$progress['pairingReceived'],'pairingSent'=>$progress['pairingSent'],'globalRevision'=>$progress['globalRevision'],'remoteHttpsAvailable'=>$progress['remoteHttpsAvailable'],'remoteHttpsTransport'=>$progress['remoteHttpsTransport'],'peerTransportVersion'=>$progress['peerTransportVersion'],'received'=>$received,'machines'=>$machines,'nativeOnlyReplacement'=>true,'legacyImportAvailable'=>true,'legacyAccess'=>isset($state['native']['legacyAccess'][(string)$backend])?[$state['native']['legacyAccess'][(string)$backend]]:[],'legacyDirectAccess'=>SecretsBackendLegacyAPI::access($state,$backend,$backend),'legacyTargets'=>$this->legacyTargets($state,$backend),'queuedJobs'=>count($state['outbox']['jobs']),
             'providers'=>array_values(array_map(static fn($p)=>SecretsBackendNativeEffects::targetWritable($state,$p)?$p:array_replace($p,['status'=>'OWNER_CHANGED']),$state['native']['providers'])),'effects'=>array_map(static fn($e)=>array_intersect_key($e,array_flip(['id','providerId','state','reason','createdAt','httpStatus','attempts'])),$state['native']['effects']),

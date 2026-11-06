@@ -56,6 +56,7 @@ final class SecretsBackendEmergency
         if($g['format']!=='SECB.EmergencyGrant.1'||$g['source']!==$s['native']['vaultId']||$g['scope']!=='global-application-read')throw new RuntimeException('Emergency approval belongs to another source or scope.');
         SecretsBackendNativePeer::descriptorCheck($g['receiver']);SecretsBackendNativePeer::uuid($g['id']);SecretsBackendCodec::unb64($g['token'],32);
         $p=self::pair($s,$g['receiver']['vaultId']);
+        if(in_array($g['id'],$s['native']['setupRetiredIncoming'][$p['id']]??[],true))throw new RuntimeException('This emergency approval was retired. Request a new grant.');
         if($p['pairingId']!==$g['pairingId']||SecretsBackendNativePeer::authority($p['descriptor'])!==SecretsBackendNativePeer::authority($g['receiver']))throw new RuntimeException('Emergency peer identity changed.');
         $signature=$g['signature'];unset($g['signature']);
         if(!sodium_crypto_sign_verify_detached(SecretsBackendCodec::unb64($signature,64),'SECB.EMERGENCY.GRANT.1\0'.SecretsBackendNativeStore::canonical($g),SecretsBackendCodec::unb64($p['descriptor']['signKey'],32)))throw new RuntimeException('Emergency approval signature invalid.');
