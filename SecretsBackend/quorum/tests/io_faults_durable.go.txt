@@ -1,0 +1,78 @@
+package durable
+
+import (
+	"testing"
+)
+
+func TestIRImmutableRetryRequiresDurability(t *testing.T) {
+	IRReset()
+	defer IRReset()
+	d, e := Open(root(t))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer d.Close()
+	IRFailDir = true
+	IRDirAfter = 1
+	if e = d.Locked(func() error { return d.PutImmutable("record", []byte("same immutable bytes")) }); e == nil {
+		t.Fatal("injected directory error missing")
+	}
+	for i := 0; i < 2; i++ {
+		if e = d.Locked(func() error { return d.PutImmutable("record", []byte("same immutable bytes")) }); e == nil {
+			t.Fatal("visible same bytes bypassed failed directory barrier")
+		}
+	}
+	IRFailDir = false
+	before := IRDirCalls
+	if e = d.Locked(func() error { return d.PutImmutable("record", []byte("same immutable bytes")) }); e != nil {
+		t.Fatal(e)
+	}
+	if IRDirCalls <= before {
+		t.Fatal("completion did not establish durability")
+	}
+}
+func TestIRReadDurableRejectsFileSyncFailure(t *testing.T) {
+	IRReset()
+	defer IRReset()
+	d, e := Open(root(t))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer d.Close()
+	if e = d.Replace("record", []byte("bytes")); e != nil {
+		t.Fatal(e)
+	}
+	IRFailFile = true
+	IRFileAfter = 0
+	if _, e = d.ReadDurable("record"); e == nil {
+		t.Fatal("file sync error bypassed")
+	}
+	IRFailFile = false
+	if _, e = d.ReadDurable("record"); e != nil {
+		t.Fatal(e)
+	}
+}
+func TestIRRenameFailureDoesNotReplaceTarget(t *testing.T) {
+	IRReset()
+	defer IRReset()
+	d, e := Open(root(t))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer d.Close()
+	if e = d.Replace("record", []byte("old")); e != nil {
+		t.Fatal(e)
+	}
+	IRFailRename = true
+	if e = d.Replace("record", []byte("new")); e == nil {
+		t.Fatal("rename fault missing")
+	}
+	b, e := d.ReadDurable("record")
+	if e != nil || string(b) != "old" {
+		t.Fatal("failed rename replaced target", e)
+	}
+	IRFailRename = false
+	if e = d.Replace("record", []byte("new")); e != nil {
+		t.Fatal(e)
+	}
+}

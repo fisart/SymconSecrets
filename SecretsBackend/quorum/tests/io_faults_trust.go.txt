@@ -1,0 +1,269 @@
+package trust
+
+import (
+	"github.com/fisart/SymconSecrets/SecretsBackend/quorum/durable"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func failNext(kind string) {
+	switch kind {
+	case "directory":
+		durable.IRFailDir = true
+		durable.IRDirAfter = durable.IRDirCalls + 1
+	case "file":
+		durable.IRFailFile = true
+		durable.IRFileAfter = durable.IRFileCalls + 1
+	case "rename":
+		durable.IRFailRename = true
+	}
+}
+func TestIRAdmissionFailureRetry(t *testing.T) {
+	for _, kind := range []string{"directory", "file", "rename"} {
+		t.Run(kind, func(t *testing.T) {
+			durable.IRReset()
+			defer durable.IRReset()
+			path := privateDir(t)
+			j, e := OpenAdmission(path)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if e = j.Initialize(); e != nil {
+				t.Fatal(e)
+			}
+			r, c := admission(t)
+			switch kind {
+			case "directory":
+				durable.IRFailDir = true
+				durable.IRDirAfter = durable.IRDirCalls + 2
+			case "file":
+				durable.IRFailFile = true
+				durable.IRFileAfter = durable.IRFileCalls + 2
+			case "rename":
+				durable.IRFailRename = true
+			}
+			if _, e = j.Consume(r, c); e == nil {
+				t.Fatal("injected transition failure missing")
+			}
+			if history, e := j.Consume(r, c); e == nil || history {
+				t.Fatal("failed storage became successful admission", history, e)
+			}
+			j.Close()
+			j, e = OpenAdmission(path)
+			if e != nil {
+				t.Fatal(e)
+			}
+			defer j.Close()
+			if history, e := j.Consume(r, c); e == nil || history {
+				t.Fatal("reopen bypassed unresolved durability", history, e)
+			}
+			durable.IRFailDir = false
+			durable.IRFailFile = false
+			durable.IRFailRename = false
+			before := durable.IRDirCalls
+			history, e := j.Consume(r, c)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if history != (kind == "directory") {
+				t.Fatal("transition executed twice or nonexistent transition called history")
+			}
+			if durable.IRDirCalls <= before {
+				t.Fatal("retry skipped positive durability barrier")
+			}
+			history, e = j.Consume(r, c)
+			if e != nil || !history {
+				t.Fatal("completed admission is not idempotent", e)
+			}
+		})
+	}
+}
+func TestIRRecoveryFailureRetry(t *testing.T) {
+	for _, kind := range []string{"directory", "file", "rename"} {
+		t.Run(kind, func(t *testing.T) {
+			durable.IRReset()
+			defer durable.IRReset()
+			path := privateDir(t)
+			j, e := OpenRecovery(path, func(point string) error {
+				if point == "before-floor" {
+					failNext(kind)
+				}
+				return nil
+			})
+			if e != nil {
+				t.Fatal(e)
+			}
+			r, c, floor := recovery(t)
+			if e = j.Initialize(floor); e != nil {
+				t.Fatal(e)
+			}
+			if _, e = j.Apply(r, c); e == nil {
+				t.Fatal("injected floor failure missing")
+			}
+			state, locked, e := j.State()
+			if !locked || (e == nil && state.Sequence != "0") {
+				t.Fatal("failed barrier exposed unlocked new floor", state, locked, e)
+			}
+			if history, e := j.Apply(r, c); e == nil || history {
+				t.Fatal("recovery retry bypassed storage error", history, e)
+			}
+			j.Close()
+			j, e = OpenRecovery(path, nil)
+			if e != nil {
+				t.Fatal(e)
+			}
+			defer j.Close()
+			state, locked, e = j.State()
+			if !locked || (e == nil && state.Sequence != "0") {
+				t.Fatal("reopen exposed unlocked new floor", state, locked, e)
+			}
+			durable.IRFailDir = false
+			durable.IRFailFile = false
+			durable.IRFailRename = false
+			before := durable.IRDirCalls
+			history, e := j.Apply(r, c)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if history != (kind == "directory") {
+				t.Fatal("wrong durable completion history")
+			}
+			if durable.IRDirCalls <= before {
+				t.Fatal("no positive completion barrier")
+			}
+			state, locked, e = j.State()
+			if e != nil || locked || state.Sequence != "1" {
+				t.Fatal("recovery did not durably complete", state, locked, e)
+			}
+			history, e = j.Apply(r, c)
+			if e != nil || !history {
+				t.Fatal("recovery applied twice", e)
+			}
+		})
+	}
+}
+func TestIRInitializationRetryRequiresDurability(t *testing.T) {
+	for _, kind := range []string{"admission", "recovery"} {
+		for _, phase := range []string{"directory", "file", "rename"} {
+			t.Run(kind+"/"+phase, func(t *testing.T) {
+				durable.IRReset()
+				defer durable.IRReset()
+				path := privateDir(t)
+				var initialize func() error
+				if kind == "admission" {
+					j, e := OpenAdmission(path)
+					if e != nil {
+						t.Fatal(e)
+					}
+					defer j.Close()
+					initialize = j.Initialize
+				} else {
+					j, e := OpenRecovery(path, nil)
+					if e != nil {
+						t.Fatal(e)
+					}
+					defer j.Close()
+					_, _, floor := recovery(t)
+					initialize = func() error { return j.Initialize(floor) }
+				}
+				failNext(phase)
+				if e := initialize(); e == nil {
+					t.Fatal("initialization fault missing")
+				}
+				if e := initialize(); e == nil {
+					t.Fatal("initialization bypassed unresolved barrier")
+				}
+				durable.IRFailDir = false
+				durable.IRFailFile = false
+				durable.IRFailRename = false
+				if e := initialize(); e != nil {
+					t.Fatal(e)
+				}
+			})
+		}
+	}
+}
+func TestIRFailedSyncChild(t *testing.T) {
+	path := os.Getenv("SYMCON_IR_FAILED_SYNC_CHILD")
+	if path == "" {
+		t.Skip("failed sync child only")
+	}
+	r, c, _ := recovery(t)
+	j, e := OpenRecovery(path, func(point string) error {
+		if point == "before-floor" {
+			failNext("directory")
+		}
+		return nil
+	})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer j.Close()
+	if _, e = j.Apply(r, c); e == nil {
+		t.Fatal("fault missing")
+	}
+	if e = os.WriteFile(os.Getenv("SYMCON_IR_FAILED_SYNC_READY"), []byte("EIO"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	select {}
+}
+func TestIRProcessKillAfterFailedFloorSync(t *testing.T) {
+	durable.IRReset()
+	defer durable.IRReset()
+	path := privateDir(t)
+	r, c, floor := recovery(t)
+	j, e := OpenRecovery(path, nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = j.Initialize(floor); e != nil {
+		t.Fatal(e)
+	}
+	j.Close()
+	ready := filepath.Join(t.TempDir(), "ready")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestIRFailedSyncChild$", "-test.timeout=30s")
+	cmd.Env = append(os.Environ(), "SYMCON_IR_FAILED_SYNC_CHILD="+path, "SYMCON_IR_FAILED_SYNC_READY="+ready)
+	if e = cmd.Start(); e != nil {
+		t.Fatal(e)
+	}
+	defer func() { cmd.Process.Kill(); cmd.Wait() }()
+	reached := false
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, e = os.Stat(ready); e == nil {
+			reached = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !reached {
+		t.Fatal("child did not reach failed sync")
+	}
+	cmd.Process.Kill()
+	cmd.Wait()
+	j, e = OpenRecovery(path, nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer j.Close()
+	failNext("directory")
+	if _, locked, e := j.State(); e == nil || !locked {
+		t.Fatal("failed durability exposed floor after process kill")
+	}
+	durable.IRFailDir = false
+	before := durable.IRDirCalls
+	history, e := j.Apply(r, c)
+	if e != nil || !history {
+		t.Fatal("durable recovery after failed sync/crash", e)
+	}
+	if durable.IRDirCalls <= before {
+		t.Fatal("no re-synchronization")
+	}
+	_, locked, e := j.State()
+	if e != nil || locked {
+		t.Fatal("durable state remained locked", e)
+	}
+}

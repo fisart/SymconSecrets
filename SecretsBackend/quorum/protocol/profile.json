@@ -1,0 +1,3200 @@
+{
+  "profile": "DC01-Protocol-2",
+  "documentVersion": "1.2",
+  "status": "DESIGN_ONLY_REVIEW_PENDING",
+  "appraisal": "D01-D03 substantively resolved in independent v1.1 design review; R1-R3 corrected in specification, re-review and implementation verification pending",
+  "implementationCommit": "3c5d111bbeff1055b591731f726362dc2387e619",
+  "formatContract": {
+    "encoding": "UTF-8 JSON; ASCII metadata profile; RFC8785-compatible canonical form; no JSON numeric wire values",
+    "closedRecords": true,
+    "duplicateKeys": "REJECT",
+    "maxMetadataBytes": 65536,
+    "maxDepth": 8,
+    "maxArrayItems": 100,
+    "maxBundleBytes": 67108864,
+    "nativeIDs": "Nonzero exact lower-case 16-hex strings; never float/int coercion",
+    "nullability": "All fields required; suffix ? permits JSON null, not omission",
+    "listSyntax": "T[] means bounded array of defined T; no arbitrary maps",
+    "operationDispatch": "Only named operation and exact body/result field set; closed actor/evidence unions. Response.operation echoes Request.action.operation; outcome determines nullable result and decision consistency.",
+    "nativeIDCodec": "Unsigned 64-bit protobuf bit pattern rendered as zero-padded lower-case 16-hex big-endian text; a signed lease ID preserves its 64-bit bit pattern. Zero is not a live native identity/lease. Never float-convert."
+  },
+  "domains": {
+    "request": "SYMCON-PEER-REQUEST-V2\u0000",
+    "response": "SYMCON-PEER-RESPONSE-V2\u0000",
+    "action": "SYMCON-PEER-ACTION-V2\u0000",
+    "archiveReceipt": "SYMCON-ARCHIVE-RECEIPT-V2\u0000",
+    "ownerProposal": "SYMCON-OWNER-PROPOSAL-V2\u0000",
+    "hostAdmission": "SYMCON-HOST-ADMISSION-V2\u0000",
+    "recoveryManifest": "SYMCON-RECOVERY-TRUST-V2\u0000",
+    "archiveReattestation": "SYMCON-ARCHIVE-REATTESTATION-V2\u0000"
+  },
+  "primitives": {
+    "UUID": "lower-case RFC4122 UUIDv4",
+    "B64_16": "canonical unpadded base64url encoding exactly 16 bytes",
+    "B64_32": "canonical unpadded base64url encoding exactly 32 bytes",
+    "B64_64": "canonical unpadded base64url encoding exactly 64 bytes",
+    "B64_VAR": "canonical unpadded base64url, nonempty, at most 16384 encoded characters; metadata total limit still applies",
+    "DIGEST": "64 lower-case hexadecimal SHA-256 characters",
+    "Q": "decimal string 0..9223372036854775807, no leading zero except 0",
+    "Q_POS": "Q greater than 0",
+    "NATIVE_ID": "nonzero 16 lower-case hex characters",
+    "ASCII_2048": "printable ASCII string length 1..2048",
+    "ASCII_253": "printable ASCII string length 1..253"
+  },
+  "enums": {
+    "V2": [
+      "2"
+    ],
+    "KEY_V1": [
+      "ScopeKeyV1"
+    ],
+    "AES128GCM": [
+      "aes-128-gcm"
+    ],
+    "RootKind": [
+      "vault",
+      "identity",
+      "policy",
+      "pairing",
+      "stream",
+      "operations",
+      "outbox"
+    ],
+    "ScopeKind": [
+      "GLOBAL",
+      "LOCAL"
+    ],
+    "ChangeClass": [
+      "GLOBAL_EDIT",
+      "LOCAL_EDIT",
+      "COUNTER",
+      "SECURITY",
+      "SYNC_ACCEPT",
+      "INTENT_PREPARE",
+      "INTENT_COMPLETION",
+      "RECOVERY_IMPORT",
+      "MAINTENANCE"
+    ],
+    "GrantKind": [
+      "LOGIN",
+      "METADATA",
+      "REVEAL",
+      "EXPORT",
+      "SYNC_SEND",
+      "EXTERNAL"
+    ],
+    "ChallengeKind": [
+      "LOGIN",
+      "REVEAL",
+      "GLOBAL_EDIT",
+      "LOCAL_EDIT",
+      "SECURITY",
+      "MEMBERSHIP",
+      "EXPORT"
+    ],
+    "GrantContext": [
+      "SESSION",
+      "LOGIN_COUNTER",
+      "REVEAL_COUNTER",
+      "SYNC_JOB",
+      "EXTERNAL_INTENT"
+    ],
+    "USER_EVIDENCE": [
+      "USER"
+    ],
+    "MACHINE_EVIDENCE": [
+      "MACHINE"
+    ],
+    "RECOVERY_EVIDENCE": [
+      "RECOVERY"
+    ],
+    "MachineChangeClass": [
+      "SYNC_ACCEPT",
+      "INTENT_PREPARE",
+      "INTENT_COMPLETION",
+      "MAINTENANCE"
+    ],
+    "CORE_PURPOSE": [
+      "CORE"
+    ],
+    "PinPurpose": [
+      "EXTERNAL_RESULT",
+      "BACKUP",
+      "READER"
+    ],
+    "PinState": [
+      "OPEN",
+      "PINNED",
+      "RELEASED"
+    ],
+    "ReservationPurpose": [
+      "CORE",
+      "EXTERNAL_RESULT",
+      "BACKUP",
+      "READER"
+    ],
+    "ReservationState": [
+      "PREPARING",
+      "READY",
+      "COMMITTED",
+      "ABORTED"
+    ],
+    "RepairState": [
+      "OPEN",
+      "COPIED",
+      "VERIFIED",
+      "COMPLETE",
+      "CANCELLED"
+    ],
+    "DeleteState": [
+      "ISSUED",
+      "DONE"
+    ],
+    "RestartClass": [
+      "INTACT",
+      "REPLACEMENT",
+      "QUARANTINED"
+    ],
+    "ReplacementKind": [
+      "NODE",
+      "VOTER",
+      "ARCHIVE",
+      "GATEWAY",
+      "TRUST"
+    ],
+    "ReplacementState": [
+      "APPROVED",
+      "OLD_ID_FENCED_REMOVED",
+      "NEW_LEARNER_ADDED",
+      "CATCH_UP_VERIFIED",
+      "PROMOTED",
+      "ARCHIVE_COPY_VERIFIED",
+      "GATEWAY_TRUST_ACTIVATED",
+      "COMPLETE",
+      "BLOCKED"
+    ],
+    "DecisionResult": [
+      "APPLIED",
+      "COMMITTED",
+      "AUTHORIZED",
+      "ABORTED",
+      "REJECTED"
+    ],
+    "Reason": [
+      "NONE",
+      "HEAD_CHANGED",
+      "ROLE_FORBIDDEN",
+      "FENCED",
+      "TRUST_MISMATCH",
+      "SCOPE_FORBIDDEN",
+      "APPROVAL_INVALID",
+      "RESERVATION_CLOSED",
+      "ARCHIVE_GENERATION_CHANGED",
+      "RECEIPTS_INVALID",
+      "REPAIR_REQUIRED",
+      "ID_REUSE",
+      "UNKNOWN_OUTCOME",
+      "NOT_ADMITTED",
+      "PINNED",
+      "LIMIT",
+      "SCHEMA_REJECT",
+      "SIGNATURE_REJECT"
+    ],
+    "AbortReason": [
+      "USER_CANCEL",
+      "FENCED_OWNER",
+      "STALE_HEAD",
+      "INVALID_INPUT"
+    ],
+    "Resolution": [
+      "DECIDED",
+      "UNKNOWN"
+    ],
+    "ACTOR_NODE": [
+      "NODE"
+    ],
+    "ACTOR_BOOT": [
+      "BOOT"
+    ],
+    "ACTOR_ARCHIVE": [
+      "ARCHIVE"
+    ],
+    "ACTOR_GATEWAY": [
+      "GATEWAY"
+    ],
+    "ResponseOutcome": [
+      "SUCCESS",
+      "REJECTED"
+    ],
+    "ComponentKind": [
+      "NODE",
+      "VOTER",
+      "ARCHIVE",
+      "GATEWAY"
+    ],
+    "ArchiveState": [
+      "VERIFYING",
+      "REPAIRING",
+      "ACTIVE",
+      "QUARANTINED",
+      "REMOVED"
+    ],
+    "SCAN_COMPLETE": [
+      "COMPLETE"
+    ]
+  },
+  "records": {
+    "Head": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "clusterId": "UUID",
+        "realmId": "UUID",
+        "incarnation": "B64_32",
+        "index": "Q",
+        "commitId": "UUID",
+        "coreDigest": "DIGEST",
+        "manifestDigest": "DIGEST",
+        "keyEpoch": "Q"
+      }
+    },
+    "NodeBinding": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "nodeId": "UUID",
+        "bootId": "B64_32",
+        "nodeFence": "Q_POS"
+      }
+    },
+    "Coordinator": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "nodeId": "UUID",
+        "bootId": "B64_32",
+        "nodeFence": "Q_POS",
+        "epoch": "Q_POS",
+        "leaseId": "NATIVE_ID"
+      }
+    },
+    "ObjectRef": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "id": "B64_32",
+        "kind": "RootKind",
+        "schema": "Q_POS",
+        "length": "Q",
+        "digest": "DIGEST",
+        "keyId": "B64_32",
+        "scopeId": "UUID"
+      }
+    },
+    "RecordRef": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "id": "UUID",
+        "version": "Q",
+        "digest": "DIGEST"
+      }
+    },
+    "ScopeBinding": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "scopeId": "UUID",
+        "kind": "ScopeKind",
+        "ownerNodeId": "UUID?",
+        "keyId": "B64_32",
+        "revision": "Q",
+        "objectDigest": "DIGEST"
+      }
+    },
+    "ApprovalEvidence": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "challengeId": "UUID",
+        "credentialId": "B64_VAR",
+        "clientDataJSON": "B64_VAR",
+        "authenticatorData": "B64_VAR",
+        "signature": "B64_VAR",
+        "userHandle": "B64_VAR?",
+        "operationDigest": "DIGEST",
+        "origin": "ASCII_2048",
+        "rpId": "ASCII_253"
+      }
+    },
+    "OwnerProposal": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "userOperationId": "UUID",
+        "expectedHead": "Head",
+        "policyRef": "RecordRef",
+        "owner": "NodeBinding",
+        "scope": "ScopeBinding",
+        "newRevision": "Q",
+        "changeClass": "ChangeClass",
+        "operationDigest": "DIGEST",
+        "approval": "AuthorizationEvidence",
+        "replacementObjects": "ObjectRef[]",
+        "permittedDiffDigest": "DIGEST",
+        "auditContextRef": "RecordRef",
+        "keyId": "B64_32",
+        "signature": "B64_64"
+      }
+    },
+    "UserEvidence": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "kind": "USER_EVIDENCE",
+        "assertion": "ApprovalEvidence"
+      }
+    },
+    "MachineEvidence": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "kind": "MACHINE_EVIDENCE",
+        "sourceGrantRef": "RecordRef",
+        "pairingOrIntentRef": "RecordRef",
+        "assertionDigest": "DIGEST",
+        "permittedChangeClass": "MachineChangeClass",
+        "initiator": "NodeBinding"
+      }
+    },
+    "RecoveryEvidence": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "kind": "RECOVERY_EVIDENCE",
+        "approvedManifestRef": "RecordRef",
+        "currentActionDigest": "DIGEST",
+        "operatorAssertion": "ApprovalEvidence"
+      }
+    },
+    "BundleDescriptor": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "commitId": "UUID",
+        "bundleDigest": "DIGEST",
+        "manifestDigest": "DIGEST",
+        "bundleLength": "Q"
+      }
+    },
+    "PurposePin": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "id": "UUID",
+        "version": "Q",
+        "purpose": "PinPurpose",
+        "state": "PinState",
+        "ownerRef": "RecordRef",
+        "bundle": "BundleDescriptor",
+        "initiator": "NodeBinding",
+        "contextHead": "Head",
+        "leaseId": "NATIVE_ID?",
+        "receiptRefs": "RecordRef[]"
+      }
+    },
+    "ArchiveBinding": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "archiveId": "UUID",
+        "failureDomainId": "UUID",
+        "storageGeneration": "B64_32",
+        "registrationVersion": "Q",
+        "bootId": "B64_32"
+      }
+    },
+    "ArchiveReceipt": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "version": "V2",
+        "clusterId": "UUID",
+        "realmId": "UUID",
+        "incarnation": "B64_32",
+        "reservationId": "UUID",
+        "candidateCommitId": "UUID",
+        "bundleDigest": "DIGEST",
+        "manifestDigest": "DIGEST",
+        "bundleLength": "Q",
+        "archive": "ArchiveBinding",
+        "keyId": "B64_32",
+        "signature": "B64_64"
+      }
+    },
+    "Reservation": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "id": "UUID",
+        "version": "Q",
+        "purpose": "CORE_PURPOSE",
+        "state": "ReservationState",
+        "userOperationId": "UUID",
+        "originalActionDigest": "DIGEST",
+        "predecessor": "Head",
+        "candidate": "Head",
+        "bundleDigest": "DIGEST",
+        "manifestDigest": "DIGEST",
+        "bundleLength": "Q",
+        "initiator": "NodeBinding",
+        "coordinator": "Coordinator",
+        "scope": "ScopeBinding",
+        "policyRef": "RecordRef",
+        "membershipRef": "RecordRef",
+        "approvalRef": "RecordRef",
+        "receiptRefs": "RecordRef[]",
+        "auditRef": "RecordRef"
+      }
+    },
+    "RepairTicket": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "id": "UUID",
+        "version": "Q",
+        "state": "RepairState",
+        "bundleRef": "RecordRef",
+        "source": "ArchiveBinding",
+        "target": "ArchiveBinding",
+        "requiredHead": "Head",
+        "pinRef": "RecordRef",
+        "resultReceiptRef": "RecordRef?"
+      }
+    },
+    "DeletePermit": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "id": "UUID",
+        "bundleRef": "RecordRef",
+        "reservationId": "UUID",
+        "archive": "ArchiveBinding",
+        "referenceIndexRef": "RecordRef",
+        "invalidationDecisionRef": "RecordRef",
+        "state": "DeleteState"
+      }
+    },
+    "HostAdmission": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "version": "V2",
+        "clusterId": "UUID",
+        "realmId": "UUID",
+        "incarnation": "B64_32",
+        "nativeClusterId": "NATIVE_ID",
+        "trustRevision": "Q_POS",
+        "componentKind": "ComponentKind",
+        "componentId": "UUID",
+        "targetIdentityDigest": "DIGEST",
+        "bootOperationId": "UUID",
+        "admissionCounter": "Q_POS",
+        "admissionId": "UUID",
+        "bootId": "B64_32",
+        "storageGeneration": "B64_32",
+        "volumeIdentityDigest": "DIGEST",
+        "restartClass": "RestartClass",
+        "trustPackDigest": "DIGEST",
+        "hostGuardKeyId": "B64_32",
+        "signature": "B64_64"
+      }
+    },
+    "TrustPack": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "clusterId": "UUID",
+        "realmId": "UUID",
+        "incarnation": "B64_32",
+        "nativeClusterId": "NATIVE_ID",
+        "trustRevision": "Q_POS",
+        "gatewaySetDigest": "DIGEST",
+        "tlsTrustDigest": "DIGEST",
+        "receiptKeySetDigest": "DIGEST",
+        "endpointSetDigest": "DIGEST",
+        "recoveryTrustDigest": "DIGEST",
+        "originRpPolicyDigest": "DIGEST"
+      }
+    },
+    "RecoveryTrustManifest": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "version": "V2",
+        "recoverySequence": "Q_POS",
+        "recoveryId": "UUID",
+        "oldTrustPackDigest": "DIGEST",
+        "newTrustPack": "TrustPack",
+        "selectedRecoveryHead": "Head",
+        "fencingEvidenceDigest": "DIGEST",
+        "revocationPlanDigest": "DIGEST",
+        "dataLossDispositionDigest": "DIGEST",
+        "independentApprovalDigest": "DIGEST",
+        "recoveryKeyId": "B64_32",
+        "signature": "B64_64"
+      }
+    },
+    "ReplacementPlan": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "id": "UUID",
+        "version": "Q",
+        "kind": "ReplacementKind",
+        "oldIdentityDigest": "DIGEST",
+        "newIdentityDigest": "DIGEST",
+        "routingDigest": "DIGEST",
+        "scopeSetDigest": "DIGEST",
+        "approvalRef": "RecordRef",
+        "state": "ReplacementState",
+        "expectedHead": "Head",
+        "stepOutcomeRefs": "RecordRef[]"
+      }
+    },
+    "IntentCompletion": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "intentId": "UUID",
+        "grantId": "UUID",
+        "originalExecutorNodeId": "UUID",
+        "expectedTokenVersion": "Q",
+        "encryptedResultRefs": "ObjectRef[]",
+        "resultReservationRef": "RecordRef",
+        "originalEvidenceDigest": "DIGEST"
+      }
+    },
+    "Decision": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "operationId": "UUID",
+        "operation": "Operation",
+        "actionDigest": "DIGEST",
+        "incarnation": "B64_32",
+        "actorDigest": "DIGEST",
+        "coordinatorEpoch": "Q?",
+        "expectedHeadDigest": "DIGEST?",
+        "resultHeadDigest": "DIGEST?",
+        "result": "DecisionResult",
+        "reason": "Reason",
+        "auditDigest": "DIGEST"
+      }
+    },
+    "ActorNode": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "kind": "ACTOR_NODE",
+        "binding": "NodeBinding",
+        "keyId": "B64_32"
+      }
+    },
+    "ActorBoot": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "kind": "ACTOR_BOOT",
+        "nodeId": "UUID",
+        "candidateBootId": "B64_32",
+        "keyId": "B64_32",
+        "hostAdmission": "HostAdmission"
+      }
+    },
+    "ActorArchive": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "kind": "ACTOR_ARCHIVE",
+        "archive": "ArchiveBinding",
+        "keyId": "B64_32"
+      }
+    },
+    "ActorGateway": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "kind": "ACTOR_GATEWAY",
+        "gatewayId": "UUID",
+        "bootId": "B64_32",
+        "keyId": "B64_32"
+      }
+    },
+    "Action": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "operationId": "UUID",
+        "operation": "Operation",
+        "expectedHead": "Head?",
+        "requiredCoordinator": "Coordinator?",
+        "body": "OperationBody"
+      }
+    },
+    "Request": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "version": "V2",
+        "clusterId": "UUID",
+        "realmId": "UUID",
+        "incarnation": "B64_32",
+        "trustRevision": "Q_POS",
+        "requestId": "UUID",
+        "nonce": "B64_32",
+        "actor": "Actor",
+        "action": "Action"
+      }
+    },
+    "WireRequest": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "request": "Request",
+        "signature": "B64_64"
+      }
+    },
+    "Response": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "version": "V2",
+        "clusterId": "UUID",
+        "realmId": "UUID",
+        "incarnation": "B64_32",
+        "trustRevision": "Q_POS",
+        "nativeClusterId": "NATIVE_ID",
+        "requestId": "UUID",
+        "nonce": "B64_32",
+        "actionDigest": "DIGEST",
+        "currentHead": "Head",
+        "currentCoordinator": "Coordinator?",
+        "serverId": "UUID",
+        "decision": "Decision?",
+        "result": "OperationResult?",
+        "operation": "Operation",
+        "outcome": "ResponseOutcome"
+      }
+    },
+    "WireResponse": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "response": "Response",
+        "keyId": "B64_32",
+        "signature": "B64_64"
+      }
+    },
+    "TransportError": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "version": "V2",
+        "errorCode": "Reason",
+        "requestId": "UUID?"
+      }
+    },
+    "ScopeKeyPlaintext": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "schema": "KEY_V1",
+        "realmId": "UUID",
+        "scopeId": "UUID",
+        "dataGeneration": "B64_32",
+        "keyId": "B64_32",
+        "keyAlgorithm": "AES128GCM",
+        "recipientId": "UUID",
+        "recipientPublicKeyDigest": "DIGEST",
+        "keyMaterial": "B64_16"
+      }
+    },
+    "CommittedCopyReceipt": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "version": "V2",
+        "clusterId": "UUID",
+        "realmId": "UUID",
+        "incarnation": "B64_32",
+        "reattestationId": "UUID",
+        "bundleRef": "RecordRef",
+        "bundle": "BundleDescriptor",
+        "referenceIndexRef": "RecordRef",
+        "verifiedHeadDigest": "DIGEST",
+        "archive": "ArchiveBinding",
+        "keyId": "B64_32",
+        "signature": "B64_64"
+      }
+    },
+    "ArchiveScanSummary": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "state": "SCAN_COMPLETE",
+        "referenceIndexRef": "RecordRef",
+        "headDigest": "DIGEST",
+        "inventoryDigest": "DIGEST",
+        "verifiedReceiptSetDigest": "DIGEST",
+        "missingBundleSetDigest": "DIGEST",
+        "quarantinedBundleSetDigest": "DIGEST",
+        "protectedBundleCount": "Q",
+        "verifiedBundleCount": "Q",
+        "missingBundleCount": "Q",
+        "quarantinedBundleCount": "Q"
+      }
+    }
+  },
+  "operations": {
+    "readHead": {
+      "allowedActors": [
+        "BOOT",
+        "NODE",
+        "ARCHIVE",
+        "GATEWAY"
+      ],
+      "coordinator": "MUST_BE_NULL",
+      "expectedHead": "MAY_BE_NULL",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "knownTrustPackDigest": "DIGEST"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "head": "Head",
+          "policyRef": "RecordRef",
+          "membershipRef": "RecordRef",
+          "availabilityRef": "RecordRef"
+        }
+      },
+      "atomicPredicates": [
+        "Accepted trust lineage/native cluster; current enrolled identity/capability. No secret names or values returned. No grant implied."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "registerBoot": {
+      "allowedActors": [
+        "BOOT"
+      ],
+      "coordinator": "MUST_BE_NULL",
+      "expectedHead": "MAY_BE_NULL",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "previousNodeFence": "Q",
+          "expectedNodeRecord": "RecordRef",
+          "admission": "HostAdmission"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "node": "NodeBinding",
+          "nodeRecord": "RecordRef"
+        }
+      },
+      "atomicPredicates": [
+        "Current member/key/host-guard binding, exact previous node record/fence, independent admitted boot class; write new boot/fence and decision atomically. Duplicate credentials never enroll a second node."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "acquireCoordinator": {
+      "allowedActors": [
+        "NODE"
+      ],
+      "coordinator": "MUST_BE_NULL",
+      "expectedHead": "EXACT_CURRENT",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "expectedEpoch": "Q",
+          "leaseId": "NATIVE_ID",
+          "eligibilityDigest": "DIGEST",
+          "nodeRecord": "RecordRef"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "coordinator": "Coordinator"
+        }
+      },
+      "atomicPredicates": [
+        "H/P/N current; coordinator key absent; durable epoch equals expected; registered current node boot; candidate has current data and usable keys. Atomically increment non-leased epoch and install leased coordinator + decision."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "createChallenge": {
+      "allowedActors": [
+        "NODE"
+      ],
+      "coordinator": "MUST_BE_NULL",
+      "expectedHead": "EXACT_CURRENT",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "kind": "ChallengeKind",
+          "origin": "ASCII_2048",
+          "frontendBindingDigest": "DIGEST",
+          "scope": "ScopeBinding",
+          "operationDigest": "DIGEST",
+          "credentialSetDigest": "DIGEST",
+          "ttlSeconds": "Q_POS"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "challengeRef": "RecordRef",
+          "challenge": "B64_32"
+        }
+      },
+      "atomicPredicates": [
+        "Exact H/P/N and origin/RP binding; challenge target/purpose/head/node boot fixed; 120-second maximum; one-use consumption. Issuance is not authority to disclose or mutate."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "authorize": {
+      "allowedActors": [
+        "NODE"
+      ],
+      "coordinator": "MUST_BE_NULL",
+      "expectedHead": "EXACT_CURRENT",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "kind": "GrantKind",
+          "contextClass": "GrantContext",
+          "authorityContextRef": "RecordRef",
+          "scope": "ScopeBinding",
+          "approvalEvidenceDigest": "DIGEST",
+          "permissionGeneration": "Q",
+          "objectRefs": "ObjectRef[]",
+          "responseClass": "GrantKind"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "grantRef": "RecordRef"
+        }
+      },
+      "atomicPredicates": [
+        "D01 matrix determines allowed direct grants. H/P/N/U and scope current; login/reveal exact counter-publication head; approved challenge/flags/counter checked. Direct peer role only, not coordinator/core write. Store exact grant + secret-free audit atomically."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "reserveCandidate": {
+      "allowedActors": [
+        "NODE"
+      ],
+      "coordinator": "EXACT_OWNED_CURRENT",
+      "expectedHead": "EXACT_CURRENT",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "proposal": "OwnerProposal",
+          "candidateHead": "Head",
+          "manifestDigest": "DIGEST",
+          "bundleDigest": "DIGEST",
+          "bundleLength": "Q",
+          "membershipRef": "RecordRef"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "reservationRef": "RecordRef"
+        }
+      },
+      "atomicPredicates": [
+        "H/P/N/U/C and initiating owner node/fence/scope current; exact allowed object diff; no realm pending reservation; original operation digest unresolved. Store immutable PREPARING + pending pointer atomically."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "uploadBundle": {
+      "allowedActors": [
+        "NODE"
+      ],
+      "coordinator": "CORE_EXACT_OWNED_CURRENT_PIN_NULL",
+      "expectedHead": "CORE_RESERVED_PIN_EXACT_OWNER_REF",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "reservationRef": "RecordRef",
+          "bundleDigest": "DIGEST",
+          "bundleLength": "Q"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "receipt": "ArchiveReceipt"
+        }
+      },
+      "atomicPredicates": [
+        "Binary archive route only; CORE requires exact current coordinator and live reservation. PurposePin requires current scope owner/executor with exact committed owner context and no coordinator role; no head publication. Fresh quorum pin/uploader identity and admitted current archive generation. Exact length/digest; persist complete reservation-owned bytes and pin plus directory flush before receipt."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "registerReceipt": {
+      "allowedActors": [
+        "ARCHIVE",
+        "NODE"
+      ],
+      "coordinator": "CORE_NODE_MATCHES_RESERVATION_C; ARCHIVE_SERVICE_NULL; PURPOSE_PIN_NODE_NULL",
+      "expectedHead": "EXACT_RESERVED",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "reservationRef": "RecordRef",
+          "receipt": "ArchiveReceipt"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "reservationRef": "RecordRef",
+          "receiptRef": "RecordRef"
+        }
+      },
+      "atomicPredicates": [
+        "CORE reservation PREPARING/READY or live PurposePin with current committed owner context; receipt signature/key/current archive registration+generation; exact bundle/head/length/domain; no abort/commit reuse. Receipt cannot revive a terminal reservation.",
+        "For a live PurposePin, registered current receipts atomically mark PINNED once required independent copies exist; this never changes realm head or publishes a core. Resolved/released owner pins cannot be revived.",
+        "Already COMMITTED core reservation is never revived: use reattestCommitted for intact retained bytes. New candidate uploads require ACTIVE current archive generation."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "markReady": {
+      "allowedActors": [
+        "NODE"
+      ],
+      "coordinator": "EXACT_OWNED_CURRENT",
+      "expectedHead": "EXACT_RESERVED",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "reservationRef": "RecordRef",
+          "receiptRefs": "RecordRef[]"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "reservationRef": "RecordRef"
+        }
+      },
+      "atomicPredicates": [
+        "Live exact reservation; two current ACTIVE independent archive generations and matching durable registered receipts; H/P/N/U/C unchanged. READY is not core commitment."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "commitCandidate": {
+      "allowedActors": [
+        "NODE"
+      ],
+      "coordinator": "EXACT_OWNED_CURRENT",
+      "expectedHead": "EXACT_RESERVED",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "reservationRef": "RecordRef",
+          "userOperationId": "UUID",
+          "proposalDigest": "DIGEST",
+          "receiptRefs": "RecordRef[]"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "head": "Head",
+          "userDecision": "Decision",
+          "reservationRef": "RecordRef"
+        }
+      },
+      "atomicPredicates": [
+        "CORE purpose only. Exact READY version and pending pointer; original user operation+digest unresolved; H/P/N/U/C/scope current; archive registrations/generations+receipt versions unchanged; two current copies of published predecessor and candidate. Atomically H+COMMITTED user outcome+COMMITTED reservation+head/reference pins+audit; clear pending."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "abortCandidate": {
+      "allowedActors": [
+        "NODE",
+        "GATEWAY"
+      ],
+      "coordinator": "EXACT_CURRENT_FOR_NODE_FENCED_OWNER_FOR_GATEWAY",
+      "expectedHead": "EXACT_RESERVED",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "reservationRef": "RecordRef",
+          "userOperationId": "UUID",
+          "originalActionDigest": "DIGEST",
+          "reason": "AbortReason"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "userDecision": "Decision",
+          "reservationRef": "RecordRef"
+        }
+      },
+      "atomicPredicates": [
+        "CORE purpose only. Exact live reservation/pending/outcome; candidate not committed; H not candidate. NODE must be current coordinator. GATEWAY maintenance may abort only atomically proven fenced/expired owner. Store terminal ABORTED original outcome + tombstone and clear pending."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "status": {
+      "allowedActors": [
+        "BOOT",
+        "NODE",
+        "ARCHIVE",
+        "GATEWAY"
+      ],
+      "coordinator": "MUST_BE_NULL",
+      "expectedHead": "MAY_BE_NULL",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "targetOperationId": "UUID",
+          "targetActionDigest": "DIGEST"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "resolution": "Resolution",
+          "targetDecision": "Decision?"
+        }
+      },
+      "atomicPredicates": [
+        "Fresh accepted lineage and permitted caller/operation scope; exact target ID+digest. Missing decision is UNKNOWN, not proof the request cannot later execute. No secret result or fresh grant."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "pinBundleBegin": {
+      "allowedActors": [
+        "NODE",
+        "GATEWAY"
+      ],
+      "coordinator": "MUST_BE_NULL",
+      "expectedHead": "EXACT_CURRENT",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "purpose": "PinPurpose",
+          "ownerRef": "RecordRef",
+          "bundle": "BundleDescriptor",
+          "leaseId": "NATIVE_ID?"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "pin": "PurposePin"
+        }
+      },
+      "atomicPredicates": [
+        "Current N/scope and exact committed external intent/backup/read context; EXTERNAL_RESULT only original still-enrolled executor of authorized intent. READER lease is authority managed. Create purpose-bound non-core pin; cannot enter core commit/abandon rules."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "pinBundleRelease": {
+      "allowedActors": [
+        "NODE",
+        "GATEWAY"
+      ],
+      "coordinator": "MUST_BE_NULL",
+      "expectedHead": "EXACT_CURRENT",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "pinRef": "RecordRef",
+          "ownerDispositionRef": "RecordRef"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "pin": "PurposePin"
+        }
+      },
+      "atomicPredicates": [
+        "Committed terminal owner disposition, completed read or authority-expired reader lease and exact pin/reference versions; unresolved intent/backup owner prevents release. Core coordinator loss alone cannot release a PurposePin. Physical deletion still requires deletePermit."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "repairOpen": {
+      "allowedActors": [
+        "GATEWAY"
+      ],
+      "coordinator": "MUST_BE_NULL",
+      "expectedHead": "EXACT_CURRENT",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "bundleRef": "RecordRef",
+          "source": "ArchiveBinding",
+          "target": "ArchiveBinding"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "repairTicket": "RepairTicket"
+        }
+      },
+      "atomicPredicates": [
+        "Current committed/reference pin, verified surviving source, admitted target generation. Pin both ends and immutable digest; no H change or plaintext rights."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "repairRegister": {
+      "allowedActors": [
+        "ARCHIVE"
+      ],
+      "coordinator": "MUST_BE_NULL",
+      "expectedHead": "EXACT_CURRENT",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "repairTicketRef": "RecordRef",
+          "receipt": "ArchiveReceipt"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "repairTicket": "RepairTicket",
+          "availabilityRef": "RecordRef"
+        }
+      },
+      "atomicPredicates": [
+        "Exact current repair ticket and target storage generation; copied/fsynced bytes bind committed bundle; required pins remain. Update current-copy evidence; REDUNDANT only after two independent valid copies. No H change.",
+        "Target may be admitted VERIFYING/REPAIRING while receiving bytes. A verified receipt becomes counted copy evidence only after activateArchive makes that exact generation ACTIVE. Existing ACTIVE target needs no new activation unless its generation/state changed."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "deletePermit": {
+      "allowedActors": [
+        "GATEWAY"
+      ],
+      "coordinator": "MUST_BE_NULL",
+      "expectedHead": "EXACT_CURRENT",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "bundleRef": "RecordRef",
+          "reservationId": "UUID",
+          "archive": "ArchiveBinding",
+          "referenceIndexRef": "RecordRef"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "permit": "DeletePermit"
+        }
+      },
+      "atomicPredicates": [
+        "Terminal abort or committed retention transition; no current/pending/read/backup/external/recovery pins; two copies of still-required data preserved; exact reference-index+archive versions. Invalidate receipt and record irreversible deletion fence before physical unlink.",
+        "For a PurposePin, require RELEASED and its terminal committed owner disposition. reservationId names that pin; it is never treated as an aborted core reservation."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "archiveBoot": {
+      "allowedActors": [
+        "ARCHIVE"
+      ],
+      "coordinator": "MUST_BE_NULL",
+      "expectedHead": "MAY_BE_NULL",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "previousStorageGeneration": "B64_32",
+          "newStorageGeneration": "B64_32",
+          "admission": "HostAdmission",
+          "inventoryDigest": "DIGEST"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "archive": "ArchiveBinding",
+          "archiveRecord": "RecordRef"
+        }
+      },
+      "atomicPredicates": [
+        "Current enrolled archive/key and independent admission; exact former archive record; new generation on every archive restart. Atomically invalidate old receipts and set VERIFYING; same boot operation cannot allocate generation twice.",
+        "Verify HostAdmission under its exact domain/current guard authority and atomically consume its admissionId/counter bound to this boot operation and new generation. Old generation immediately stops counting; fresh reattestCommitted and activateArchive restore serving/copy evidence without H mutation."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "gatewayBoot": {
+      "allowedActors": [
+        "GATEWAY"
+      ],
+      "coordinator": "MUST_BE_NULL",
+      "expectedHead": "MAY_BE_NULL",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "admission": "HostAdmission",
+          "expectedNativeClusterId": "NATIVE_ID",
+          "trustPackDigest": "DIGEST"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "gatewayRecord": "RecordRef"
+        }
+      },
+      "atomicPredicates": [
+        "Independently pinned current trust floor, admitted host/code, native cluster ID and fresh linearizable lineage agree; never restored cache/TOFU. No serving before success."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "replacementBegin": {
+      "allowedActors": [
+        "NODE"
+      ],
+      "coordinator": "EXACT_OWNED_CURRENT",
+      "expectedHead": "EXACT_CURRENT",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "plan": "ReplacementPlan",
+          "approval": "ApprovalEvidence"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "plan": "ReplacementPlan"
+        }
+      },
+      "atomicPredicates": [
+        "Current H/P/N/U/C and exact plan/roles/scopes/hardware requirement; approved old identity fenced before new role activation; no new candidate self-approval."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "replacementStep": {
+      "allowedActors": [
+        "NODE",
+        "GATEWAY"
+      ],
+      "coordinator": "CURRENT_COORDINATOR_OR_EXACT_COMMITTED_SERVICE_STEP",
+      "expectedHead": "EXACT_CURRENT",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "planRef": "RecordRef",
+          "expectedStep": "ReplacementState",
+          "completedEvidenceDigest": "DIGEST"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "plan": "ReplacementPlan"
+        }
+      },
+      "atomicPredicates": [
+        "Exact approved immutable plan/step ID; compare current native/application/archive/gateway records. Supported learner workflow; query outcome after timeout; halt if quorum/copy safety fails. New privileges/changed plan require new approval."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "intentCompleteSubmit": {
+      "allowedActors": [
+        "NODE"
+      ],
+      "coordinator": "MUST_BE_NULL",
+      "expectedHead": "EXACT_CURRENT",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "completion": "IntentCompletion"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "evidenceRef": "RecordRef"
+        }
+      },
+      "atomicPredicates": [
+        "Ordinary node credentials and boot current, exact original executor/intent/grant/token version/result pins. Evidence only. Revoked/retired node rejected on this route too. Current coordinator must publish via ordinary candidate protocol. No second provider request or generic replay."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "reattestCommitted": {
+      "allowedActors": [
+        "ARCHIVE"
+      ],
+      "coordinator": "MUST_BE_NULL",
+      "expectedHead": "EXACT_CURRENT",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "archiveRecordRef": "RecordRef",
+          "receipt": "CommittedCopyReceipt"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "receiptRef": "RecordRef",
+          "availabilityRef": "RecordRef"
+        }
+      },
+      "atomicPredicates": [
+        "Current enrolled archive signing key, admitted exact boot/storage generation in VERIFYING, REPAIRING or ACTIVE. Receipt reattestationId equals this action operationId; archive bindings match actor/current registration. QUARANTINED/REMOVED denied.",
+        "Fresh linearizable H and reference index prove exact immutable committed bundle/descriptor and a live retained current/read/backup/external/recovery reference. No terminal reservation is reopened; no surviving-source receipt is required.",
+        "Archive independently verifies every ciphertext byte/digest/length, manifest coverage and existing durable pin; reconstructs a missing local pin only from this live authority reference. Hold file/pin lock through fsync(file+pin+directories), signing and registration; no receipt for absent/corrupt/incomplete bytes.",
+        "Atomic CAS compares H, reference-index version/live reference, archive record+generation+key version and absence of deletion permit/fence for this physical bundle. Register new-generation copy evidence and durable action decision together. No H/plaintext/user-authority change. Active-copy health counts receipt only when archive is ACTIVE.",
+        "Reference/head/generation race rejects stale evidence. Re-read and fully reverify with a new operation after a terminal rejection; lost replies query/retry the same immutable ID/digest. Never revive old receipts or reuse an already deletion-fenced file."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    },
+    "activateArchive": {
+      "allowedActors": [
+        "ARCHIVE"
+      ],
+      "coordinator": "MUST_BE_NULL",
+      "expectedHead": "EXACT_CURRENT",
+      "body": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "archiveRecordRef": "RecordRef",
+          "scan": "ArchiveScanSummary"
+        }
+      },
+      "result": {
+        "closed": true,
+        "allListedFieldsRequired": true,
+        "fields": {
+          "archive": "ArchiveBinding",
+          "state": "ArchiveState",
+          "availabilityRef": "RecordRef"
+        }
+      },
+      "atomicPredicates": [
+        "Current admitted archive boot/generation/key, VERIFYING or REPAIRING; exact current H, reference index and registration. Recheck HostAdmission consumption/guard identity/current trust; no restart/restore drift during scan.",
+        "Complete protected-inventory scan at the exact reference index classifies every retained assigned local bundle exactly once as verified, missing or quarantined. Counts and canonical sorted descriptor-set digests match authoritative inventory/registered current-generation receipt records. Inventory is paginated under the same index, not embedded as an unbounded metadata list. Unknown or unscanned entries prohibit activation.",
+        "Atomically mark the exact registration ACTIVE and recompute availability from current-generation per-bundle evidence and failure domains. Missing/corrupt entries stay unavailable and enter repair; activation needs no second archive receipt and never asserts two-copy health by itself. No H change.",
+        "If H/reference index/registration changes, reject and reconcile/rescan before a new action; lost acknowledgement resolves by stable ID. Removal/quarantine or another boot fences old activation. Archive ACTIVE with zero valid copies is permitted only with honest UNAVAILABLE health and sensitive/core-write gates still closed."
+      ],
+      "idempotency": "Stable action operationId + domain-separated actionDigest; fresh transport requestId/nonce. Same ID/different digest is rejected. Historical success is status only; current role predicates still apply to new authority."
+    }
+  },
+  "signingRules": {
+    "actionDigestFields": [
+      "version",
+      "clusterId",
+      "realmId",
+      "incarnation",
+      "trustRevision",
+      "actor",
+      "action"
+    ],
+    "request": "JCS(Request); WireRequest.signature is outside payload",
+    "response": "JCS(Response); WireResponse.keyId is pinned to response.serverId and accepted trust record before verification",
+    "receiptAndOwner": "JCS(record with exactly signature removed); every other required/known field retained",
+    "errors": "TransportError is not an authoritative decision; it never proves a timed-out original action could not commit.",
+    "algorithm": "Ed25519 detached signature; canonical unpadded base64url 64-byte signatures and 32-byte public keys; reject wrong algorithm/length/noncanonical JSON/unknown fields before semantic acceptance.",
+    "hostAdmission": "Ed25519(domains.hostAdmission UTF-8 bytes || ASCII-JCS(HostAdmission with exactly signature removed)); signer ID remains signed. Resolve hostGuardKeyId exclusively from independently retained guard authority pinned to this component/host and accepted trust floor; never from the admitted image. Verify all lineage/native-cluster/trust/component-kind/identity/volume/storage-generation/boot/operation bindings and restart class. admissionCounter is guard-monotonic outside component rollback scope. Atomically consume admissionId+digest+counter with exact boot registration decision; same ID+same digest returns history, same ID+different digest fails. Older counter/admission or a later boot/replacement/trust transition cannot regain serving. Voter startup guard durably consumes its locally pinned boot admission before launch; intact cold restart is not made circular on an unavailable quorum.",
+    "recoveryManifest": "Ed25519(domains.recoveryManifest UTF-8 bytes || ASCII-JCS(RecoveryTrustManifest with exactly signature removed)); recoveryKeyId is signed. Resolve key only from recovery authority pinned BEFORE disaster in independent trust floor; not from newTrustPack or manifest-supplied keys. Require exact oldTrustPackDigest=current accepted floor, next recoverySequence, same logical cluster/realm, fresh incarnation and native cluster ID, increasing trustRevision, authorized selected historical recovery head and all approved positive-fencing/revocation/data-loss/independent-approval evidence digests. Validate and retain the actual evidence, not only its hash. Selected old head remains provenance, not a current new-lineage authorization.",
+    "archiveReattestation": "Ed25519(domains.archiveReattestation UTF-8 bytes || ASCII-JCS(CommittedCopyReceipt with exactly signature removed)); current pinned archive key, boot/generation/reference and transaction checks apply. This domain cannot validate an ordinary candidate ArchiveReceipt or vice versa.",
+    "recoveryConsumption": "Recovery installer holds independent trust-state lock. Persist manifest+verified evidence+PREPARED old-floor/next-sequence intent, fsync; CAS accepted old floor to the exact new pack/sequence/recoveryId+digest and consumed record, fsync files/directories, then admit the new lineage. Crash before acknowledged durable transition remains locked and resumes the same intent. Same ID+digest only resolves that transition; no repeated rights reset, new lineage, sequence advance or unfencing. Older/different manifest, reused ID/different digest, or any replay after a newer floor is rejected. New host import requires independently authenticated recovery of the latest floor, never snapshot TOFU.",
+    "responseConsistency": "Response operation/requestId/nonce/actionDigest and accepted lineage are bound to the triggering request. REJECTED requires result=null and a durable exact original Decision(result=REJECTED, reason!=NONE, resultHeadDigest=null); no requested effect/grant/reservation may exist. SUCCESS requires exact typed non-null result and operation-appropriate successful decision or explicitly read-only null decision. Reason NONE for successful decisions. TransportError and quorum unavailability are not terminal decisions. ID_REUSE must never overwrite/relabel an earlier operation; return non-decision error or query its original digest.",
+    "statusConsistency": "Successful status has Response.operation=status and outcome=SUCCESS, with result.resolution=DECIDED plus exact targetDecision, or UNKNOWN plus targetDecision=null. A historical REJECTED target does not make the status query itself REJECTED. No grantRef or target success payload is returned/reissued by status. A rejected status query uses outcome=REJECTED/result=null for its own query action, not the target. Response.decision, if present, always belongs to triggering action; targetDecision only to named target."
+  },
+  "unions": {
+    "Actor": [
+      "ActorNode",
+      "ActorBoot",
+      "ActorArchive",
+      "ActorGateway"
+    ],
+    "AuthorizationEvidence": [
+      "UserEvidence",
+      "MachineEvidence",
+      "RecoveryEvidence"
+    ],
+    "OperationBody": "Exact operations[Action.operation].body",
+    "OperationResult": "Exact operations[Response.operation].result on SUCCESS; JSON null on REJECTED. Dispatch requires Response.operation to equal the triggering Request.action.operation.",
+    "Operation": [
+      "readHead",
+      "registerBoot",
+      "acquireCoordinator",
+      "createChallenge",
+      "authorize",
+      "reserveCandidate",
+      "uploadBundle",
+      "registerReceipt",
+      "markReady",
+      "commitCandidate",
+      "abortCandidate",
+      "status",
+      "pinBundleBegin",
+      "pinBundleRelease",
+      "repairOpen",
+      "repairRegister",
+      "deletePermit",
+      "archiveBoot",
+      "gatewayBoot",
+      "replacementBegin",
+      "replacementStep",
+      "intentCompleteSubmit",
+      "reattestCommitted",
+      "activateArchive"
+    ]
+  },
+  "archiveBinaryRoute": {
+    "method": "PUT",
+    "path": "/v2/archive/upload",
+    "contentType": "application/octet-stream",
+    "metadataFields": {
+      "closed": true,
+      "allListedFieldsRequired": true,
+      "fields": {
+        "request": "Request",
+        "signature": "B64_64"
+      }
+    },
+    "metadataMaxBytes": 8192,
+    "authentication": "Current enrolled uploader/mTLS identity; fresh quorum reservation/current archive generation; signed descriptors bind exact body digest+length. No success receipt before bytes+pin+directory durability.",
+    "staging": "Reservation-owned complete bundle file; no cross-reservation physical dedup in initial implementation."
+  },
+  "deploymentApproval": {
+    "status": "BLOCKED_NOT_CONFIGURED",
+    "referenceCandidates": {
+      "etcd": "v3.7.3",
+      "etcdctl": "v3.7.3",
+      "etcdutl": "v3.7.3",
+      "officialEtcdClient": "matching maintained v3.7.3 API; exact build lock required",
+      "gateway": "Go with official maintained etcd client; implementation/build absent",
+      "libsodium": "1.0.22-RELEASE",
+      "claims": "Qualification candidates only, not production security approval"
+    },
+    "requiredInputs": {
+      "threeIndependentAuthorityArchiveInventories": null,
+      "atLeastTwoIndependentEligibleSymconPeers": null,
+      "actualRpIdAndExactOrigins": null,
+      "gatewayEndpointsAndPinnedTrust": null,
+      "hostRestoreGuardAndStorageGenerationEvidence": null,
+      "independentFencingAndRecoveryAccess": null,
+      "keyEnvelopesAndIndependentRecoveryCopies": null,
+      "compilerRuntimeClientLocksAndBinaryChecksums": null,
+      "storageWalAndFlushQualification": null,
+      "wanLatencyThroughputAtMaximumBundle": null,
+      "quotasRetentionGCPinsAndBackups": null,
+      "monitoringAndRecoveryCredentialsOutsideVault": null,
+      "pinnedHostGuardAuthoritiesAndConsumptionJournal": null,
+      "pinnedRecoveryAuthoritySequenceAndDurableTrustFloor": null
+    }
+  },
+  "acceptance": {
+    "existingTests": "Q01-Q45 retained; Q43/Q45 extended for R1; Q46-Q48 added for R1-R3",
+    "newTests": [
+      "Q31",
+      "Q32",
+      "Q33",
+      "Q34",
+      "Q35",
+      "Q36",
+      "Q37",
+      "Q38",
+      "Q39",
+      "Q40",
+      "Q41",
+      "Q42",
+      "Q43",
+      "Q44",
+      "Q45",
+      "Q46",
+      "Q47",
+      "Q48"
+    ],
+    "allFaultTests": "NOT_RUN; 48 proposed acceptance scenarios, not executed evidence",
+    "A01_A07": "Independent replacement-commit re-review pending; this appraisal/revision does not close code findings."
+  },
+  "illustrativeVectors": {
+    "evidenceClass": "DOCUMENT_CONSISTENCY_ONLY_NOT_SERVICE_OR_FAULT_TESTS",
+    "publicTestSeedsOnly": {
+      "nodeEd25519SeedHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "archiveEd25519SeedHex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "gatewayEd25519SeedHex": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+      "hostGuardEd25519SeedHex": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+      "recoveryEd25519SeedHex": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f"
+    },
+    "request": {
+      "input": {
+        "version": "2",
+        "clusterId": "00000001-1111-4111-8111-111111111111",
+        "realmId": "00000002-1111-4111-8111-111111111111",
+        "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+        "trustRevision": "1",
+        "requestId": "00000004-1111-4111-8111-111111111111",
+        "nonce": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU",
+        "actor": {
+          "kind": "NODE",
+          "binding": {
+            "nodeId": "00000006-1111-4111-8111-111111111111",
+            "bootId": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+            "nodeFence": "1"
+          },
+          "keyId": "CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg"
+        },
+        "action": {
+          "operationId": "00000009-1111-4111-8111-111111111111",
+          "operation": "readHead",
+          "expectedHead": null,
+          "requiredCoordinator": null,
+          "body": {
+            "knownTrustPackDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      },
+      "canonicalUtf8": "{\"action\":{\"body\":{\"knownTrustPackDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"expectedHead\":null,\"operation\":\"readHead\",\"operationId\":\"00000009-1111-4111-8111-111111111111\",\"requiredCoordinator\":null},\"actor\":{\"binding\":{\"bootId\":\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\",\"nodeFence\":\"1\",\"nodeId\":\"00000006-1111-4111-8111-111111111111\"},\"keyId\":\"CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg\",\"kind\":\"NODE\"},\"clusterId\":\"00000001-1111-4111-8111-111111111111\",\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"nonce\":\"BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU\",\"realmId\":\"00000002-1111-4111-8111-111111111111\",\"requestId\":\"00000004-1111-4111-8111-111111111111\",\"trustRevision\":\"1\",\"version\":\"2\"}",
+      "actionDigest": "dc37d263bdec1fc274b8e34d5ffbdf70f0a37c4968c995381cb7d50129dc2073",
+      "signature": "147IkWDVlCyvKAhI1xZMcPwiY3NXlD9Nx5iiZQVDOfc8Hb1g_tGx8VfBPn0lyla5FkMAF50bJxITnNrCGOoUBA",
+      "publicKey": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"
+    },
+    "archiveReceipt": {
+      "unsignedReceipt": {
+        "version": "2",
+        "clusterId": "00000001-1111-4111-8111-111111111111",
+        "realmId": "00000002-1111-4111-8111-111111111111",
+        "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+        "reservationId": "0000000a-1111-4111-8111-111111111111",
+        "candidateCommitId": "0000000b-1111-4111-8111-111111111111",
+        "bundleDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "manifestDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "bundleLength": "1024",
+        "archive": {
+          "archiveId": "0000000c-1111-4111-8111-111111111111",
+          "failureDomainId": "0000000d-1111-4111-8111-111111111111",
+          "storageGeneration": "Dg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4",
+          "registrationVersion": "1",
+          "bootId": "Dw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8"
+        },
+        "keyId": "EBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBA"
+      },
+      "signature": "ey1U4t94BV7DVmdGqIkYa861hl5xroqPYO5Jfp_3c3kzPvsWaF_vcGLxLPnbWTIPG4pUI9nEdXdFr_6nTzIGAQ",
+      "publicKey": "Kay64UG8yvCyLhqU000LxzYeUm0L_hLIl5S8kyKWbdc"
+    },
+    "negativeVectors": [
+      {
+        "mutation": "Add unknown Request/Actor/body field",
+        "requiredResult": "SCHEMA_REJECT",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Duplicate JSON field or noncanonical decimal",
+        "requiredResult": "SCHEMA_REJECT",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Change nonce without resigning",
+        "requiredResult": "SIGNATURE_REJECT",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Verify receipt under request domain",
+        "requiredResult": "SIGNATURE_REJECT",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Use peer read grant for commitCandidate",
+        "requiredResult": "ROLE_FORBIDDEN",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Substitute newer H after checking U",
+        "requiredResult": "HEAD_CHANGED",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Local owner changes another scope/global policy",
+        "requiredResult": "SCOPE_FORBIDDEN",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Present READY receipt after generation change",
+        "requiredResult": "ARCHIVE_GENERATION_CHANGED",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Delayed commit after terminal abort",
+        "requiredResult": "RESERVATION_CLOSED",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Treat NOT_FOUND as final cancellation",
+        "requiredResult": "UNKNOWN_OUTCOME",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Retired node submits completion online",
+        "requiredResult": "FENCED",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Snapshot voter restarts without independent admission",
+        "requiredResult": "NOT_ADMITTED",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Fresh nonce/certificate for unaccepted incarnation",
+        "requiredResult": "TRUST_MISMATCH",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "REJECTED response contains non-null actionable grant/reservation",
+        "requiredResult": "SCHEMA_REJECT",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "SUCCESS authorize lacks AUTHORIZED decision or typed grantRef",
+        "requiredResult": "SCHEMA_REJECT",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "UNKNOWN status contains targetDecision or claims terminal target rejection",
+        "requiredResult": "SCHEMA_REJECT",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "HostAdmission verified under recovery domain or wrong pinned signer",
+        "requiredResult": "SIGNATURE_REJECT",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Validly signed admission for wrong component/lineage/volume/storage generation",
+        "requiredResult": "NOT_ADMITTED",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Replay admission after replacement, newer boot or trust advancement",
+        "requiredResult": "FENCED",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Recovery manifest verified under host-admission domain or new self-announced signer",
+        "requiredResult": "SIGNATURE_REJECT",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Validly signed recovery manifest with wrong predecessor/component inventory or stale sequence",
+        "requiredResult": "TRUST_MISMATCH",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Replay already consumed recovery after a later trust floor; same ID with changed digest",
+        "requiredResult": "TRUST_MISMATCH",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "All old archive receipts invalid: refuse independent local reattestation despite intact bytes",
+        "requiredResult": "REQUIRED_RECOVERY_PATH_MISSING",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "mutation": "Reattestation races storage generation/reference/deletion fence change",
+        "requiredResult": "ARCHIVE_GENERATION_CHANGED_OR_REFERENCE_REJECT",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      }
+    ],
+    "wireOutcomes": {
+      "authorized": {
+        "wireRequest": {
+          "request": {
+            "version": "2",
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "trustRevision": "1",
+            "requestId": "0000005a-1111-4111-8111-111111111111",
+            "nonce": "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo",
+            "actor": {
+              "kind": "NODE",
+              "binding": {
+                "nodeId": "00000006-1111-4111-8111-111111111111",
+                "bootId": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+                "nodeFence": "1"
+              },
+              "keyId": "CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg"
+            },
+            "action": {
+              "operationId": "0000005b-1111-4111-8111-111111111111",
+              "operation": "authorize",
+              "expectedHead": {
+                "clusterId": "00000001-1111-4111-8111-111111111111",
+                "realmId": "00000002-1111-4111-8111-111111111111",
+                "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+                "index": "7",
+                "commitId": "00000046-1111-4111-8111-111111111111",
+                "coreDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "manifestDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "keyEpoch": "1"
+              },
+              "requiredCoordinator": null,
+              "body": {
+                "kind": "METADATA",
+                "contextClass": "SESSION",
+                "authorityContextRef": {
+                  "id": "0000005b-1111-4111-8111-111111111111",
+                  "version": "1",
+                  "digest": "000000000000000000000000000000000000000000000000000000000000005b"
+                },
+                "scope": {
+                  "kind": "GLOBAL",
+                  "scopeId": "00000047-1111-4111-8111-111111111111",
+                  "ownerNodeId": null,
+                  "keyId": "SEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEg",
+                  "revision": "1",
+                  "objectDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+                },
+                "approvalEvidenceDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "permissionGeneration": "1",
+                "objectRefs": [],
+                "responseClass": "METADATA"
+              }
+            }
+          },
+          "signature": "NGW56RkZmyyAhvjFqaifK19du0gMYsDdv0TmXjhO0W6ZeTGVdNvXaUPoO6sFRdEOzjA0kHdOF57pgRPNbS5GAQ"
+        },
+        "wireResponse": {
+          "response": {
+            "version": "2",
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "trustRevision": "1",
+            "nativeClusterId": "0000000000000001",
+            "requestId": "0000005a-1111-4111-8111-111111111111",
+            "nonce": "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo",
+            "actionDigest": "40b86f3ec009d29826fdd2740f4b888208e4dbf2ed18d2c0a095588362747487",
+            "operation": "authorize",
+            "outcome": "SUCCESS",
+            "currentHead": {
+              "clusterId": "00000001-1111-4111-8111-111111111111",
+              "realmId": "00000002-1111-4111-8111-111111111111",
+              "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+              "index": "7",
+              "commitId": "00000046-1111-4111-8111-111111111111",
+              "coreDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "manifestDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "keyEpoch": "1"
+            },
+            "currentCoordinator": null,
+            "serverId": "00000050-1111-4111-8111-111111111111",
+            "decision": {
+              "operationId": "0000005b-1111-4111-8111-111111111111",
+              "operation": "authorize",
+              "actionDigest": "40b86f3ec009d29826fdd2740f4b888208e4dbf2ed18d2c0a095588362747487",
+              "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+              "actorDigest": "f83b4271380f312361689475eac3531742fd33617f77471ff50b516798ae2b78",
+              "coordinatorEpoch": null,
+              "expectedHeadDigest": "7eda07ef275a02f5e4e10446fa8c05431ec260103bb7a7136944ed74f084c71e",
+              "resultHeadDigest": null,
+              "result": "AUTHORIZED",
+              "reason": "NONE",
+              "auditDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            },
+            "result": {
+              "grantRef": {
+                "id": "0000005c-1111-4111-8111-111111111111",
+                "version": "1",
+                "digest": "000000000000000000000000000000000000000000000000000000000000005c"
+              }
+            }
+          },
+          "keyId": "UVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVE",
+          "signature": "5OoqzaFgt48q1WrCNAlrwzavxWU9X1lZ0ExlZQhbjnUkjIE69mO36aJq0kBLjH8XCm2G51nzjIXSdRXUEwBTDw"
+        },
+        "requestPublicKey": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+        "gatewayPublicKey": "JUO5L_EJVRFHatyDadtt3JM2ZaEZeN2hQE7hBmypVZ0",
+        "canonicalResponseUtf8": "{\"actionDigest\":\"40b86f3ec009d29826fdd2740f4b888208e4dbf2ed18d2c0a095588362747487\",\"clusterId\":\"00000001-1111-4111-8111-111111111111\",\"currentCoordinator\":null,\"currentHead\":{\"clusterId\":\"00000001-1111-4111-8111-111111111111\",\"commitId\":\"00000046-1111-4111-8111-111111111111\",\"coreDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"index\":\"7\",\"keyEpoch\":\"1\",\"manifestDigest\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"realmId\":\"00000002-1111-4111-8111-111111111111\"},\"decision\":{\"actionDigest\":\"40b86f3ec009d29826fdd2740f4b888208e4dbf2ed18d2c0a095588362747487\",\"actorDigest\":\"f83b4271380f312361689475eac3531742fd33617f77471ff50b516798ae2b78\",\"auditDigest\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"coordinatorEpoch\":null,\"expectedHeadDigest\":\"7eda07ef275a02f5e4e10446fa8c05431ec260103bb7a7136944ed74f084c71e\",\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"operation\":\"authorize\",\"operationId\":\"0000005b-1111-4111-8111-111111111111\",\"reason\":\"NONE\",\"result\":\"AUTHORIZED\",\"resultHeadDigest\":null},\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"nativeClusterId\":\"0000000000000001\",\"nonce\":\"WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo\",\"operation\":\"authorize\",\"outcome\":\"SUCCESS\",\"realmId\":\"00000002-1111-4111-8111-111111111111\",\"requestId\":\"0000005a-1111-4111-8111-111111111111\",\"result\":{\"grantRef\":{\"digest\":\"000000000000000000000000000000000000000000000000000000000000005c\",\"id\":\"0000005c-1111-4111-8111-111111111111\",\"version\":\"1\"}},\"serverId\":\"00000050-1111-4111-8111-111111111111\",\"trustRevision\":\"1\",\"version\":\"2\"}"
+      },
+      "rejectedAuthorize": {
+        "wireRequest": {
+          "request": {
+            "version": "2",
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "trustRevision": "1",
+            "requestId": "0000005e-1111-4111-8111-111111111111",
+            "nonce": "Xl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl4",
+            "actor": {
+              "kind": "NODE",
+              "binding": {
+                "nodeId": "00000006-1111-4111-8111-111111111111",
+                "bootId": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+                "nodeFence": "1"
+              },
+              "keyId": "CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg"
+            },
+            "action": {
+              "operationId": "0000005f-1111-4111-8111-111111111111",
+              "operation": "authorize",
+              "expectedHead": {
+                "clusterId": "00000001-1111-4111-8111-111111111111",
+                "realmId": "00000002-1111-4111-8111-111111111111",
+                "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+                "index": "7",
+                "commitId": "00000046-1111-4111-8111-111111111111",
+                "coreDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "manifestDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "keyEpoch": "1"
+              },
+              "requiredCoordinator": null,
+              "body": {
+                "kind": "METADATA",
+                "contextClass": "SESSION",
+                "authorityContextRef": {
+                  "id": "0000005b-1111-4111-8111-111111111111",
+                  "version": "1",
+                  "digest": "000000000000000000000000000000000000000000000000000000000000005b"
+                },
+                "scope": {
+                  "kind": "GLOBAL",
+                  "scopeId": "00000047-1111-4111-8111-111111111111",
+                  "ownerNodeId": null,
+                  "keyId": "SEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEg",
+                  "revision": "1",
+                  "objectDigest": "9999999999999999999999999999999999999999999999999999999999999999"
+                },
+                "approvalEvidenceDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "permissionGeneration": "1",
+                "objectRefs": [],
+                "responseClass": "METADATA"
+              }
+            }
+          },
+          "signature": "3U9daMCclfmDrqtp2cimch8oXQ0dU8gC1qKyEh1DdH0ITklUBvQGAM3-4HpFoPRpJo3poHzwhNZcZRoyXnRaDQ"
+        },
+        "wireResponse": {
+          "response": {
+            "version": "2",
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "trustRevision": "1",
+            "nativeClusterId": "0000000000000001",
+            "requestId": "0000005e-1111-4111-8111-111111111111",
+            "nonce": "Xl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl4",
+            "actionDigest": "da1099c98c251ec684b443dbab045d59a2f01eb2f059b35106f4cc31c5e58b8f",
+            "operation": "authorize",
+            "outcome": "REJECTED",
+            "currentHead": {
+              "clusterId": "00000001-1111-4111-8111-111111111111",
+              "realmId": "00000002-1111-4111-8111-111111111111",
+              "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+              "index": "7",
+              "commitId": "00000046-1111-4111-8111-111111111111",
+              "coreDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "manifestDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "keyEpoch": "1"
+            },
+            "currentCoordinator": null,
+            "serverId": "00000050-1111-4111-8111-111111111111",
+            "decision": {
+              "operationId": "0000005f-1111-4111-8111-111111111111",
+              "operation": "authorize",
+              "actionDigest": "da1099c98c251ec684b443dbab045d59a2f01eb2f059b35106f4cc31c5e58b8f",
+              "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+              "actorDigest": "f83b4271380f312361689475eac3531742fd33617f77471ff50b516798ae2b78",
+              "coordinatorEpoch": null,
+              "expectedHeadDigest": "7eda07ef275a02f5e4e10446fa8c05431ec260103bb7a7136944ed74f084c71e",
+              "resultHeadDigest": null,
+              "result": "REJECTED",
+              "reason": "APPROVAL_INVALID",
+              "auditDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            },
+            "result": null
+          },
+          "keyId": "UVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVE",
+          "signature": "Kx7PaPxH4Y-zbn6JUuWwcaXwVgQl_1_VAoK7j5tFG-7DhkyjB-TFz1a31fKnHRzBDPWCRM1QwR4G5orJl4uODA"
+        },
+        "requestPublicKey": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+        "gatewayPublicKey": "JUO5L_EJVRFHatyDadtt3JM2ZaEZeN2hQE7hBmypVZ0",
+        "canonicalResponseUtf8": "{\"actionDigest\":\"da1099c98c251ec684b443dbab045d59a2f01eb2f059b35106f4cc31c5e58b8f\",\"clusterId\":\"00000001-1111-4111-8111-111111111111\",\"currentCoordinator\":null,\"currentHead\":{\"clusterId\":\"00000001-1111-4111-8111-111111111111\",\"commitId\":\"00000046-1111-4111-8111-111111111111\",\"coreDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"index\":\"7\",\"keyEpoch\":\"1\",\"manifestDigest\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"realmId\":\"00000002-1111-4111-8111-111111111111\"},\"decision\":{\"actionDigest\":\"da1099c98c251ec684b443dbab045d59a2f01eb2f059b35106f4cc31c5e58b8f\",\"actorDigest\":\"f83b4271380f312361689475eac3531742fd33617f77471ff50b516798ae2b78\",\"auditDigest\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"coordinatorEpoch\":null,\"expectedHeadDigest\":\"7eda07ef275a02f5e4e10446fa8c05431ec260103bb7a7136944ed74f084c71e\",\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"operation\":\"authorize\",\"operationId\":\"0000005f-1111-4111-8111-111111111111\",\"reason\":\"APPROVAL_INVALID\",\"result\":\"REJECTED\",\"resultHeadDigest\":null},\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"nativeClusterId\":\"0000000000000001\",\"nonce\":\"Xl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl4\",\"operation\":\"authorize\",\"outcome\":\"REJECTED\",\"realmId\":\"00000002-1111-4111-8111-111111111111\",\"requestId\":\"0000005e-1111-4111-8111-111111111111\",\"result\":null,\"serverId\":\"00000050-1111-4111-8111-111111111111\",\"trustRevision\":\"1\",\"version\":\"2\"}"
+      },
+      "rejectedReservation": {
+        "wireRequest": {
+          "request": {
+            "version": "2",
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "trustRevision": "1",
+            "requestId": "00000064-1111-4111-8111-111111111111",
+            "nonce": "ZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGQ",
+            "actor": {
+              "kind": "NODE",
+              "binding": {
+                "nodeId": "00000006-1111-4111-8111-111111111111",
+                "bootId": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+                "nodeFence": "1"
+              },
+              "keyId": "CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg"
+            },
+            "action": {
+              "operationId": "00000065-1111-4111-8111-111111111111",
+              "operation": "reserveCandidate",
+              "expectedHead": {
+                "clusterId": "00000001-1111-4111-8111-111111111111",
+                "realmId": "00000002-1111-4111-8111-111111111111",
+                "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+                "index": "7",
+                "commitId": "00000046-1111-4111-8111-111111111111",
+                "coreDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "manifestDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "keyEpoch": "1"
+              },
+              "requiredCoordinator": {
+                "nodeId": "0000006e-1111-4111-8111-111111111111",
+                "bootId": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+                "nodeFence": "1",
+                "epoch": "1",
+                "leaseId": "0000000000000001"
+              },
+              "body": {
+                "proposal": {
+                  "userOperationId": "0000006e-1111-4111-8111-111111111111",
+                  "expectedHead": {
+                    "clusterId": "0000006e-1111-4111-8111-111111111111",
+                    "realmId": "0000006e-1111-4111-8111-111111111111",
+                    "incarnation": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+                    "index": "1",
+                    "commitId": "0000006e-1111-4111-8111-111111111111",
+                    "coreDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "manifestDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "keyEpoch": "1"
+                  },
+                  "policyRef": {
+                    "id": "0000006e-1111-4111-8111-111111111111",
+                    "version": "1",
+                    "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+                  },
+                  "owner": {
+                    "nodeId": "0000006e-1111-4111-8111-111111111111",
+                    "bootId": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+                    "nodeFence": "1"
+                  },
+                  "scope": {
+                    "scopeId": "0000006e-1111-4111-8111-111111111111",
+                    "kind": "GLOBAL",
+                    "ownerNodeId": null,
+                    "keyId": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+                    "revision": "1",
+                    "objectDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+                  },
+                  "newRevision": "1",
+                  "changeClass": "GLOBAL_EDIT",
+                  "operationDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                  "approval": {
+                    "kind": "USER",
+                    "assertion": {
+                      "challengeId": "0000006e-1111-4111-8111-111111111111",
+                      "credentialId": "AQ",
+                      "clientDataJSON": "AQ",
+                      "authenticatorData": "AQ",
+                      "signature": "AQ",
+                      "userHandle": null,
+                      "operationDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                      "origin": "fixture",
+                      "rpId": "fixture"
+                    }
+                  },
+                  "replacementObjects": [],
+                  "permittedDiffDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                  "auditContextRef": {
+                    "id": "0000006e-1111-4111-8111-111111111111",
+                    "version": "1",
+                    "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+                  },
+                  "keyId": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+                  "signature": "f7I8BBJlgtUXm4q0mwKIDYQMiiloUqjrni6aDvNNjDMrZE9C9YUSJ-8ArGaJMU2ycAv5BR6MZm3P3dvq5lqBAw"
+                },
+                "candidateHead": {
+                  "clusterId": "00000001-1111-4111-8111-111111111111",
+                  "realmId": "00000002-1111-4111-8111-111111111111",
+                  "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+                  "index": "8",
+                  "commitId": "0000006f-1111-4111-8111-111111111111",
+                  "coreDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "manifestDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "keyEpoch": "1"
+                },
+                "manifestDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "bundleDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "bundleLength": "1",
+                "membershipRef": {
+                  "id": "0000006e-1111-4111-8111-111111111111",
+                  "version": "1",
+                  "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+                }
+              }
+            }
+          },
+          "signature": "_egU5qAzrAiMlnFzueUlsff-ubA39jZ2i2qCaAQJF4GDxjb2rUlOKF2kut5pxa97ZESyTExeJ78fdARoDm0ABA"
+        },
+        "wireResponse": {
+          "response": {
+            "version": "2",
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "trustRevision": "1",
+            "nativeClusterId": "0000000000000001",
+            "requestId": "00000064-1111-4111-8111-111111111111",
+            "nonce": "ZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGQ",
+            "actionDigest": "3b47de534e4e04a067a3ebe204d8c8fc32c1cab81e9760b270a23834c215a754",
+            "operation": "reserveCandidate",
+            "outcome": "REJECTED",
+            "currentHead": {
+              "clusterId": "00000001-1111-4111-8111-111111111111",
+              "realmId": "00000002-1111-4111-8111-111111111111",
+              "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+              "index": "7",
+              "commitId": "00000046-1111-4111-8111-111111111111",
+              "coreDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "manifestDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "keyEpoch": "1"
+            },
+            "currentCoordinator": null,
+            "serverId": "00000050-1111-4111-8111-111111111111",
+            "decision": {
+              "operationId": "00000065-1111-4111-8111-111111111111",
+              "operation": "reserveCandidate",
+              "actionDigest": "3b47de534e4e04a067a3ebe204d8c8fc32c1cab81e9760b270a23834c215a754",
+              "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+              "actorDigest": "f83b4271380f312361689475eac3531742fd33617f77471ff50b516798ae2b78",
+              "coordinatorEpoch": null,
+              "expectedHeadDigest": "7eda07ef275a02f5e4e10446fa8c05431ec260103bb7a7136944ed74f084c71e",
+              "resultHeadDigest": null,
+              "result": "REJECTED",
+              "reason": "ROLE_FORBIDDEN",
+              "auditDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            },
+            "result": null
+          },
+          "keyId": "UVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVE",
+          "signature": "w0XhZGj2q9m2rJj0b6XG94zgzdgLeDQ8po1MGhqRPpAvffvXiKabZi7fL6XDpuyDCsaLSHnIHxPTjk8cuTC3AA"
+        },
+        "requestPublicKey": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+        "gatewayPublicKey": "JUO5L_EJVRFHatyDadtt3JM2ZaEZeN2hQE7hBmypVZ0",
+        "canonicalResponseUtf8": "{\"actionDigest\":\"3b47de534e4e04a067a3ebe204d8c8fc32c1cab81e9760b270a23834c215a754\",\"clusterId\":\"00000001-1111-4111-8111-111111111111\",\"currentCoordinator\":null,\"currentHead\":{\"clusterId\":\"00000001-1111-4111-8111-111111111111\",\"commitId\":\"00000046-1111-4111-8111-111111111111\",\"coreDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"index\":\"7\",\"keyEpoch\":\"1\",\"manifestDigest\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"realmId\":\"00000002-1111-4111-8111-111111111111\"},\"decision\":{\"actionDigest\":\"3b47de534e4e04a067a3ebe204d8c8fc32c1cab81e9760b270a23834c215a754\",\"actorDigest\":\"f83b4271380f312361689475eac3531742fd33617f77471ff50b516798ae2b78\",\"auditDigest\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"coordinatorEpoch\":null,\"expectedHeadDigest\":\"7eda07ef275a02f5e4e10446fa8c05431ec260103bb7a7136944ed74f084c71e\",\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"operation\":\"reserveCandidate\",\"operationId\":\"00000065-1111-4111-8111-111111111111\",\"reason\":\"ROLE_FORBIDDEN\",\"result\":\"REJECTED\",\"resultHeadDigest\":null},\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"nativeClusterId\":\"0000000000000001\",\"nonce\":\"ZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGQ\",\"operation\":\"reserveCandidate\",\"outcome\":\"REJECTED\",\"realmId\":\"00000002-1111-4111-8111-111111111111\",\"requestId\":\"00000064-1111-4111-8111-111111111111\",\"result\":null,\"serverId\":\"00000050-1111-4111-8111-111111111111\",\"trustRevision\":\"1\",\"version\":\"2\"}"
+      },
+      "historicalStatus": {
+        "wireRequest": {
+          "request": {
+            "version": "2",
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "trustRevision": "1",
+            "requestId": "00000078-1111-4111-8111-111111111111",
+            "nonce": "eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg",
+            "actor": {
+              "kind": "NODE",
+              "binding": {
+                "nodeId": "00000006-1111-4111-8111-111111111111",
+                "bootId": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+                "nodeFence": "1"
+              },
+              "keyId": "CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg"
+            },
+            "action": {
+              "operationId": "00000079-1111-4111-8111-111111111111",
+              "operation": "status",
+              "expectedHead": null,
+              "requiredCoordinator": null,
+              "body": {
+                "targetOperationId": "0000005b-1111-4111-8111-111111111111",
+                "targetActionDigest": "40b86f3ec009d29826fdd2740f4b888208e4dbf2ed18d2c0a095588362747487"
+              }
+            }
+          },
+          "signature": "AyzwB5FfaQ8HMgTwZpciShCyLxlYgZPrQ8g1-SPzKojEZFJaEeF0AuZuWTk9yNw__x419tv8w_obJ2M00Cz_Dw"
+        },
+        "wireResponse": {
+          "response": {
+            "version": "2",
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "trustRevision": "1",
+            "nativeClusterId": "0000000000000001",
+            "requestId": "00000078-1111-4111-8111-111111111111",
+            "nonce": "eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg",
+            "actionDigest": "f032e47bbc73c6bf4ac088f3beffc5cd9be92a47a7bea69299981d1e0c55202d",
+            "operation": "status",
+            "outcome": "SUCCESS",
+            "currentHead": {
+              "clusterId": "00000001-1111-4111-8111-111111111111",
+              "realmId": "00000002-1111-4111-8111-111111111111",
+              "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+              "index": "7",
+              "commitId": "00000046-1111-4111-8111-111111111111",
+              "coreDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "manifestDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "keyEpoch": "1"
+            },
+            "currentCoordinator": null,
+            "serverId": "00000050-1111-4111-8111-111111111111",
+            "decision": null,
+            "result": {
+              "resolution": "DECIDED",
+              "targetDecision": {
+                "operationId": "0000005b-1111-4111-8111-111111111111",
+                "operation": "authorize",
+                "actionDigest": "40b86f3ec009d29826fdd2740f4b888208e4dbf2ed18d2c0a095588362747487",
+                "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+                "actorDigest": "f83b4271380f312361689475eac3531742fd33617f77471ff50b516798ae2b78",
+                "coordinatorEpoch": null,
+                "expectedHeadDigest": "7eda07ef275a02f5e4e10446fa8c05431ec260103bb7a7136944ed74f084c71e",
+                "resultHeadDigest": null,
+                "result": "AUTHORIZED",
+                "reason": "NONE",
+                "auditDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            }
+          },
+          "keyId": "UVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVE",
+          "signature": "dvEcpC4BIWmgnmOPGNwoIqlr_qqr5gXkISwS7WoXQqTBSJLIFekzJ1QX8T1QHF3TH6y62fLH__yY_K0qiSwnCg"
+        },
+        "requestPublicKey": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+        "gatewayPublicKey": "JUO5L_EJVRFHatyDadtt3JM2ZaEZeN2hQE7hBmypVZ0",
+        "canonicalResponseUtf8": "{\"actionDigest\":\"f032e47bbc73c6bf4ac088f3beffc5cd9be92a47a7bea69299981d1e0c55202d\",\"clusterId\":\"00000001-1111-4111-8111-111111111111\",\"currentCoordinator\":null,\"currentHead\":{\"clusterId\":\"00000001-1111-4111-8111-111111111111\",\"commitId\":\"00000046-1111-4111-8111-111111111111\",\"coreDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"index\":\"7\",\"keyEpoch\":\"1\",\"manifestDigest\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"realmId\":\"00000002-1111-4111-8111-111111111111\"},\"decision\":null,\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"nativeClusterId\":\"0000000000000001\",\"nonce\":\"eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg\",\"operation\":\"status\",\"outcome\":\"SUCCESS\",\"realmId\":\"00000002-1111-4111-8111-111111111111\",\"requestId\":\"00000078-1111-4111-8111-111111111111\",\"result\":{\"resolution\":\"DECIDED\",\"targetDecision\":{\"actionDigest\":\"40b86f3ec009d29826fdd2740f4b888208e4dbf2ed18d2c0a095588362747487\",\"actorDigest\":\"f83b4271380f312361689475eac3531742fd33617f77471ff50b516798ae2b78\",\"auditDigest\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"coordinatorEpoch\":null,\"expectedHeadDigest\":\"7eda07ef275a02f5e4e10446fa8c05431ec260103bb7a7136944ed74f084c71e\",\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"operation\":\"authorize\",\"operationId\":\"0000005b-1111-4111-8111-111111111111\",\"reason\":\"NONE\",\"result\":\"AUTHORIZED\",\"resultHeadDigest\":null}},\"serverId\":\"00000050-1111-4111-8111-111111111111\",\"trustRevision\":\"1\",\"version\":\"2\"}"
+      },
+      "unknownStatus": {
+        "wireRequest": {
+          "request": {
+            "version": "2",
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "trustRevision": "1",
+            "requestId": "0000007a-1111-4111-8111-111111111111",
+            "nonce": "enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6eno",
+            "actor": {
+              "kind": "NODE",
+              "binding": {
+                "nodeId": "00000006-1111-4111-8111-111111111111",
+                "bootId": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+                "nodeFence": "1"
+              },
+              "keyId": "CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg"
+            },
+            "action": {
+              "operationId": "0000007b-1111-4111-8111-111111111111",
+              "operation": "status",
+              "expectedHead": null,
+              "requiredCoordinator": null,
+              "body": {
+                "targetOperationId": "0000005b-1111-4111-8111-111111111111",
+                "targetActionDigest": "40b86f3ec009d29826fdd2740f4b888208e4dbf2ed18d2c0a095588362747487"
+              }
+            }
+          },
+          "signature": "LkJwVzQdsasDM65t4kPMuax9VKW5SC7PAxsK9Q2SnHDAxza2iyqQ1jd10Gq2AfS4GDELyrG_ywrRm1VONUU1Dg"
+        },
+        "wireResponse": {
+          "response": {
+            "version": "2",
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "trustRevision": "1",
+            "nativeClusterId": "0000000000000001",
+            "requestId": "0000007a-1111-4111-8111-111111111111",
+            "nonce": "enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6eno",
+            "actionDigest": "e9fe2a72e0cd3ddb9fc47e5dd51962378656f60dfd40361edb37ddf04f29369e",
+            "operation": "status",
+            "outcome": "SUCCESS",
+            "currentHead": {
+              "clusterId": "00000001-1111-4111-8111-111111111111",
+              "realmId": "00000002-1111-4111-8111-111111111111",
+              "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+              "index": "7",
+              "commitId": "00000046-1111-4111-8111-111111111111",
+              "coreDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "manifestDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "keyEpoch": "1"
+            },
+            "currentCoordinator": null,
+            "serverId": "00000050-1111-4111-8111-111111111111",
+            "decision": null,
+            "result": {
+              "resolution": "UNKNOWN",
+              "targetDecision": null
+            }
+          },
+          "keyId": "UVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVE",
+          "signature": "VVrFf3emfZnjHtF4TQM3tkyFPHUCW50vVuJephyt4RRxobhste66gTlnEFC1eidOk6t7y3dZXrHiiMA-3mb4Cw"
+        },
+        "requestPublicKey": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+        "gatewayPublicKey": "JUO5L_EJVRFHatyDadtt3JM2ZaEZeN2hQE7hBmypVZ0",
+        "canonicalResponseUtf8": "{\"actionDigest\":\"e9fe2a72e0cd3ddb9fc47e5dd51962378656f60dfd40361edb37ddf04f29369e\",\"clusterId\":\"00000001-1111-4111-8111-111111111111\",\"currentCoordinator\":null,\"currentHead\":{\"clusterId\":\"00000001-1111-4111-8111-111111111111\",\"commitId\":\"00000046-1111-4111-8111-111111111111\",\"coreDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"index\":\"7\",\"keyEpoch\":\"1\",\"manifestDigest\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"realmId\":\"00000002-1111-4111-8111-111111111111\"},\"decision\":null,\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"nativeClusterId\":\"0000000000000001\",\"nonce\":\"enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6eno\",\"operation\":\"status\",\"outcome\":\"SUCCESS\",\"realmId\":\"00000002-1111-4111-8111-111111111111\",\"requestId\":\"0000007a-1111-4111-8111-111111111111\",\"result\":{\"resolution\":\"UNKNOWN\",\"targetDecision\":null},\"serverId\":\"00000050-1111-4111-8111-111111111111\",\"trustRevision\":\"1\",\"version\":\"2\"}"
+      }
+    },
+    "hostAdmission": {
+      "record": {
+        "version": "2",
+        "clusterId": "00000001-1111-4111-8111-111111111111",
+        "realmId": "00000002-1111-4111-8111-111111111111",
+        "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+        "nativeClusterId": "0000000000000001",
+        "trustRevision": "1",
+        "componentKind": "ARCHIVE",
+        "componentId": "00000082-1111-4111-8111-111111111111",
+        "targetIdentityDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+        "bootOperationId": "00000083-1111-4111-8111-111111111111",
+        "admissionCounter": "3",
+        "admissionId": "00000084-1111-4111-8111-111111111111",
+        "bootId": "hYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYU",
+        "storageGeneration": "hoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoY",
+        "volumeIdentityDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+        "restartClass": "INTACT",
+        "trustPackDigest": "077074ea69522e898dbba629297febc0a83fec245ad2984b2f117e482387c1bf",
+        "hostGuardKeyId": "h4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4c",
+        "signature": "M7dEvU9Qg6NCzsSZ0Q32744F3VvCxkiSNpk4VlKS6LaDgzdPGZkJQYHQFsNTQjKUUcMRMZm97nD_I-svR6HuDg"
+      },
+      "publicKey": "F0VTtFbd38aQjsqxwQH-arIeK6oGF3lbfUOmNIKZP9U",
+      "canonicalUnsignedUtf8": "{\"admissionCounter\":\"3\",\"admissionId\":\"00000084-1111-4111-8111-111111111111\",\"bootId\":\"hYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYU\",\"bootOperationId\":\"00000083-1111-4111-8111-111111111111\",\"clusterId\":\"00000001-1111-4111-8111-111111111111\",\"componentId\":\"00000082-1111-4111-8111-111111111111\",\"componentKind\":\"ARCHIVE\",\"hostGuardKeyId\":\"h4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4c\",\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"nativeClusterId\":\"0000000000000001\",\"realmId\":\"00000002-1111-4111-8111-111111111111\",\"restartClass\":\"INTACT\",\"storageGeneration\":\"hoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoY\",\"targetIdentityDigest\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"trustPackDigest\":\"077074ea69522e898dbba629297febc0a83fec245ad2984b2f117e482387c1bf\",\"trustRevision\":\"1\",\"version\":\"2\",\"volumeIdentityDigest\":\"8888888888888888888888888888888888888888888888888888888888888888\"}",
+      "trustedContext": {
+        "trustPack": {
+          "clusterId": "00000001-1111-4111-8111-111111111111",
+          "realmId": "00000002-1111-4111-8111-111111111111",
+          "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+          "nativeClusterId": "0000000000000001",
+          "trustRevision": "1",
+          "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+          "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+          "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+          "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+        },
+        "componentId": "00000082-1111-4111-8111-111111111111",
+        "componentKind": "ARCHIVE",
+        "lastAdmissionCounter": "2",
+        "bootOperationId": "00000083-1111-4111-8111-111111111111",
+        "targetIdentityDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+        "storageGeneration": "hoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoY",
+        "consumed": false
+      }
+    },
+    "recoveryManifest": {
+      "record": {
+        "version": "2",
+        "recoverySequence": "1",
+        "recoveryId": "00000089-1111-4111-8111-111111111111",
+        "oldTrustPackDigest": "077074ea69522e898dbba629297febc0a83fec245ad2984b2f117e482387c1bf",
+        "newTrustPack": {
+          "clusterId": "00000001-1111-4111-8111-111111111111",
+          "realmId": "00000002-1111-4111-8111-111111111111",
+          "incarnation": "iIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIg",
+          "nativeClusterId": "0000000000000002",
+          "trustRevision": "2",
+          "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+          "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+          "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+          "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+        },
+        "selectedRecoveryHead": {
+          "clusterId": "00000001-1111-4111-8111-111111111111",
+          "realmId": "00000002-1111-4111-8111-111111111111",
+          "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+          "index": "7",
+          "commitId": "00000046-1111-4111-8111-111111111111",
+          "coreDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "manifestDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "keyEpoch": "1"
+        },
+        "fencingEvidenceDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "revocationPlanDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "dataLossDispositionDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "independentApprovalDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "recoveryKeyId": "ioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioo",
+        "signature": "-FE5oKOwncg-9kAX00-ofYAkm22cR5Gi5qQm5LfW-dS3fqWzofO7tXMokQjqgtqw7GT7YGfGypXHS_UjEjipDg"
+      },
+      "publicKey": "zRSzf5VulTGU_3-3Oz2B3MVh1hp1OAlLfD4aZD7l86o",
+      "canonicalUnsignedUtf8": "{\"dataLossDispositionDigest\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"fencingEvidenceDigest\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"independentApprovalDigest\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"newTrustPack\":{\"clusterId\":\"00000001-1111-4111-8111-111111111111\",\"endpointSetDigest\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"gatewaySetDigest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"incarnation\":\"iIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIg\",\"nativeClusterId\":\"0000000000000002\",\"originRpPolicyDigest\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"realmId\":\"00000002-1111-4111-8111-111111111111\",\"receiptKeySetDigest\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"recoveryTrustDigest\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"tlsTrustDigest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"trustRevision\":\"2\"},\"oldTrustPackDigest\":\"077074ea69522e898dbba629297febc0a83fec245ad2984b2f117e482387c1bf\",\"recoveryId\":\"00000089-1111-4111-8111-111111111111\",\"recoveryKeyId\":\"ioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioo\",\"recoverySequence\":\"1\",\"revocationPlanDigest\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"selectedRecoveryHead\":{\"clusterId\":\"00000001-1111-4111-8111-111111111111\",\"commitId\":\"00000046-1111-4111-8111-111111111111\",\"coreDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"index\":\"7\",\"keyEpoch\":\"1\",\"manifestDigest\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"realmId\":\"00000002-1111-4111-8111-111111111111\"},\"version\":\"2\"}",
+      "trustedContext": {
+        "acceptedTrustPack": {
+          "clusterId": "00000001-1111-4111-8111-111111111111",
+          "realmId": "00000002-1111-4111-8111-111111111111",
+          "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+          "nativeClusterId": "0000000000000001",
+          "trustRevision": "1",
+          "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+          "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+          "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+          "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+        },
+        "lastRecoverySequence": "0",
+        "positiveFencingEvidenceVerified": true,
+        "consumed": false
+      }
+    },
+    "committedCopyReceipt": {
+      "record": {
+        "version": "2",
+        "clusterId": "00000001-1111-4111-8111-111111111111",
+        "realmId": "00000002-1111-4111-8111-111111111111",
+        "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+        "reattestationId": "0000006e-1111-4111-8111-111111111111",
+        "bundleRef": {
+          "id": "0000006e-1111-4111-8111-111111111111",
+          "version": "1",
+          "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "bundle": {
+          "commitId": "0000006e-1111-4111-8111-111111111111",
+          "bundleDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "manifestDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "bundleLength": "1"
+        },
+        "referenceIndexRef": {
+          "id": "0000006e-1111-4111-8111-111111111111",
+          "version": "1",
+          "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "verifiedHeadDigest": "7eda07ef275a02f5e4e10446fa8c05431ec260103bb7a7136944ed74f084c71e",
+        "archive": {
+          "archiveId": "0000000c-1111-4111-8111-111111111111",
+          "failureDomainId": "0000000d-1111-4111-8111-111111111111",
+          "storageGeneration": "Dg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4",
+          "registrationVersion": "1",
+          "bootId": "Dw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8"
+        },
+        "keyId": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+        "signature": "VG7KOmCSSXp8WVJjdfy20WM-k1MVhpIVUNt4Okzs-YaBk4nF_aBn5BYGpSWuLuTinoE_ErkIYBMe0_suGd8RAA"
+      },
+      "publicKey": "Kay64UG8yvCyLhqU000LxzYeUm0L_hLIl5S8kyKWbdc",
+      "canonicalUnsignedUtf8": "{\"archive\":{\"archiveId\":\"0000000c-1111-4111-8111-111111111111\",\"bootId\":\"Dw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8\",\"failureDomainId\":\"0000000d-1111-4111-8111-111111111111\",\"registrationVersion\":\"1\",\"storageGeneration\":\"Dg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4\"},\"bundle\":{\"bundleDigest\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"bundleLength\":\"1\",\"commitId\":\"0000006e-1111-4111-8111-111111111111\",\"manifestDigest\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"},\"bundleRef\":{\"digest\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"id\":\"0000006e-1111-4111-8111-111111111111\",\"version\":\"1\"},\"clusterId\":\"00000001-1111-4111-8111-111111111111\",\"incarnation\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\",\"keyId\":\"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI\",\"realmId\":\"00000002-1111-4111-8111-111111111111\",\"reattestationId\":\"0000006e-1111-4111-8111-111111111111\",\"referenceIndexRef\":{\"digest\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"id\":\"0000006e-1111-4111-8111-111111111111\",\"version\":\"1\"},\"verifiedHeadDigest\":\"7eda07ef275a02f5e4e10446fa8c05431ec260103bb7a7136944ed74f084c71e\",\"version\":\"2\"}"
+    },
+    "signedArtifactNegatives": [
+      {
+        "record": {
+          "version": "2",
+          "clusterId": "00000001-1111-4111-8111-111111111111",
+          "realmId": "00000002-1111-4111-8111-111111111111",
+          "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+          "nativeClusterId": "0000000000000001",
+          "trustRevision": "1",
+          "componentKind": "ARCHIVE",
+          "componentId": "00000082-1111-4111-8111-111111111111",
+          "targetIdentityDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+          "bootOperationId": "00000083-1111-4111-8111-111111111111",
+          "admissionCounter": "3",
+          "admissionId": "00000084-1111-4111-8111-111111111111",
+          "bootId": "hYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYU",
+          "storageGeneration": "hoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoY",
+          "volumeIdentityDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+          "restartClass": "INTACT",
+          "trustPackDigest": "077074ea69522e898dbba629297febc0a83fec245ad2984b2f117e482387c1bf",
+          "hostGuardKeyId": "h4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4c",
+          "signature": "ZpCTjmoFoMJUTQsm6X0mj8a0M4BhZ-u_jDIJM7GqfrmgrevzLeg8eBJU7uR_XovKfO6s05tsTiQaEFgWXQBvAw"
+        },
+        "publicKey": "F0VTtFbd38aQjsqxwQH-arIeK6oGF3lbfUOmNIKZP9U",
+        "trustedContext": {
+          "trustPack": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "nativeClusterId": "0000000000000001",
+            "trustRevision": "1",
+            "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+            "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "componentId": "00000082-1111-4111-8111-111111111111",
+          "componentKind": "ARCHIVE",
+          "lastAdmissionCounter": "2",
+          "bootOperationId": "00000083-1111-4111-8111-111111111111",
+          "targetIdentityDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+          "storageGeneration": "hoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoY",
+          "consumed": false
+        },
+        "name": "admissionWrongSigner",
+        "verifyDomain": "hostAdmission",
+        "requiredResult": "SIGNATURE_REJECT",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "record": {
+          "version": "2",
+          "clusterId": "00000001-1111-4111-8111-111111111111",
+          "realmId": "00000002-1111-4111-8111-111111111111",
+          "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+          "nativeClusterId": "0000000000000001",
+          "trustRevision": "1",
+          "componentKind": "ARCHIVE",
+          "componentId": "00000082-1111-4111-8111-111111111111",
+          "targetIdentityDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+          "bootOperationId": "00000083-1111-4111-8111-111111111111",
+          "admissionCounter": "3",
+          "admissionId": "00000084-1111-4111-8111-111111111111",
+          "bootId": "hYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYU",
+          "storageGeneration": "hoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoY",
+          "volumeIdentityDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+          "restartClass": "INTACT",
+          "trustPackDigest": "077074ea69522e898dbba629297febc0a83fec245ad2984b2f117e482387c1bf",
+          "hostGuardKeyId": "h4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4c",
+          "signature": "M7dEvU9Qg6NCzsSZ0Q32744F3VvCxkiSNpk4VlKS6LaDgzdPGZkJQYHQFsNTQjKUUcMRMZm97nD_I-svR6HuDg"
+        },
+        "publicKey": "F0VTtFbd38aQjsqxwQH-arIeK6oGF3lbfUOmNIKZP9U",
+        "trustedContext": {
+          "trustPack": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "nativeClusterId": "0000000000000001",
+            "trustRevision": "1",
+            "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+            "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "componentId": "00000082-1111-4111-8111-111111111111",
+          "componentKind": "ARCHIVE",
+          "lastAdmissionCounter": "2",
+          "bootOperationId": "00000083-1111-4111-8111-111111111111",
+          "targetIdentityDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+          "storageGeneration": "hoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoY",
+          "consumed": false
+        },
+        "name": "admissionWrongDomain",
+        "verifyDomain": "recoveryManifest",
+        "requiredResult": "SIGNATURE_REJECT",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "record": {
+          "version": "2",
+          "clusterId": "00000001-1111-4111-8111-111111111111",
+          "realmId": "00000002-1111-4111-8111-111111111111",
+          "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+          "nativeClusterId": "0000000000000001",
+          "trustRevision": "1",
+          "componentKind": "ARCHIVE",
+          "componentId": "000000c8-1111-4111-8111-111111111111",
+          "targetIdentityDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+          "bootOperationId": "00000083-1111-4111-8111-111111111111",
+          "admissionCounter": "3",
+          "admissionId": "00000084-1111-4111-8111-111111111111",
+          "bootId": "hYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYU",
+          "storageGeneration": "hoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoY",
+          "volumeIdentityDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+          "restartClass": "INTACT",
+          "trustPackDigest": "077074ea69522e898dbba629297febc0a83fec245ad2984b2f117e482387c1bf",
+          "hostGuardKeyId": "h4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4c",
+          "signature": "F8HvwQorrEu2yX9mwjnI7lounLlUy4pfFlnmcf2bO25i3oBxFifSxoS_3T2eHnnc_L2EOJVX893hv1pVedKtDQ"
+        },
+        "publicKey": "F0VTtFbd38aQjsqxwQH-arIeK6oGF3lbfUOmNIKZP9U",
+        "trustedContext": {
+          "trustPack": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "nativeClusterId": "0000000000000001",
+            "trustRevision": "1",
+            "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+            "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "componentId": "00000082-1111-4111-8111-111111111111",
+          "componentKind": "ARCHIVE",
+          "lastAdmissionCounter": "2",
+          "bootOperationId": "00000083-1111-4111-8111-111111111111",
+          "targetIdentityDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+          "storageGeneration": "hoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoY",
+          "consumed": false
+        },
+        "name": "admissionOtherComponent",
+        "verifyDomain": "hostAdmission",
+        "requiredResult": "NOT_ADMITTED",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "record": {
+          "version": "2",
+          "clusterId": "00000001-1111-4111-8111-111111111111",
+          "realmId": "00000002-1111-4111-8111-111111111111",
+          "incarnation": "ycnJycnJycnJycnJycnJycnJycnJycnJycnJycnJyck",
+          "nativeClusterId": "0000000000000001",
+          "trustRevision": "1",
+          "componentKind": "ARCHIVE",
+          "componentId": "00000082-1111-4111-8111-111111111111",
+          "targetIdentityDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+          "bootOperationId": "00000083-1111-4111-8111-111111111111",
+          "admissionCounter": "3",
+          "admissionId": "00000084-1111-4111-8111-111111111111",
+          "bootId": "hYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYU",
+          "storageGeneration": "hoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoY",
+          "volumeIdentityDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+          "restartClass": "INTACT",
+          "trustPackDigest": "077074ea69522e898dbba629297febc0a83fec245ad2984b2f117e482387c1bf",
+          "hostGuardKeyId": "h4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4c",
+          "signature": "tfsJ-0cJ_vkBjZaW1UqbHCNFjNKN8KlnIEOSFTZIWnhxQhrXw2Vu7Ygh2vB3IP_p90nh_x2tTA_8J3PZ1gbcAA"
+        },
+        "publicKey": "F0VTtFbd38aQjsqxwQH-arIeK6oGF3lbfUOmNIKZP9U",
+        "trustedContext": {
+          "trustPack": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "nativeClusterId": "0000000000000001",
+            "trustRevision": "1",
+            "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+            "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "componentId": "00000082-1111-4111-8111-111111111111",
+          "componentKind": "ARCHIVE",
+          "lastAdmissionCounter": "2",
+          "bootOperationId": "00000083-1111-4111-8111-111111111111",
+          "targetIdentityDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+          "storageGeneration": "hoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoY",
+          "consumed": false
+        },
+        "name": "admissionOtherLineage",
+        "verifyDomain": "hostAdmission",
+        "requiredResult": "NOT_ADMITTED",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "record": {
+          "version": "2",
+          "clusterId": "00000001-1111-4111-8111-111111111111",
+          "realmId": "00000002-1111-4111-8111-111111111111",
+          "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+          "nativeClusterId": "0000000000000001",
+          "trustRevision": "1",
+          "componentKind": "ARCHIVE",
+          "componentId": "00000082-1111-4111-8111-111111111111",
+          "targetIdentityDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+          "bootOperationId": "00000083-1111-4111-8111-111111111111",
+          "admissionCounter": "3",
+          "admissionId": "00000084-1111-4111-8111-111111111111",
+          "bootId": "hYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYU",
+          "storageGeneration": "ysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKyso",
+          "volumeIdentityDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+          "restartClass": "INTACT",
+          "trustPackDigest": "077074ea69522e898dbba629297febc0a83fec245ad2984b2f117e482387c1bf",
+          "hostGuardKeyId": "h4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4c",
+          "signature": "M7dEvU9Qg6NCzsSZ0Q32744F3VvCxkiSNpk4VlKS6LaDgzdPGZkJQYHQFsNTQjKUUcMRMZm97nD_I-svR6HuDg"
+        },
+        "publicKey": "F0VTtFbd38aQjsqxwQH-arIeK6oGF3lbfUOmNIKZP9U",
+        "trustedContext": {
+          "trustPack": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "nativeClusterId": "0000000000000001",
+            "trustRevision": "1",
+            "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+            "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "componentId": "00000082-1111-4111-8111-111111111111",
+          "componentKind": "ARCHIVE",
+          "lastAdmissionCounter": "2",
+          "bootOperationId": "00000083-1111-4111-8111-111111111111",
+          "targetIdentityDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+          "storageGeneration": "hoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoY",
+          "consumed": false
+        },
+        "name": "admissionChangedGenerationUnsigned",
+        "verifyDomain": "hostAdmission",
+        "requiredResult": "SIGNATURE_REJECT",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "record": {
+          "version": "2",
+          "clusterId": "00000001-1111-4111-8111-111111111111",
+          "realmId": "00000002-1111-4111-8111-111111111111",
+          "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+          "nativeClusterId": "0000000000000001",
+          "trustRevision": "1",
+          "componentKind": "ARCHIVE",
+          "componentId": "00000082-1111-4111-8111-111111111111",
+          "targetIdentityDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+          "bootOperationId": "00000083-1111-4111-8111-111111111111",
+          "admissionCounter": "3",
+          "admissionId": "00000084-1111-4111-8111-111111111111",
+          "bootId": "hYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYU",
+          "storageGeneration": "ysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKyso",
+          "volumeIdentityDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+          "restartClass": "INTACT",
+          "trustPackDigest": "077074ea69522e898dbba629297febc0a83fec245ad2984b2f117e482387c1bf",
+          "hostGuardKeyId": "h4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4c",
+          "signature": "Fn8LZ8yGUdmETR-L3IBcRAahruEErdoMYJR1yhNC_FSCzlniMl_TbwP9hbQcJNyhYTqR5uLo-4iU-aqxmSlnAQ"
+        },
+        "publicKey": "F0VTtFbd38aQjsqxwQH-arIeK6oGF3lbfUOmNIKZP9U",
+        "trustedContext": {
+          "trustPack": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "nativeClusterId": "0000000000000001",
+            "trustRevision": "1",
+            "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+            "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "componentId": "00000082-1111-4111-8111-111111111111",
+          "componentKind": "ARCHIVE",
+          "lastAdmissionCounter": "2",
+          "bootOperationId": "00000083-1111-4111-8111-111111111111",
+          "targetIdentityDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+          "storageGeneration": "hoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoY",
+          "consumed": false
+        },
+        "name": "admissionOtherGenerationSigned",
+        "verifyDomain": "hostAdmission",
+        "requiredResult": "NOT_ADMITTED",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "record": {
+          "version": "2",
+          "clusterId": "00000001-1111-4111-8111-111111111111",
+          "realmId": "00000002-1111-4111-8111-111111111111",
+          "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+          "nativeClusterId": "0000000000000001",
+          "trustRevision": "1",
+          "componentKind": "ARCHIVE",
+          "componentId": "00000082-1111-4111-8111-111111111111",
+          "targetIdentityDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+          "bootOperationId": "00000083-1111-4111-8111-111111111111",
+          "admissionCounter": "3",
+          "admissionId": "00000084-1111-4111-8111-111111111111",
+          "bootId": "hYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYU",
+          "storageGeneration": "hoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoY",
+          "volumeIdentityDigest": "8888888888888888888888888888888888888888888888888888888888888888",
+          "restartClass": "INTACT",
+          "trustPackDigest": "077074ea69522e898dbba629297febc0a83fec245ad2984b2f117e482387c1bf",
+          "hostGuardKeyId": "h4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4c",
+          "signature": "M7dEvU9Qg6NCzsSZ0Q32744F3VvCxkiSNpk4VlKS6LaDgzdPGZkJQYHQFsNTQjKUUcMRMZm97nD_I-svR6HuDg"
+        },
+        "publicKey": "F0VTtFbd38aQjsqxwQH-arIeK6oGF3lbfUOmNIKZP9U",
+        "trustedContext": {
+          "trustPack": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "nativeClusterId": "0000000000000001",
+            "trustRevision": "1",
+            "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+            "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "componentId": "000000cb-1111-4111-8111-111111111111",
+          "componentKind": "ARCHIVE",
+          "lastAdmissionCounter": "4",
+          "bootOperationId": "00000083-1111-4111-8111-111111111111",
+          "targetIdentityDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+          "storageGeneration": "hoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoY",
+          "consumed": true
+        },
+        "name": "admissionReplayAfterReplacement",
+        "verifyDomain": "hostAdmission",
+        "requiredResult": "FENCED",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "record": {
+          "version": "2",
+          "recoverySequence": "1",
+          "recoveryId": "00000089-1111-4111-8111-111111111111",
+          "oldTrustPackDigest": "077074ea69522e898dbba629297febc0a83fec245ad2984b2f117e482387c1bf",
+          "newTrustPack": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "iIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIg",
+            "nativeClusterId": "0000000000000002",
+            "trustRevision": "2",
+            "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+            "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "selectedRecoveryHead": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "index": "7",
+            "commitId": "00000046-1111-4111-8111-111111111111",
+            "coreDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "manifestDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "keyEpoch": "1"
+          },
+          "fencingEvidenceDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "revocationPlanDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "dataLossDispositionDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "independentApprovalDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "recoveryKeyId": "ioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioo",
+          "signature": "pBUwm2_LTd3lXDrrLJLo_IQgwPaQ_eC-o4eT_eKDyJlG38I978zHuBm1B_1nc9N6XUuVVdH1aBYhtXwrlbv1Bg"
+        },
+        "publicKey": "zRSzf5VulTGU_3-3Oz2B3MVh1hp1OAlLfD4aZD7l86o",
+        "trustedContext": {
+          "acceptedTrustPack": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "nativeClusterId": "0000000000000001",
+            "trustRevision": "1",
+            "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+            "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "lastRecoverySequence": "0",
+          "positiveFencingEvidenceVerified": true,
+          "consumed": false
+        },
+        "name": "recoveryWrongSigner",
+        "verifyDomain": "recoveryManifest",
+        "requiredResult": "SIGNATURE_REJECT",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "record": {
+          "version": "2",
+          "recoverySequence": "1",
+          "recoveryId": "00000089-1111-4111-8111-111111111111",
+          "oldTrustPackDigest": "077074ea69522e898dbba629297febc0a83fec245ad2984b2f117e482387c1bf",
+          "newTrustPack": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "iIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIg",
+            "nativeClusterId": "0000000000000002",
+            "trustRevision": "2",
+            "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+            "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "selectedRecoveryHead": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "index": "7",
+            "commitId": "00000046-1111-4111-8111-111111111111",
+            "coreDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "manifestDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "keyEpoch": "1"
+          },
+          "fencingEvidenceDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "revocationPlanDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "dataLossDispositionDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "independentApprovalDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "recoveryKeyId": "ioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioo",
+          "signature": "-FE5oKOwncg-9kAX00-ofYAkm22cR5Gi5qQm5LfW-dS3fqWzofO7tXMokQjqgtqw7GT7YGfGypXHS_UjEjipDg"
+        },
+        "publicKey": "zRSzf5VulTGU_3-3Oz2B3MVh1hp1OAlLfD4aZD7l86o",
+        "trustedContext": {
+          "acceptedTrustPack": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "nativeClusterId": "0000000000000001",
+            "trustRevision": "1",
+            "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+            "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "lastRecoverySequence": "0",
+          "positiveFencingEvidenceVerified": true,
+          "consumed": false
+        },
+        "name": "recoveryWrongDomain",
+        "verifyDomain": "hostAdmission",
+        "requiredResult": "SIGNATURE_REJECT",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "record": {
+          "version": "2",
+          "recoverySequence": "1",
+          "recoveryId": "00000089-1111-4111-8111-111111111111",
+          "oldTrustPackDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "newTrustPack": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "iIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIg",
+            "nativeClusterId": "0000000000000002",
+            "trustRevision": "2",
+            "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+            "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "selectedRecoveryHead": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "index": "7",
+            "commitId": "00000046-1111-4111-8111-111111111111",
+            "coreDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "manifestDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "keyEpoch": "1"
+          },
+          "fencingEvidenceDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "revocationPlanDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "dataLossDispositionDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "independentApprovalDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "recoveryKeyId": "ioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioo",
+          "signature": "TPQgqso1x-P4qQeoPktHm40DZFrMuXR7TgKi7kQwiYg48ZVBNpYG_PmC1QFwQiKOApRDnjgkxVNmkavHhYwkDg"
+        },
+        "publicKey": "zRSzf5VulTGU_3-3Oz2B3MVh1hp1OAlLfD4aZD7l86o",
+        "trustedContext": {
+          "acceptedTrustPack": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "nativeClusterId": "0000000000000001",
+            "trustRevision": "1",
+            "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+            "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "lastRecoverySequence": "0",
+          "positiveFencingEvidenceVerified": true,
+          "consumed": false
+        },
+        "name": "recoveryWrongPredecessor",
+        "verifyDomain": "recoveryManifest",
+        "requiredResult": "TRUST_MISMATCH",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "record": {
+          "version": "2",
+          "recoverySequence": "1",
+          "recoveryId": "00000089-1111-4111-8111-111111111111",
+          "oldTrustPackDigest": "077074ea69522e898dbba629297febc0a83fec245ad2984b2f117e482387c1bf",
+          "newTrustPack": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "iIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIg",
+            "nativeClusterId": "0000000000000002",
+            "trustRevision": "2",
+            "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+            "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "selectedRecoveryHead": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "index": "7",
+            "commitId": "00000046-1111-4111-8111-111111111111",
+            "coreDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "manifestDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "keyEpoch": "1"
+          },
+          "fencingEvidenceDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "revocationPlanDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "dataLossDispositionDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "independentApprovalDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "recoveryKeyId": "ioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioo",
+          "signature": "-FE5oKOwncg-9kAX00-ofYAkm22cR5Gi5qQm5LfW-dS3fqWzofO7tXMokQjqgtqw7GT7YGfGypXHS_UjEjipDg"
+        },
+        "publicKey": "zRSzf5VulTGU_3-3Oz2B3MVh1hp1OAlLfD4aZD7l86o",
+        "trustedContext": {
+          "acceptedTrustPack": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "nativeClusterId": "0000000000000001",
+            "trustRevision": "1",
+            "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+            "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "lastRecoverySequence": "0",
+          "positiveFencingEvidenceVerified": true,
+          "consumed": false
+        },
+        "name": "recoveryAlteredInventory",
+        "verifyDomain": "recoveryManifest",
+        "requiredResult": "SIGNATURE_REJECT",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      },
+      {
+        "record": {
+          "version": "2",
+          "recoverySequence": "1",
+          "recoveryId": "00000089-1111-4111-8111-111111111111",
+          "oldTrustPackDigest": "077074ea69522e898dbba629297febc0a83fec245ad2984b2f117e482387c1bf",
+          "newTrustPack": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "iIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIg",
+            "nativeClusterId": "0000000000000002",
+            "trustRevision": "2",
+            "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+            "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "selectedRecoveryHead": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+            "index": "7",
+            "commitId": "00000046-1111-4111-8111-111111111111",
+            "coreDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "manifestDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "keyEpoch": "1"
+          },
+          "fencingEvidenceDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "revocationPlanDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "dataLossDispositionDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "independentApprovalDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "recoveryKeyId": "ioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioo",
+          "signature": "-FE5oKOwncg-9kAX00-ofYAkm22cR5Gi5qQm5LfW-dS3fqWzofO7tXMokQjqgtqw7GT7YGfGypXHS_UjEjipDg"
+        },
+        "publicKey": "zRSzf5VulTGU_3-3Oz2B3MVh1hp1OAlLfD4aZD7l86o",
+        "trustedContext": {
+          "acceptedTrustPack": {
+            "clusterId": "00000001-1111-4111-8111-111111111111",
+            "realmId": "00000002-1111-4111-8111-111111111111",
+            "incarnation": "iIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIg",
+            "nativeClusterId": "0000000000000002",
+            "trustRevision": "2",
+            "gatewaySetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+            "tlsTrustDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "receiptKeySetDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "endpointSetDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "recoveryTrustDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+            "originRpPolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "lastRecoverySequence": "1",
+          "positiveFencingEvidenceVerified": true,
+          "consumed": true
+        },
+        "name": "recoveryReplayAfterTrustAdvance",
+        "verifyDomain": "recoveryManifest",
+        "requiredResult": "TRUST_MISMATCH",
+        "status": "NOT_RUN_AGAINST_IMPLEMENTATION"
+      }
+    ]
+  },
+  "responseDecisionContract": {
+    "readOnlyOperations": [
+      "readHead",
+      "status"
+    ],
+    "successResultsByOperation": {
+      "readHead": [],
+      "registerBoot": [
+        "APPLIED"
+      ],
+      "acquireCoordinator": [
+        "APPLIED"
+      ],
+      "createChallenge": [
+        "APPLIED"
+      ],
+      "authorize": [
+        "AUTHORIZED"
+      ],
+      "reserveCandidate": [
+        "APPLIED"
+      ],
+      "uploadBundle": [
+        "APPLIED"
+      ],
+      "registerReceipt": [
+        "APPLIED"
+      ],
+      "markReady": [
+        "APPLIED"
+      ],
+      "commitCandidate": [
+        "COMMITTED"
+      ],
+      "abortCandidate": [
+        "ABORTED"
+      ],
+      "status": [],
+      "pinBundleBegin": [
+        "APPLIED"
+      ],
+      "pinBundleRelease": [
+        "APPLIED"
+      ],
+      "repairOpen": [
+        "APPLIED"
+      ],
+      "repairRegister": [
+        "APPLIED"
+      ],
+      "deletePermit": [
+        "APPLIED"
+      ],
+      "archiveBoot": [
+        "APPLIED"
+      ],
+      "gatewayBoot": [
+        "APPLIED"
+      ],
+      "replacementBegin": [
+        "APPLIED"
+      ],
+      "replacementStep": [
+        "APPLIED"
+      ],
+      "intentCompleteSubmit": [
+        "APPLIED"
+      ],
+      "reattestCommitted": [
+        "APPLIED"
+      ],
+      "activateArchive": [
+        "APPLIED"
+      ]
+    },
+    "rejectionTransaction": "Authenticated schema-valid action only; atomically compare exact ID/digest and unresolved original state, then persist terminal REJECTED plus audit. Concurrent execution/abort and rejection share original-outcome CAS. A preexisting success is historical status, never converted to rejection.",
+    "readOnlyNullDecision": "readHead/status SUCCESS use decision=null; typed result is informational and grants no requested effect. Other SUCCESS responses require durable matching decision.",
+    "historicalReplay": "Only status may return an older operation outcome. Never return an old grant/reference as a fresh successful authorize response when current checks fail."
+  },
+  "archiveRecoveryContract": {
+    "states": "archiveBoot -> VERIFYING; scan and reattest existing retained bytes without source -> activateArchive -> ACTIVE. Missing data may enter REPAIRING and use repairOpen/repairRegister; reactivation uses the same exact-generation admission rules. QUARANTINED/REMOVED require separate approved disposition, never self-activation.",
+    "independentRecovery": "All three archives may restart and lose all old receipts. Healthy quorum plus intact admitted local bytes is sufficient to register first fresh receipts; no other archive current receipt is needed. Two ACTIVE independent verified copies restore REDUNDANT without new H.",
+    "localPinRace": "Before signing, exact physical file/pin is durably locked; deletion requires prior authority fence that reattestation CAS compares. Terminal reservation remains COMMITTED. Health is derived from receipt versions+active archive generation and never inventory labels alone.",
+    "scanScope": "For activation, scan every locally assigned retained protected bundle at the exact authority reference index, including current head and retained purpose/recovery references. The immutable sorted inventory supplies total coverage; missing/corrupt classification does not fabricate copy evidence. Reconcile changed index before activation.",
+    "generationInvalidation": "Every boot transaction changes the current registration/generation; all old evidence immediately becomes noncounting by generation equality even if old receipt records remain. Registration status and per-bundle health are separate predicates."
+  },
+  "recoveryTrustContract": {
+    "guardEnrollment": "Host guard signer public key/component authorization retained outside restored machine, enrolled by existing eligible hardware/recovery policy. Rotation/removal needs approved trust transition; a new guard cannot self-admit from old VM credentials.",
+    "renewalAndRevocation": "Normal key renewal authenticated by current approved trust transition; revoked guard/recovery signer cannot authorize new admission/recovery. Recovery-authority loss/rotation uses separately retained recovery access under declared independent procedure, never weaker browser fallback. Actual identities and tested procedures are blocking deployment inputs.",
+    "noUniquePhysicalSigner": "Logical guard/recovery authority and protected private-key recovery copies exist in at least two independent accessible locations. Component keys remain scoped. No required key lives only on a failed coordinator/voter.",
+    "voterAdmission": "Independently durable host guard validates pinned native member/cluster identity and intact volume evidence before native existing-cluster launch. Restored/unknown volumes use fenced clean replacement, not new signed authorization to reuse stale voter data."
+  },
+  "revisionEvidence": {
+    "scope": "R1-R3 bounded contract corrections only; architecture/code/deployment unchanged",
+    "documentChecks": "Local canonical/signature/type/response-consistency checks only; 8 new positive fixtures, 6 invalid-signature negatives, 6 valid-signature wrong-binding negatives and 2 inconsistent-outcome cases. No service or fault tests claimed. Re-run current companion checker before saving.",
+    "appraisalReference": "libfile_40f45da9b6c4819192099d7d251d7bf3"
+  }
+}

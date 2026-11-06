@@ -1,0 +1,75 @@
+{
+  "id": "secrets-frontend",
+  "title": "Secrets administration (separate development system)",
+  "category": "Secrets and administrator access",
+  "summary": "Separate frontend/backend, volatile-credential storage wizard, WebAuthn approvals and independent-anchor recovery. Production verification remains pending.",
+  "guide": "## Separate development system\n\nThe original SecretsManager module and vault remain unchanged. Create SecretsFrontend and SecretsBackend instances, pair them and use the new HTTPS administrator origin.\n\nThe setup wizard uses a console-issued one-use credential to create a new encrypted vault and separate key directory. Provision the independent anchor before enabling access. Configuration exports exclude secrets, private keys and temporary credentials.\n\nPortal registration uses its existing AdditionalPages setting. Central configuration backup requires explicit reviewed registration and native-import parity tests. Read the complete manual and release gates before testing or migration.",
+  "source": "https://github.com/fisart/SymconSecrets/tree/feature/secrets-frontend/SecretsFrontend",
+  "revision": "Development 0.1.0; implementation verification pending",
+  "properties": [
+    {
+      "name": "Enabled",
+      "type": "bool",
+      "default": "false",
+      "label": "Enabled"
+    },
+    {
+      "name": "DebugEnabled",
+      "type": "bool",
+      "default": "false",
+      "label": "DebugEnabled"
+    },
+    {
+      "name": "BackendInstanceID",
+      "type": "int",
+      "default": "0",
+      "label": "BackendInstanceID"
+    },
+    {
+      "name": "PortalInstanceID",
+      "type": "int",
+      "default": "0",
+      "label": "PortalInstanceID"
+    },
+    {
+      "name": "DocumentationInstanceID",
+      "type": "int",
+      "default": "0",
+      "label": "DocumentationInstanceID"
+    },
+    {
+      "name": "AdminOrigin",
+      "type": "str",
+      "default": "\"\"",
+      "label": "AdminOrigin"
+    },
+    {
+      "name": "TrustedHTTPSProxyIPs",
+      "type": "list",
+      "default": "[]",
+      "label": "TrustedHTTPSProxyIPs"
+    },
+    {
+      "name": "Theme",
+      "type": "str",
+      "default": "\"system\"",
+      "label": "Theme"
+    }
+  ],
+  "variables": [
+    {
+      "ident": "Debug",
+      "type": "String",
+      "name": "Sanitized Debug"
+    },
+    {
+      "ident": "Status",
+      "type": "String",
+      "name": "Frontend status"
+    }
+  ],
+  "manual": "secrets-frontend.md",
+  "manualLabel": "Setup, operating guide and release limitations",
+  "availability": "Documentation content registration only; does not commission storage or change the old vault.",
+  "group": "admin"
+}

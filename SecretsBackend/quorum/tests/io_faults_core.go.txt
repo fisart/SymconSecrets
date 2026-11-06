@@ -1,0 +1,25 @@
+package core
+
+import (
+ "context"
+ "testing"
+
+ "github.com/fisart/SymconSecrets/SecretsBackend/quorum/durable"
+ "github.com/fisart/SymconSecrets/SecretsBackend/quorum/protocol"
+)
+
+func TestIRCandidateReceiptRequiresCompletedDurability(t *testing.T){
+ for _,kind:=range []string{"file","rename","directory"}{t.Run(kind,func(t *testing.T){
+  durable.IRReset();defer durable.IRReset()
+  f:=fixture(t);ctx:=context.Background();_,bytes,r:=f.preparing(t);id:=protocol.Text(r.Record,"id")
+  durable.IRReset()
+  // Permit the marker's read barrier, then fail the candidate write barrier.
+  switch kind{case "file":durable.IRFailFile=true;durable.IRFileAfter=2;case "rename":durable.IRFailRename=true;case "directory":durable.IRFailDir=true;durable.IRDirAfter=2}
+  for i:=0;i<2;i++{if _,e:=f.services[0].UploadCandidate(ctx,id,f.owner,bytes);e==nil{t.Fatal("candidate receipt succeeded through failed persistence",kind)}}
+  v,e:=f.store.Read(ctx,candidateReceiptKey(id,f.membership.Archives[0]));must(t,e);if len(v.Values[candidateReceiptKey(id,f.membership.Archives[0])].Bytes)>0{t.Fatal("failed upload registered copy")}
+  durable.IRReset()
+  receipt,e:=f.services[0].UploadCandidate(ctx,id,f.owner,bytes);must(t,e)
+  _,e=f.controller.RegisterReceipt(ctx,uid(),id,ReservationRef(r),receipt,f.actor);must(t,e)
+  if _,e=f.controller.Ready(ctx,uid(),id,ReservationRef(r),f.actor);e==nil{t.Fatal("one repaired receipt fabricated second copy")}
+ })}
+}

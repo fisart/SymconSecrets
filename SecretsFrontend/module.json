@@ -1,0 +1,12 @@
+{
+  "id": "{8D6AE8F7-EA3A-4513-AA14-C3F9613B0E83}",
+  "name": "SecretsFrontend",
+  "type": 3,
+  "vendor": "",
+  "aliases": ["Secrets administration frontend"],
+  "url": "https://github.com/fisart/SymconSecrets/tree/feature/secrets-frontend/SecretsFrontend",
+  "parentRequirements": [],
+  "childRequirements": [],
+  "implemented": [],
+  "prefix": "SECF"
+}

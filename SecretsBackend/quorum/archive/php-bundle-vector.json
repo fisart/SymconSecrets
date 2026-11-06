@@ -1,0 +1,78 @@
+{
+    "description": "PUBLIC SYNTHETIC TEST DATA ONLY",
+    "context": {
+        "version": "1",
+        "clusterId": "00000000-0000-4000-8000-000000000001",
+        "realmId": "00000000-0000-4000-8000-000000000002",
+        "incarnation": "aWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWk",
+        "scopeId": "00000000-0000-4000-8000-000000000003",
+        "scopeKind": "GLOBAL",
+        "ownerNodeId": null,
+        "generation": "1",
+        "keyId": "a2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2s",
+        "algorithm": "AES-128-GCM"
+    },
+    "dataKeyHex": "000102030405060708090a0b0c0d0e0f",
+    "scopeTest": "{\"cipher\":\"aes-128-gcm\",\"iv\":\"014133553d9cfafc6f514855\",\"tag\":\"bbb68fcf399f82a14f301119b963c065\",\"data\":\"xvS5FOsC4ovas2mKZrH7ZkVJRj/Z1QDdM0LF7t+sFXPL2w==\"}",
+    "recipient": {
+        "id": "00000000-0000-4000-8000-000000000004",
+        "kind": "PEER",
+        "publicKey": "zE8s22ld12bzQRjrZ7mGUv7R2LxJwzCxGbv6imSYk3g"
+    },
+    "recipientKeypairHex": "95e7595fc89e52fdfddce9c6a43d74dbf6047025ee0462d2d172e8b6a2841daecc4f2cdb695dd766f34118eb67b98652fed1d8bc49c330b119bbfa8a64989378",
+    "envelopeDescriptor": {
+        "version": "1",
+        "context": {
+            "version": "1",
+            "clusterId": "00000000-0000-4000-8000-000000000001",
+            "realmId": "00000000-0000-4000-8000-000000000002",
+            "incarnation": "aWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWk",
+            "scopeId": "00000000-0000-4000-8000-000000000003",
+            "scopeKind": "GLOBAL",
+            "ownerNodeId": null,
+            "generation": "1",
+            "keyId": "a2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2s",
+            "algorithm": "AES-128-GCM"
+        },
+        "recipient": {
+            "id": "00000000-0000-4000-8000-000000000004",
+            "kind": "PEER",
+            "publicKey": "zE8s22ld12bzQRjrZ7mGUv7R2LxJwzCxGbv6imSYk3g"
+        },
+        "keyTestDigest": "530fcf41327b9915f6a75b1216f30da8a32a008ceb2dd4a3d7cbad24829357ee",
+        "digest": "24a1ecb5204d340448b60f30403f059641f938fd5c5dcf16bdfbebcc94e93821",
+        "length": "679"
+    },
+    "envelope": "HTQj6hD7YOgMA28vwnh6Rd7pBtYYzZTEuY4Zak505Txx4XQ-S9X2SsHv5XoEz-ot5xlA0sJJcO6hbgfzyr3OVEmPhDLuk0hfFh3qw5FClLwJHNjBrMirMxo5zbYMSIxZzP6hBwVB_OKHlEPPpVplOuKIVTQWdAOgguWtfJjA2i-g8QwU61lwPftAkXD9B2NtoYneQYA9MPXe-6PPxawg40eSEn8Eq4urtqVn5kygOw_dLEh0EPjNuH3Z7XymovPe5qqhMOw6uOdX9jCMgNuVSl-nFx4RJYQ4vfIwF4gQmLkqAnDF3YeDbL6CSWl5EdJ5agjMt_RQMvaDYRW41WLscl-laCPSy_L8VAZquvPNNdFuEDjKnVedNijhzbOzfZDFDZVGPxjcTDV0aKZC2ZCUcdV61SBJls8oFcp2zsur7GeD3T41mVTJw7KQTlq1e5hFKNf4jMKjlmvSk0YYu5ZgvoqVD0MChHQlfscVREnOZFhELkNiaBS2AHPdLU3CYVxHtS8WOaeaDzO5q6lEhl6jSm8pKEFQa1toU3LnkKPe1R_Wq0Z-WtxEQOnhl02pnmPcw3qGokTrvrS_XWXzYuoIbDrkG395-83Cpi-TnaXQD5yP-ADo2n4WD73u7sPhFZ-pxsljvKbBy20yahRwbSm5RZxKW8rcBraqvRUrc_UVE-CKPEXC2NY5j4LIvmpyCWlF47hE6hQJfDBNWNWeX-exiAP2Ssr4WVoNdIRtYCLDBRubqMBy8lRRnKnOcsYDT7ngiEqsJy5jfJKpFsCqsUHmIaKXIgXK5JVZRDVRFGcHqEWLNLcC3qQtyWrNDSZ7jMLLZI5UQLbIApdaqSB1JA6DHMgfowZM9kmkBJlFLGq8SD_AfWcVHcn8HgAVgiuRpB2xaLLBrzIW2g",
+    "manifest": "{\"cipher\":\"aes-128-gcm\",\"iv\":\"0fbf9b24c7efea5f124d6fcb\",\"tag\":\"3afa9cfebff5ab3d85a485bfd3f80408\",\"data\":\"m/QXb0m6Wx6JbxTeNNrdIWi6XJbLIz8J4Ruoeq5Z\"}",
+    "objects": [
+        {
+            "reference": {
+                "id": "b29vb29vb29vb29vb29vb29vb29vb29vb29vb29vb28",
+                "kind": "vault",
+                "schema": "1",
+                "keyId": "a2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2s",
+                "scopeId": "00000000-0000-4000-8000-000000000003",
+                "length": "163",
+                "digest": "fccf26afea8f2d8fd9a8abd624cf514bc6b5b1aac869b95d08c86a3078ceb3d3"
+            },
+            "bytes": "eyJjaXBoZXIiOiJhZXMtMTI4LWdjbSIsIml2IjoiZWFlZmEwYzljMGE2NTQwN2RmNmU5M2M5IiwidGFnIjoiMWZiMTMxYmNhMWUwMmEzZjFlYTNhZTBjY2Q3MWI1OTAiLCJkYXRhIjoiUGtiOVJnME40M1p0ejJWMjlwUHl0NytOTEZEcjY0cUZid2R1SDFwU2Z5ZHduUDhza3U0TU1nPT0ifQ"
+        }
+    ],
+    "bundle": {
+        "ref": {
+            "id": "00000000-0000-4000-8000-000000000011",
+            "version": "1",
+            "digest": "fb7c4112aa2a52f093bc1775e27945fde6bebe381f4e18c23ebbc21440b13f3a"
+        },
+        "descriptor": {
+            "commitId": "00000000-0000-4000-8000-000000000011",
+            "bundleDigest": "b9a7a4d02de7c63452d3003c0747b72225f156f0d2af24ebb5954eca657747a1",
+            "manifestDigest": "58a11044c1a72ac479bc45ab029016d78267b2f5add689baae47d1fdba4d7405",
+            "bundleLength": "731"
+        },
+        "indexDigest": "16f712d3896096293b3cd405b63ab06f2f36480e9b73d76c67b638ae54d3cf9b",
+        "protected": false
+    },
+    "bytes": "U1lNQ0IyAAAAAAGZeyJtYW5pZmVzdERpZ2VzdCI6IjU4YTExMDQ0YzFhNzJhYzQ3OWJjNDVhYjAyOTAxNmQ3ODI2N2IyZjVhZGQ2ODliYWFlNDdkMWZkYmE0ZDc0MDUiLCJtYW5pZmVzdExlbmd0aCI6IjE0NyIsIm9iamVjdHMiOlt7ImRpZ2VzdCI6ImZjY2YyNmFmZWE4ZjJkOGZkOWE4YWJkNjI0Y2Y1MTRiYzZiNWIxYWFjODY5Yjk1ZDA4Yzg2YTMwNzhjZWIzZDMiLCJpZCI6ImIyOXZiMjl2YjI5dmIyOXZiMjl2YjI5dmIyOXZiMjl2YjI5dmIyOXZiMjgiLCJrZXlJZCI6ImEydHJhMnRyYTJ0cmEydHJhMnRyYTJ0cmEydHJhMnRyYTJ0cmEydHJhMnMiLCJraW5kIjoidmF1bHQiLCJsZW5ndGgiOiIxNjMiLCJzY2hlbWEiOiIxIiwic2NvcGVJZCI6IjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMyJ9XSwidmVyc2lvbiI6IjIifXsiY2lwaGVyIjoiYWVzLTEyOC1nY20iLCJpdiI6IjBmYmY5YjI0YzdlZmVhNWYxMjRkNmZjYiIsInRhZyI6IjNhZmE5Y2ZlYmZmNWFiM2Q4NWE0ODViZmQzZjgwNDA4IiwiZGF0YSI6Im0vUVhiMG02V3g2SmJ4VGVOTnJkSVdpNlhKYkxJejhKNFJ1b2VxNVoifXsiY2lwaGVyIjoiYWVzLTEyOC1nY20iLCJpdiI6ImVhZWZhMGM5YzBhNjU0MDdkZjZlOTNjOSIsInRhZyI6IjFmYjEzMWJjYTFlMDJhM2YxZWEzYWUwY2NkNzFiNTkwIiwiZGF0YSI6IlBrYjlSZzBONDNadHoyVjI5cFB5dDcrTkxGRHI2NHFGYndkdUgxcFNmeWR3blA4c2t1NE1NZz09In0"
+}
