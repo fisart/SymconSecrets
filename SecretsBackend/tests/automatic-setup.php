@@ -2,9 +2,9 @@
 declare(strict_types=1);
 require_once __DIR__.'/Fixture.php';
 require_once __DIR__.'/../NativeOperations.php';
-$roots=[];$stores=[];$peers=[];$ops=[];$routes=[];$workers=[];$now=time();$attempts=0;$mutating=[];
+$roots=[];$stores=[];$peers=[];$ops=[];$routes=[];$workers=[];$now=time();$attempts=0;$mutating=[];$failDiscovery=false;
 $clock=static function()use(&$now):int{return $now;};
-$transport=static function($d,$bytes,$policy)use(&$routes,&$attempts,&$mutating){$attempts++;$m=json_decode($bytes,true);$mutating[]=$m['kind'];if(!isset($routes[$d['endpoint']]))throw new SecretsBackendNativePeerDeliveryFailure('connect');try{return $routes[$d['endpoint']]->receive($bytes);}catch(Throwable $e){fwrite(STDERR,$m['kind'].': '.$e->getMessage()."\n");throw $e;}};
+$transport=static function($d,$bytes,$policy)use(&$routes,&$attempts,&$mutating,&$failDiscovery){$attempts++;$m=json_decode($bytes,true);if($failDiscovery&&$m['kind']==='SETUP_INFO'){$failDiscovery=false;throw new SecretsBackendNativePeerDeliveryFailure('timeout');}$mutating[]=$m['kind'];if(!isset($routes[$d['endpoint']]))throw new SecretsBackendNativePeerDeliveryFailure('connect');try{return $routes[$d['endpoint']]->receive($bytes);}catch(Throwable $e){fwrite(STDERR,$m['kind'].': '.$e->getMessage()."\n");throw $e;}};
 $commit=static function(int $i,callable $fn)use(&$stores){$s=$stores[$i];$c=$s->read();$s->change($c['head'],SecretsBackendCodec::uuid(),hash('sha256',random_bytes(16)),$fn);};
 $operation=static function(int $i,array $raw)use(&$stores,&$ops,$commit){$s=$stores[$i]->read()['state'];$op=$ops[$i]->normalize($raw,$s,false);$commit($i,fn($v)=>$ops[$i]->apply($op,$v));return $op;};
 $pump=static function()use(&$peers,&$stores){for($j=0;$j<12;$j++){foreach($peers as$p)$p->dispatch(1,null,true);$pending=0;foreach($stores as$s){$v=$s->read()['state'];$pending+=count($v['outbox']['jobs']);foreach($v['pairing']['peers']as$p)if($p['active']&&($p['routeReceipt']??null)!==($v['native']['routeRevision']??'0'))$pending++;}if(!$pending)return;}};
@@ -16,7 +16,10 @@ try{
  foreach([[0,1],[0,2],[1,3]]as[$a,$b]){$invite=$operation($a,['kind'=>'nativeInvite'])['invitation'];$operation($b,['kind'=>'nativePair','invitation'=>SecretsBackendNativePeer::invitationText($invite),'name'=>'Server '.$a]);$peers[$b]->dispatch(1);$operation($a,['kind'=>'nativeAcceptPair','peerId'=>$peers[$b]->descriptor()['vaultId']]);$pump();}
  // Three edges connect all four; no automatic authority has been granted.
  for($i=0;$i<4;$i++)secExpect($workers[$i]->tick()['status']==='SETUP_IDLE','Unapproved worker ran.');
- $preview=null;for($i=0;$i<5;$i++){$preview=$workers[0]->preview('test-session');if($preview['complete'])break;}
+ $before=$attempts;$preview=$workers[0]->preview('test-session');secExpect(!$preview['complete']&&$attempts===$before,'Browser discovery blocked on network work.');
+ $failDiscovery=true;$workers[0]->tick();$preview=$workers[0]->preview('test-session');secExpect(!$preview['complete']&&$preview['waiting'][0]['reason']==='timeout'&&str_contains($preview['waiting'][0]['message'],'retried automatically'),'Timeout lost detailed progress or falsely required a software update.');
+ $workers[0]->tick();$progress=$workers[0]->preview('test-session');secExpect($progress['checked']===1,'An unavailable server blocked discovery of another server.');$now+=95;
+ $preview=null;for($i=0;$i<12;$i++){$before=$attempts;$preview=$workers[0]->preview('test-session');secExpect($attempts===$before,'Browser discovery attempted slow peer I/O.');if($preview['complete'])break;$workers[0]->tick();}
  $policy=$preview['policy'];secExpect(count($policy['members'])===4,'Discovery did not include the indirect fourth server.');SecretsBackendAutomaticSetup::validate($policy);
  $bad=$policy;$bad['members'][0]['descriptor']['boxKey']=SecretsBackendCodec::b64(random_bytes(32));secReject(fn()=>SecretsBackendAutomaticSetup::validate($bad),'Changed plan retained its signature.');
  // Local policy opt-in is a separate authority on every installation.

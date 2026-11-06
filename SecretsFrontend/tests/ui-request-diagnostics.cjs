@@ -45,6 +45,18 @@ const {fixture,tick}=require('./ui-native.cjs');
   $('nativeInvite').click();await tick();assert.equal($('review').open,true);assert.equal(token,'new-session-csrf');$('cancelReview').click();
   assert.equal(f.errors.length,0,f.errors.map(e=>e.message).join('\n'));f.dom.window.close();
  }
+ // Safe discovery/status recovery retries once; it never asks for approval itself.
+ for(const action of ['nativeSetupPreview','nativeSupportUploadStatus']){
+  const f=await fixture(),w=f.dom.window,original=w.fetch;let attempts=0;const timers=[];const timeout=w.setTimeout.bind(w);w.setTimeout=(fn,ms,...args)=>ms===5000||ms===10000?(timers.push(fn),-ms):timeout(fn,ms,...args);
+  w.fetch=async(url,options)=>{const q=JSON.parse(options.body);
+   if(q.action==='nativeSupportUpload')return {ok:true,json:async()=>({job:'test-job',state:'queued'})};
+   if(q.action===action){attempts++;if(attempts===1){f.state.csrf='fresh-token';return {ok:false,json:async()=>({error:'Token changed',code:'CSRF_INVALID',reference:'csrf-test'})};}assert.equal(options.headers['X-CSRF-Token'],'fresh-token');return {ok:true,json:async()=>action==='nativeSetupPreview'?{complete:false,found:4,checked:2}:{state:'finished',ok:false,error:'Known failure after authenticated recovery'}};}
+   return original(url,options);
+  };
+  w.document.querySelector('[data-tab=nativeMailbox]').click();await tick();
+  if(action==='nativeSetupPreview')f.$('setupFinish').click();else f.$('supportUpload').click();
+  await tick();await tick();await tick();assert.equal(attempts,2);assert.equal(f.calls.filter(q=>q.action==='approve').length,0);assert.equal(f.errors.length,0);w.close();
+ }
  // A failed refresh cannot turn an expired session into an authenticated page.
  for(const code of ['SESSION_EXPIRED','CSRF_INVALID']){
   const expired=await fixture(),e=expired.$,fetch=expired.dom.window.fetch;let refreshes=0;

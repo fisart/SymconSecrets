@@ -147,7 +147,7 @@ function renderNativeOverview(){
  for(const peer of peers){const row=document.createElement('div');row.className='overviewPeer';const name=document.createElement('strong');name.textContent=peer.name;const status=document.createElement('p');status.textContent=peerConnectionLabel(peer);if(peer.health){status.className='healthStatus';status.dataset.state=overviewStale?'unknown':peer.health.synchronization;}if(peerDeliveryBlocked(peer)||peerExpired(peer)||healthProblems.includes(peer))status.classList.add('overviewWarning');const last=document.createElement('p');last.className='muted';last.textContent=peer.health?peerHealthDetail(peer):'Last received: '+(peer.lastSync||'not yet');const button=document.createElement('button');button.type='button';button.textContent='Connection status';run(button,()=>{tab('nativePeers');peerWizardResume(peer.id);});row.append(name,status,last,button);list.append(row);}
 }
 async function refreshNativeOverview(ticket=generation){
- if(overviewBusy||!snapshot?.native||document.hidden||!pageActive||$('review').open||ceremonyActive)return;overviewBusy=true;
+ if(overviewBusy||mailboxApprovalBusy||automaticSetupBusy||supportBusy||!snapshot?.native||document.hidden||!pageActive||$('review').open||ceremonyActive)return;overviewBusy=true;
  try{const r=await api('nativeOverviewStatus',{},ticket);if(!r.overview||!Array.isArray(r.peers))throw Error('Update this module and refresh.');Object.assign(snapshot.native,r);meshReceivedAt=Date.now();overviewStale=false;renderNativeOverview();if(!$('nativePeers').hidden){renderPeerConnections();renderPeerWizard();}}
  catch(error){if(ticket===generation&&snapshot?.native&&error.name!=='AbortError'){overviewStale=true;renderNativeOverview();$('readiness').textContent+=' '+error.message;if(!$('nativePeers').hidden){renderPeerConnections();$('nativeDeliveryInfo').textContent='Status could not be refreshed. Last shown checks may be out of date. '+error.message;}}}
  finally{overviewBusy=false;}
@@ -410,51 +410,44 @@ async function approveMailboxEntry(action){
  }finally{mailboxApprovalBusy=false;renderMailbox();}
 }
 for(const id of ['mailboxServer','mailboxState'])$(id).addEventListener('change',renderMailbox);
-run($('mailboxRefresh'),async ticket=>{await refreshNativeOverview(ticket);await loadSupportTargets(ticket);});
-let supportTargets=[],supportBusy=false,supportLookupBusy=false,supportLookupAt=0,supportDiscovery={code:'NOT_CHECKED'};
-function renderSupportTargets(){
- const target=supportTargets.find(t=>String(t.id)===$('supportTarget').value),platform=supportDiscovery.platform||snapshot?.native?.primaryOrigin||boot.origin;
- const setup='In the Symcon console on this server, open the Configuration Backup instance in the object tree → “3. Choose uploads and diagnostics” → enable “Upload readable Secrets diagnostics to the private repository (no secrets)” → Apply changes. Then return here and select Refresh upload destination.';
- const remedies={UPDATE_BACKUP_REQUIRED:'The backup instance was found, but its diagnostic upload function is unavailable. In this server’s Symcon console, update the Symcon-Backup-Module repository on main using module management, then refresh this page.',SETTINGS_NOT_APPLIED:'The backup instance was found with unsaved settings. Open it in this server’s Symcon console and select Apply changes, then Refresh upload destination here.',DIAGNOSTICS_DISABLED:setup,CONFIGURATION_UNREADABLE:'The backup instance was found, but its configuration could not be read. Open the instance in this server’s Symcon console and check its status; this is a detection/read problem, not evidence that diagnostics are disabled.'};
- let text='Checking Symcon server: '+platform+'. ';
- if(target)text+='Found '+target.name+' (instance '+target.id+'). '+(target.repository!=='/'?target.repository+' · branch '+target.branch+'. ':'')+(target.enabled?'Ready to send.':remedies[target.code]||setup);
- else if(supportDiscovery.code==='NO_INSTANCE_ON_THIS_SERVER')text+='No Configuration Backup instance was found on this server. A backup instance on another Symcon installation cannot be used here. In this server’s Symcon console, check the object tree for Module Configuration Backup. If it is absent, install/update Symcon-Backup-Module on main in module management and add a Module Configuration Backup instance. '+setup;
- else if(supportDiscovery.code==='NOT_CHECKED')text+='Select Refresh upload destination to check the backup instance.';
- else if(supportDiscovery.code==='LOADING')text+='Checking the installed backup instance…';
- else text+='The backup instance check failed. This does not mean no instance exists or the setting is disabled. Select Refresh upload destination; if it fails again, update Secrets on this server and check its backend status. '+(supportDiscovery.error||'');
- $('supportDestination').textContent=text;
- $('supportRefresh').disabled=supportBusy||supportLookupBusy;
- $('supportUpload').disabled=supportBusy||supportLookupBusy||!target?.enabled||!$('supportConsent').checked;
+run($('mailboxRefresh'),ticket=>refreshNativeOverview(ticket));
+let supportBusy=false,supportJob=null,supportPollTimer=null,supportPollBusy=false;
+function renderSupportUpload(){ $('supportUpload').disabled=supportBusy||!snapshot?.native||!fullAdministration(); }
+async function pollSupportUpload(ticket){
+ if(!supportJob||supportPollBusy||ticket!==generation||document.hidden)return;
+ clearTimeout(supportPollTimer);supportPollBusy=true;
+ try{
+  const r=await api('nativeSupportUploadStatus',{job:supportJob},ticket);ticket=generation;
+  if(r.state==='queued'||r.state==='running'){
+   $('supportResult').textContent=r.state==='queued'?'Report queued on this server; waiting for its background worker. You can leave this page and return.':'Sending report in the background; waiting for GitHub confirmation. Slow requests can take several minutes.';
+   supportPollTimer=setTimeout(()=>pollSupportUpload(ticket),10000);return;
+  }
+  $('supportResult').textContent=r.ok?'Saved to '+r.repository+' · '+r.branch+' · commit '+r.commit+(r.incomplete?' · Some backend reports are incomplete; review the uploaded status.':''):r.error||'Upload was not confirmed. Check the repository before starting a new upload.';
+  supportJob=null;supportBusy=false;renderSupportUpload();
+ }catch(e){if(ticket===generation){$('supportResult').textContent='Could not read upload progress: '+e.message+' The upload may still be running. Progress will be checked again; no duplicate upload is started.';supportPollTimer=setTimeout(()=>pollSupportUpload(ticket),15000);}}
+ finally{supportPollBusy=false;}
 }
-async function loadSupportTargets(ticket=generation){
- if(supportLookupBusy||supportBusy)return;
- if(!fullAdministration()){$('supportDestination').textContent='Full administrator access is required.';return;}
- supportLookupBusy=true;supportLookupAt=Date.now();supportDiscovery={code:'LOADING',platform:supportDiscovery.platform};$('supportConsent').checked=false;renderSupportTargets();
- try{const r=await api('nativeSupportStatus',{},ticket);if(!Array.isArray(r.targets))throw Error('The Secrets backend did not return backup discovery information. Update Secrets on this server and reload this page.');supportTargets=r.targets;supportDiscovery={code:r.code||(r.targets.length?'INSTANCES_FOUND':'NO_INSTANCE_ON_THIS_SERVER'),platform:r.platform};nativeSelect('supportTarget',supportTargets.map(t=>[String(t.id),t.name]));renderSupportTargets();}
- catch(e){if(ticket===generation){supportTargets=[];supportDiscovery={code:'LOOKUP_FAILED',error:e.message};nativeSelect('supportTarget',[]);renderSupportTargets();$('supportResult').textContent='Could not check the upload destination. '+e.message;}}
- finally{supportLookupBusy=false;renderSupportTargets();}
-}
-run($('supportRefresh'),ticket=>loadSupportTargets(ticket));
-function recheckSupportOnReturn(){if(!document.hidden&&snapshot?.native&&!$('nativeMailbox').hidden&&!mailboxApprovalBusy&&!supportBusy&&Date.now()-supportLookupAt>1000)loadSupportTargets(generation);}
-window.addEventListener('focus',recheckSupportOnReturn);document.addEventListener('visibilitychange',recheckSupportOnReturn);
-$('supportTarget').addEventListener('change',()=>{$('supportConsent').checked=false;renderSupportTargets();});$('supportConsent').addEventListener('change',renderSupportTargets);
+function resumeSupportUpload(){ renderSupportUpload();if(supportJob)pollSupportUpload(generation); }
 $('supportUpload').addEventListener('click',async()=>{
  const ticket=generation;
- const target=supportTargets.find(t=>String(t.id)===$('supportTarget').value);if(supportBusy||!target?.enabled||!$('supportConsent').checked)return;
- supportBusy=true;renderSupportTargets();$('supportResult').textContent='Sending report; waiting for GitHub confirmation…';
- try{const r=await api('nativeSupportUpload',{instance:target.id},ticket);if(ticket!==generation)return;
-  $('supportResult').textContent=r.ok?'Saved to '+r.repository+' · '+r.branch+' · commit '+r.commit+(r.incomplete?' · Some backend reports are incomplete; review the uploaded status.':''):r.error||'Upload was not confirmed. Check Configuration Backup before trying again.';
- }catch(e){if(ticket===generation)$('supportResult').textContent='Upload was not confirmed. Check Configuration Backup before trying again. '+e.message;}
- finally{supportBusy=false;$('supportConsent').checked=false;renderSupportTargets();}
+ if(supportBusy)return;
+ supportBusy=true;renderSupportUpload();$('supportResult').textContent='Requesting report upload on this server…';
+ try{
+  const r=await api('nativeSupportUpload',{instance:0},ticket);
+  if(r.job){supportJob=r.job;await pollSupportUpload(ticket);}
+  else{supportBusy=false;$('supportResult').textContent=r.error||'The upload could not be started.';}
+ }catch(e){supportBusy=false;$('supportResult').textContent='Upload request was not confirmed: '+e.message+' Check the saved report before retrying.';}
+ finally{renderSupportUpload();}
 });
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&supportJob)pollSupportUpload(generation);});
 
-let automaticSetupBusy=false,automaticSetupPreview=null;
+let automaticSetupBusy=false,automaticSetupPreview=null,automaticSetupNotice="",automaticSetupTimer=null;
 function renderAutomaticSetup(){
  if(automaticSetupBusy)return;
  const n=snapshot?.native,a=n?.automaticSetup||{},policy=a.policy||automaticSetupPreview;
  $('setupFinish').disabled=!fullAdministration();$('setupStop').hidden=!a.policy;
  $('setupFinish').textContent=!a.authorized&&policy?'Authorize automatic setup on this server':'Finish setup on all servers';
- $('setupProgress').textContent=!policy?'First, this button finds the servers reached through your existing approved connections. You then review the server list and authorize this installation once.':!a.authorized?'One-time authorization required on this server. Review the exact servers below, then authorize with your passkey.':a.running?'Setup is running in the background. Replies still outstanding remain waiting; unreachable servers are retried.':a.completedAt?'This server’s setup completed at '+new Date(a.completedAt*1000).toLocaleString()+'. Select Finish setup to refresh and verify all servers.':'Automatic setup is authorized. Select Finish setup to continue.';
+ $('setupProgress').textContent=!policy&&automaticSetupNotice?automaticSetupNotice:!policy?'First, this button finds the servers reached through your existing approved connections. You then review the server list and authorize this installation once.':!a.authorized?'One-time authorization required on this server. Review the exact servers below, then authorize with your passkey.':a.running?'Setup is running in the background. Replies still outstanding remain waiting; unreachable servers are retried.':a.completedAt?'This server’s setup completed at '+new Date(a.completedAt*1000).toLocaleString()+'. Select Finish setup to refresh and verify all servers.':'Automatic setup is authorized. Select Finish setup to continue.';
  const holder=$('setupMembers');holder.replaceChildren();
  const members=a.members?.length?a.members:(policy?.members||[]).map(m=>({id:m.descriptor.vaultId,name:new URL(m.descriptor.endpoint).host,local:m.descriptor.vaultId===n?.peerDescriptor?.vaultId,url:m.frontend?new URL('/hook/secrets_frontend_'+m.frontend,m.descriptor.endpoint).href:null,authorized:null,backupStatus:'unknown',fresh:false}));
  for(const m of members){
@@ -464,11 +457,25 @@ function renderAutomaticSetup(){
    for(const choice of choices)actions.push([choice.label,()=>approveMailboxEntry(choice)]);
    if(!choices.length)actions.push(['Continue backup passkey setup',()=>{tab('nativeKeys');if(n.backupOrigin?.status==='pending')$('connectOpen').click();else $('nativeDiscoverConnect').click();}]);
   }
-  const description=!a.authorized?'Review this server’s HTTPS address and identity before authorizing the plan.':m.deliveryPending?'A confirmation request is still in progress; waiting for this server’s reply.':!m.fresh&&!m.local?(m.deliveryProblem?'Delivery is being retried; approval status is unconfirmed.':'Waiting for a current authenticated reply; the approval status is unconfirmed.'):m.authorized===false?'Waiting for one-time authorization on this server.':m.authorized===null?'Waiting for the server’s first authenticated reply.':!m.backupReady?'Authorization received. Backup access needs a device step on this server.':m.ready?'This server completed its setup.':'Authorized; connections, emergency approvals or background verification are still in progress.';
+  const description=!a.authorized?'Review this server’s HTTPS address and identity before authorizing the plan.':m.deliveryPending?'A confirmation request is still in progress; waiting for this server’s reply.':!m.fresh&&!m.local?(m.deliveryProblem?'Delivery is being retried ('+m.deliveryProblem+'); approval status is unconfirmed. ':'Waiting for a current authenticated reply; the approval status is unconfirmed.'):m.authorized===false?'Waiting for one-time authorization on this server.':m.authorized===null?'Waiting for the server’s first authenticated reply.':!m.backupReady?'Authorization received. Backup access needs a device step on this server.':m.ready?'This server completed its setup.':'Authorized; connections, emergency approvals or background verification are still in progress.';
   nativeRow(holder,m.name+(m.local?' · this server':''),description+(!m.local&&m.checkedAt?' Last confirmed reply: '+new Date(m.checkedAt*1000).toLocaleString()+'.':''),actions);
  }
  if(a.authorized){const ready=members.filter(m=>m.authorized&&m.ready&&(m.local||m.fresh)).length;$('setupProgress').textContent=ready+' of '+members.length+' servers ready. '+(ready===members.length?'Setup is complete.':a.running?'Setup is running; waiting for the steps listed below.':'Select Finish setup to refresh outstanding replies and verification.');}
  if(policy){const p=document.createElement('p');p.className='muted break';p.textContent='Plan '+policy.id+' · '+policy.members.length+' explicitly reviewed server(s). Permissions: connections, signed primary/Magic routes, Global-only emergency reads and confirmed duplicate cleanup. Local values, secret edits, administrator creation, hardware policy and OAuth operations are outside this authorization.';holder.append(p);}
+}
+async function continueSetupDiscovery(ticket){
+ if(automaticSetupBusy||ticket!==generation)return;
+ clearTimeout(automaticSetupTimer);automaticSetupBusy=true;
+ try{
+  const r=await api('nativeSetupPreview',{},ticket);ticket=generation;
+  if(r.complete){automaticSetupPreview=r.policy;automaticSetupNotice='';}
+  else{
+   automaticSetupNotice='Found '+(r.found??'?')+' servers; confirmed '+(r.checked??0)+' connections. '+(r.message||'Waiting for background discovery.');
+   for(const w of r.waiting||[])automaticSetupNotice+=' '+w.server+' · '+w.step+': '+w.message+(w.retryAt?' Next retry after '+new Date(w.retryAt*1000).toLocaleTimeString()+'.':'');
+   if(!r.blocked)automaticSetupTimer=setTimeout(()=>continueSetupDiscovery(ticket),5000);
+  }
+ }catch(e){if(ticket===generation){automaticSetupNotice='Discovery progress could not be read: '+e.message+' Confirmed work is retained. Retrying automatically.';automaticSetupTimer=setTimeout(()=>continueSetupDiscovery(ticket),15000);}}
+ finally{automaticSetupBusy=false;renderAutomaticSetup();}
 }
 run($('setupFinish'),async ticket=>{
  if(automaticSetupBusy)return;
@@ -476,8 +483,7 @@ run($('setupFinish'),async ticket=>{
  if(a.authorized){automaticSetupBusy=true;try{const r=await api('nativeSetupRun',{},ticket);snapshot.native.automaticSetup=r.automaticSetup;message('Setup requested across the approved servers. Progress will update here.');}finally{automaticSetupBusy=false;renderAutomaticSetup();}return;}
  const p=a.policy||automaticSetupPreview;
  if(p){await approveMailboxEntry({operation:{kind:'nativeSetupAuthorize',policy:p},summary:'Authorize only the displayed '+p.members.length+' server(s) for full-mesh connections, approved routes, reciprocal Global-only emergency reads and confirmed obsolete-grant cleanup. Credentials stay private. Browser passkey steps remain on their own installation.'});automaticSetupPreview=null;renderAutomaticSetup();return;}
- automaticSetupBusy=true;
- try{for(let i=0;i<10;i++){const r=await api('nativeSetupPreview',{},ticket);if(r.blocked)throw Error(r.message||'Discovery could not be confirmed. Check this connection and module versions.');if(r.complete){automaticSetupPreview=r.policy;break;}$('setupProgress').textContent='Found '+r.found+' server(s); checked '+r.checked+' existing connection(s). Discovering the remaining approved neighbors…';}if(!automaticSetupPreview)throw Error('Discovery is incomplete. Check existing connections and module versions, then retry.');}
- finally{automaticSetupBusy=false;renderAutomaticSetup();}
+ await continueSetupDiscovery(ticket);
+
 });
 run($('setupStop'),()=>{const a=snapshot?.native?.automaticSetup;if(!a?.policy)return;return approveMailboxEntry({operation:{kind:'nativeSetupStop',id:a.policy.id},summary:'Stop this server’s automatic setup and invalidate its private setup capabilities. Existing connections and emergency approvals are retained.'});});

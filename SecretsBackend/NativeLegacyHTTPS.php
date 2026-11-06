@@ -40,7 +40,7 @@ final class SecretsBackendNativeLegacyHTTPS
     public static function post(string $endpoint,string $bytes,array $policy=['mode'=>'strict'],float $timeout=15.0): string
     {
         SecretsBackendNativePeer::endpoint($endpoint);$policy=self::policy($policy);
-        if($timeout<0.1||$timeout>25.0)throw new InvalidArgumentException('Invalid HTTPS timeout.');
+        if(!is_finite($timeout)||$timeout<0.1||$timeout>90.0)throw new InvalidArgumentException('Invalid HTTPS timeout.');
         $deadline=microtime(true)+$timeout;
         if(!self::available())throw new SecretsBackendNativePeerDeliveryFailure('transport');
         $host=parse_url($endpoint,PHP_URL_HOST);$pinned=$policy['mode']==='pinned';

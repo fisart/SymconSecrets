@@ -2,7 +2,7 @@
 
 ## User flow
 
-Update every participating server to the same supporting Secrets branch. In Mailbox, select **Finish setup on all servers**. Discovery contacts only existing approved connections, one peer per request, and assembles a bounded, signed list of up to eight servers, including indirectly connected servers. Review that list and select **Authorize automatic setup on this server** once with a passkey or the required hardware key.
+Update every participating server to the same supporting Secrets branch. In Mailbox, select **Finish setup on all servers**. The click queues discovery in the background; the browser polls local progress. Discovery contacts only existing approved connections, one peer per worker pass, and assembles a bounded, signed list of up to eight servers, including indirectly connected servers. Review that list and select **Authorize automatic setup on this server** once with a passkey or the required hardware key.
 
 The signed plan is forwarded across existing connections. Each other installation independently approves the exact same server list once. The setup page links to those installations when their frontend is known. A received proposal, a Global record or another administrator's approval never enables local delegation.
 
@@ -35,3 +35,11 @@ Completion requires a tested, active full Magic credential, active approved conn
 ## Verification
 
 Disposable encrypted four-server fixtures start with three sparse links, discover the fourth server indirectly, require independent local opt-ins, build all six links and obtain three emergency sources per server. They exercise duplicate retirement/reimport tombstones, private status, capability misuse/revocation, suspension after manual permission edits, explicit device prerequisites, route publication and eventual bounded completion. A real WebAuthn fixture checks plan preparation, signed-scope rejection, passkey authorization/start/stop and configuration export exclusion/read-only validation. Browser/UI checks cover discovery, the exact roster, in-place authorization, remote/device progress and the single run button. Tests never restore or alter a live installation.
+
+## Latency and session fixes (6 November 2026)
+
+The actual PHP HTTPS helper now accepts the setup worker’s 45-second primary and 60-second Magic attempts within its shared 90-second budget. Previously the helper rejected allowances above 25 seconds before network I/O; ordinary health checks could pass while every setup request failed. Real loopback HTTPS tests exercise 45/60/90-second allowances, certificate checks and existing transport limits.
+
+Discovery retains confirmed replies, checks other approved neighbors when one fails, and retries failed peers after 90 seconds. It reports the responsible server, step, fixed failure category, HTTP status when available, and next retry time. It does not infer a software update from a timeout. No partial roster grants authority. After 20 minutes without completion it explicitly reports incomplete discovery.
+
+A replaced login cookie can leave an older page with a stale CSRF token. The page refreshes its session and retries read-only progress/discovery requests once; approvals and other mutations are never replayed. Slow user operations suppress overlapping dashboard polls. Exact setup scope, origin validation, recipient identity checks and per-server passkey authorization remain required.

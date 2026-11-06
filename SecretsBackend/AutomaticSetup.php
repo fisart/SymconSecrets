@@ -51,19 +51,45 @@ final class SecretsBackendAutomaticSetup
         foreach($s['pairing']['peers']as$p)if($p['active']&&$p['state']==='ACTIVE'){$d=$p['descriptor'];$routes=$p['routes']['endpoints']??[$d['endpoint']];foreach($routes as$url)if(!preg_match('/^[a-z0-9]{32}\.ipmagic\.de$/D',(string)parse_url($url,PHP_URL_HOST))){$d['endpoint']=$url;break;}$members[]=['descriptor'=>$d,'routes'=>$routes,'frontend'=>null];}
         return ['members'=>array_slice($members,0,self::MAX)];
     }
-    /** One already-approved peer per browser call; never a network scan or nested relay request. */
+    private const DISCOVERY='automatic-setup-discovery';
+    public function discoveryPending():bool { try{$r=$this->store->get(self::DISCOVERY,self::DISCOVERY);return !isset($r['policy'])&&($r['expires']??0)>time();}catch(Throwable $ignored){return false;} }
+    private function saveDiscovery(array $r):void { try{$this->store->replace(self::DISCOVERY,self::DISCOVERY,$r,time()+3600);}catch(Throwable $ignored){$this->store->put(self::DISCOVERY,self::DISCOVERY,$r,time()+3600);} }
+    private static function discoveryView(array $r):array {
+        return isset($r['policy'])?['complete'=>true,'policy'=>$r['policy']]:['complete'=>false,'found'=>count($r['members']),'checked'=>count($r['checked']),'waiting'=>array_values($r['problems']??[]),'message'=>'Discovery is running in the background. Slow or unavailable servers are retried; confirmed progress is retained.'];
+    }
+    /** The browser only starts/observes work. Never hold its request open for peer I/O. */
     public function preview(string $session):array {
         $s=$this->store->read()['state'];if(isset($s['native']['setupProposal']))return ['complete'=>true,'policy'=>$s['native']['setupProposal']];
-        $key='setup-discovery:'.$session;try{$r=$this->store->get($key,'setup-discovery');}catch(Throwable $ignored){$r=['members'=>[],'checked'=>[]];}
-        $merge=static function(array $rows)use(&$r):void{foreach($rows as$m){SecretsBackendNativePeer::exact($m,['descriptor','routes','frontend']);if($m['frontend']!==null&&(!is_int($m['frontend'])||$m['frontend']<1||$m['frontend']>99999999))throw new RuntimeException('Invalid setup frontend.');SecretsBackendNativePeer::descriptorCheck($m['descriptor']);self::routes($m['descriptor'],$m['routes']);$id=$m['descriptor']['vaultId'];$old=$r['members'][$id]??null;if($old&&self::key($old['descriptor'])!==self::key($m['descriptor']))throw new RuntimeException('Servers reported conflicting vault identities.');if(!$old||$m['frontend']!==null)$r['members'][$id]=$m;}if(count($r['members'])>self::MAX)throw new RuntimeException('Automatic setup supports at most eight explicitly reviewed servers.');};
-        $merge($this->info($s)['members']);$complete=true;
-        foreach($s['pairing']['peers']as$p)if($p['active']&&$p['state']==='ACTIVE'&&!isset($r['checked'][$p['id']])){
-            try{$reply=$this->peer->exchange($p,'SETUP_INFO',['format'=>self::FORMAT],SecretsBackendCodec::uuid());}catch(SecretsBackendNativePeerDeliveryFailure $e){return ['complete'=>false,'blocked'=>true,'server'=>SecretsBackendPeerName::display($p),'message'=>'Automatic setup discovery could not be confirmed on '.SecretsBackendPeerName::display($p).'. Update Secrets on that server and check its connection status, then retry.'];}if(($reply['status']??'')!=='SETUP_INFO'||!is_array($reply['members']??null)||count($reply['members'])>self::MAX)throw new RuntimeException('This server needs an automatic setup module update.');$merge($reply['members']);$r['checked'][$p['id']]=true;$complete=false;break;
-        }
-        try{$this->store->replace($key,'setup-discovery',$r,$this->now()+self::CAPABILITY_SECONDS);}catch(Throwable $ignored){$this->store->put($key,'setup-discovery',$r,$this->now()+self::CAPABILITY_SECONDS);}
-        if(!$complete)return ['complete'=>false,'found'=>count($r['members']),'checked'=>count($r['checked'])];
-        ksort($r['members']);$p=['format'=>self::FORMAT,'id'=>SecretsBackendCodec::uuid(),'coordinator'=>$s['native']['vaultId'],'purpose'=>self::PURPOSE,'members'=>array_values($r['members'])];$p['signature']=$this->store->sign('SECB.SETUP.POLICY.1:'.SecretsBackendNativeStore::canonical($p));$this->checkLocal($p,$s);return ['complete'=>true,'policy'=>$p];
+        try{$r=$this->store->get(self::DISCOVERY,self::DISCOVERY);}catch(Throwable $ignored){$r=['members'=>[],'checked'=>[],'problems'=>[],'retry'=>[],'expires'=>time()+1200];foreach($this->info($s)['members']as$m)$r['members'][$m['descriptor']['vaultId']]=$m;$this->saveDiscovery($r);}
+        if(($r['expires']??0)<time()&&!isset($r['policy'])){$this->store->delete(self::DISCOVERY);return ['complete'=>false,'blocked'=>true,'message'=>'Discovery has not completed after 20 minutes. No authorization was granted. Existing connections remain active. Select Finish setup again to retry.','waiting'=>array_values($r['problems']??[])];}
+        if(isset($r['policy'])&&in_array($r['policy']['id'],$s['native']['setupRevokedPlans']??[],true)){$this->store->delete(self::DISCOVERY);return $this->preview($session);}
+        return self::discoveryView($r);
     }
+    private function discover():array {
+        $s=$this->store->read()['state'];$r=$this->store->get(self::DISCOVERY,self::DISCOVERY);
+        if(isset($s['native']['setupProposal'])){$r['policy']=$s['native']['setupProposal'];$this->saveDiscovery($r);return ['status'=>'SETUP_PLAN_RECEIVED'];}
+        $merge=static function(array $rows)use(&$r):void{foreach($rows as$m){SecretsBackendNativePeer::exact($m,['descriptor','routes','frontend']);if($m['frontend']!==null&&(!is_int($m['frontend'])||$m['frontend']<1||$m['frontend']>99999999))throw new RuntimeException('Invalid setup frontend.');SecretsBackendNativePeer::descriptorCheck($m['descriptor']);self::routes($m['descriptor'],$m['routes']);$id=$m['descriptor']['vaultId'];$old=$r['members'][$id]??null;if($old&&self::key($old['descriptor'])!==self::key($m['descriptor']))throw new RuntimeException('Servers reported conflicting vault identities.');if(!$old||$m['frontend']!==null)$r['members'][$id]=$m;}if(count($r['members'])>self::MAX)throw new RuntimeException('Automatic setup supports at most eight explicitly reviewed servers.');};
+        $merge($this->info($s)['members']);
+        foreach($s['pairing']['peers']as$p)if($p['active']&&$p['state']==='ACTIVE'&&!isset($r['checked'][$p['id']])&&($r['retry'][$p['id']]??0)<=$this->now()){
+            try{
+                $reply=$this->peer->exchange($p,'SETUP_INFO',['format'=>self::FORMAT],SecretsBackendCodec::uuid());
+                if(($reply['status']??'')!=='SETUP_INFO'||!is_array($reply['members']??null)||count($reply['members'])>self::MAX)throw new RuntimeException('Incompatible setup reply.');
+                $merge($reply['members']);$r['checked'][$p['id']]=true;unset($r['problems'][$p['id']],$r['retry'][$p['id']]);
+            }catch(Throwable $e){
+                $problem=$e instanceof SecretsBackendNativePeerDeliveryFailure?$e->problem:'invalid-reply';$r['retry'][$p['id']]=$this->now()+self::RETRY_SECONDS;
+                $r['problems'][$p['id']]=['server'=>SecretsBackendPeerName::display($p),'step'=>'Discover server list','reason'=>$problem,'retryAt'=>$r['retry'][$p['id']],'message'=>self::problemText($problem).($e instanceof SecretsBackendNativePeerDeliveryFailure&&$e->httpStatus?' HTTP '.$e->httpStatus.'.':'')];
+            }
+            $this->saveDiscovery($r);return ['status'=>'SETUP_DISCOVERY_PENDING'];
+        }
+        foreach($s['pairing']['peers']as$p)if($p['active']&&$p['state']==='ACTIVE'&&!isset($r['checked'][$p['id']]))return ['status'=>'SETUP_DISCOVERY_RETRY'];
+        ksort($r['members']);$p=['format'=>self::FORMAT,'id'=>SecretsBackendCodec::uuid(),'coordinator'=>$s['native']['vaultId'],'purpose'=>self::PURPOSE,'members'=>array_values($r['members'])];$p['signature']=$this->store->sign('SECB.SETUP.POLICY.1:'.SecretsBackendNativeStore::canonical($p));$this->checkLocal($p,$s);$r['policy']=$p;$this->saveDiscovery($r);return ['status'=>'SETUP_DISCOVERY_COMPLETE'];
+    }
+    public function diagnostics(array $state):array {
+        $status=$this->status($state);$discovery=null;
+        try{$r=$this->store->get(self::DISCOVERY,self::DISCOVERY);$discovery=['found'=>count($r['members']),'checked'=>count($r['checked']),'complete'=>isset($r['policy']),'waiting'=>array_values($r['problems']??[])];}catch(Throwable $ignored){}
+        return ['authorized'=>$status['authorized'],'running'=>$status['running']??false,'completedAt'=>$status['completedAt']??null,'members'=>$status['members'],'discovery'=>$discovery];
+    }
+    public static function problemText(string $problem):string { return match($problem){'timeout'=>'The server did not reply within the generous request allowance. It will be retried automatically.','connect'=>'Could not connect to the server. It will be retried automatically.','dns'=>'The server hostname could not be resolved. It will be retried automatically.','certificate'=>'HTTPS certificate verification failed. Correct the certificate or approved route.','tls'=>'The secure connection could not be established. It will be retried automatically.','http'=>'The server refused the HTTP request. Check its connection status and installed Secrets version.','invalid-reply'=>'The reply could not be authenticated or understood. Check that both servers use the same current Secrets version.',default=>'Delivery was not confirmed. It will be retried automatically.'}; }
     public function authorize(array $s,array $p,array $session):array {
         $this->checkLocal($p,$s);if(isset($s['native']['automaticSetup'])&&($s['native']['automaticSetup']['enabled']??false)&&$s['native']['automaticSetup']['policy']['id']!==$p['id'])throw new RuntimeException('Stop the existing setup authorization before approving a different plan.');
         $s=$this->offer($s,$p);$bindings=[];foreach($p['members']as$m){$id=$m['descriptor']['vaultId'];if($id===$s['native']['vaultId'])continue;$q=$s['pairing']['peers'][$id]??null;$bindings[$id]=['key'=>self::key($m['descriptor']),'pairing'=>$q['pairingId']??null];}
@@ -159,7 +185,7 @@ final class SecretsBackendAutomaticSetup
     }
     /** One bounded local change or one outbound exchange per worker phase. */
     public function tick():array {
-        try{return $this->step();}catch(Throwable $e){return ['status'=>'SETUP_RETRY_PENDING'];}
+        try{if($this->discoveryPending())return $this->discover();return $this->step();}catch(Throwable $e){return ['status'=>'SETUP_RETRY_PENDING'];}
     }
     private function step():array {
         $s=$this->store->read()['state'];if(!self::enabled($s)||!($s['native']['automaticSetup']['requested']??false))return ['status'=>'SETUP_IDLE'];$a=$this->active($s);$contacts=$this->contacts($a);$own=$s['native']['vaultId'];

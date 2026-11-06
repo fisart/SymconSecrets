@@ -73,7 +73,7 @@ trait SecretsBackendNativeRuntime
         try{
             if(!$this->ReadPropertyBoolean('Enabled')||!$this->nativeInitialized())return '[]';
             $this->nativeApplication();$store=$this->nativeStore();$peer=$this->nativePeer($store);
-            $v=$store->read()['state'];$setup=(SecretsBackendAutomaticSetup::enabled($v)&&($v['native']['automaticSetup']['requested']??false))||count(array_filter($v['outbox']['jobs'],static fn($j)=>$j['kind']==='SETUP_OFFER'))>0;if($setup&&function_exists('set_time_limit'))@set_time_limit(100);$max=$setup?SecretsBackendPeerWork::SETUP_BUDGET:SecretsBackendPeerWork::BUDGET;
+            $v=$store->read()['state'];$setup=$peer->automaticSetup()->discoveryPending()||(SecretsBackendAutomaticSetup::enabled($v)&&($v['native']['automaticSetup']['requested']??false))||count(array_filter($v['outbox']['jobs'],static fn($j)=>$j['kind']==='SETUP_OFFER'))>0;if($setup&&function_exists('set_time_limit'))@set_time_limit(100);$max=$setup?SecretsBackendPeerWork::SETUP_BUDGET:SecretsBackendPeerWork::BUDGET;
             $this->peerWork=new SecretsBackendPeerWork(null,SecretsBackendPeerWork::phpBudget((int)ini_get('max_execution_time'),microtime(true)-$started,$max),$max);
             $this->SetBuffer('PeerBudgetMs',(string)$this->peerWork->budgetMilliseconds());
             $effects=new SecretsBackendNativeEffects($store,function($effect){$this->peerWork->providerAttempt();return self::nativeProviderHTTPS($effect);});
@@ -82,7 +82,7 @@ trait SecretsBackendNativeRuntime
                 'health'=>fn():array=>[(new SecretsBackendNativeHealth($store,$peer))->tick()],
                 'mesh'=>function()use($store,$peer):array{try{return [(new SecretsBackendMeshStatus($store,$peer))->tick()];}catch(Throwable $ignored){return [['status'=>'MESH_UNAVAILABLE']];}},
                 'providers'=>fn():array=>[$effects->tick()],
-                'setup'=>fn():array=>[($peer->automaticSetup(fn()=>$this->syncEmergencyAccess(true)))->tick()]
+                'setup'=>function()use($store,$peer):array{if(SecretsBackendSupportReport::pending($store)){$this->peerWork->providerAttempt();return [SecretsBackendSupportReport::tick($store)];}return [($peer->automaticSetup(fn()=>$this->syncEmergencyAccess(true)))->tick()];}
             ];
             return SecretsBackendCodec::json($this->peerWork->run((int)$this->GetBuffer('NativeJobsPhase'),$phases,fn(int $next)=>$this->SetBuffer('NativeJobsPhase',(string)$next)));
         }catch(Throwable $e){$this->debug('request-rejected');return '[{"status":"RECOVERY_REQUIRED"}]';}

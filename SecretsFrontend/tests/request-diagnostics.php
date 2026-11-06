@@ -18,7 +18,10 @@ try{
         $anonymous=$request;$anonymous['cookie']='';$refused=$call($action,$data,$anonymous);secExpect($refused['data']['code']==='LOGIN_REQUIRED','Support API bypassed login.');
         $wrong=$request;$wrong['csrf']='INVALID-CSRF';$refused=$call($action,$data,$wrong);secExpect($refused['data']['code']==='CSRF_INVALID','Support API bypassed CSRF.');
     }
-    $support=$call('nativeSupportUpload',['instance'=>123],$request);secExpect($support['status']===200&&$support['data']['ok']===false,'Missing backup instance was treated as an upload.');
+    $support=$call('nativeSupportUpload',['instance'=>0],$request);secExpect($support['status']===200&&$support['data']['state']==='queued','Upload was not queued directly.');
+    $store=(new ReflectionMethod(SecretsBackend::class,'nativeStore'))->invoke($back);$job=$support['data']['job'];$head=$store->head();
+    $second=$call('nativeSupportUpload',['instance'=>0],$request);secExpect($second['data']['job']===$job,'Repeated click queued a duplicate upload.');
+    SecretsBackendSupportReport::tick($store);$status=$call('nativeSupportUploadStatus',['job'=>$job],$request);secExpect($status['data']['state']==='finished'&&!$status['data']['ok']&&str_contains($status['data']['error'],'no Configuration Backup instance'),'Background upload did not return the actual missing-instance failure.');secExpect($store->head()===$head,'Support queue invalidated a passkey approval.');
     $missing=$request;$missing['cookie']='';$r=$call('prepare',['operation'=>['kind'=>'nativeEmergencyAccept']],$missing);
     secExpect($r['data']['code']==='LOGIN_REQUIRED'&&$r['data']['requiresSignIn']===true,'Missing login was not distinguished.');
     $store=(new ReflectionMethod(SecretsBackend::class,'nativeStore'))->invoke($back);

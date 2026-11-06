@@ -142,6 +142,10 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
         assert not old['ok'] and old['curlCode'] == 60, old
         fixed = request(url, ['openssl.cafile=' + str(ca_path)])
         assert fixed['ok'] and fixed['body'] == '{"received":true}', fixed
+        # Exercise the real PHP transport, not the timeout-recording stub.
+        for allowance in [45, 60, 90]:
+            setup = request(url, ['openssl.cafile=' + str(ca_path)], mode='timeout:' + str(allowance))
+            assert setup['ok'] and setup['body'] == '{"received":true}', setup
         explicit = request(url, ['curl.cainfo=' + str(ca_path)])
         assert not explicit['ok'], explicit  # PHP streams use OpenSSL trust, never cURL's separate file.
         inherited = request(url, environment={**env, 'SSL_CERT_FILE': str(ca_path)})
@@ -213,5 +217,5 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
         finally:
             server.shutdown()
             server.server_close()
-    assert counts == [b'TLS-REQUEST-CANARY'] * 13, counts
+    assert counts == [b'TLS-REQUEST-CANARY'] * 16, counts
 print('PASS real HTTPS: reused original PHP streams; explicit approved pin succeeds and mismatch sends no HTTP; separate cURL CA file cannot override OpenSSL;  reproduced unknown-issuer failure, recovered through PHP/env trust, accepted valid chains, rejected wrong roots/hostname/expiry/incomplete chain before POST, no trust-policy bypass')

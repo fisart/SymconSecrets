@@ -5,11 +5,11 @@ declare(strict_types=1);
 final class SecretsBackendRequestDiagnostics
 {
     public const SCHEMA='SECB.RequestDiagnostics.v1';
-    public const CODES=['LOGIN_REQUIRED','SESSION_EXPIRED','SESSION_INVALID','CSRF_INVALID','APPROVAL_EXPIRED','APPROVAL_INVALID','REVISION_CHANGED','EMERGENCY_OFFER_CHANGED','EMERGENCY_PAIRING_CHANGED','EMERGENCY_SIGNATURE_INVALID','HARDWARE_REQUIRED','RATE_LIMITED','BACKEND_UNAVAILABLE','CONFIGURATION_CHANGED','REQUEST_INVALID','REQUEST_FAILED'];
+    public const CODES=['LOGIN_REQUIRED','SESSION_EXPIRED','SESSION_INVALID','CSRF_INVALID','APPROVAL_EXPIRED','APPROVAL_INVALID','REVISION_CHANGED','EMERGENCY_OFFER_CHANGED','EMERGENCY_PAIRING_CHANGED','EMERGENCY_SIGNATURE_INVALID','HARDWARE_REQUIRED','RATE_LIMITED','BACKEND_UNAVAILABLE','CONFIGURATION_CHANGED','REQUEST_INVALID','REQUEST_FAILED','SETUP_PLAN_CHANGED','SETUP_AUTH_REQUIRED','SETUP_IDENTITY_CHANGED'];
     public const STAGES=['envelope','origin','rate','storage','configuration','login','session','csrf','action','prepare','approval','commit','result'];
     public static function action($value): string
     {
-        return is_string($value)&&in_array($value,['status','authOptions','authVerify','session','list','sessionReveal','sessionTimeout','prepare','approve','logout','configurationPreview','nativeSetupPreview','nativeSetupRun','nativeOverviewStatus','nativeGlobalStatus','nativePairingStatus','nativeRetryPeerDelivery','nativeOperationStatus','nativeCandidateOptions','nativeCandidateSubmit','legacySources','legacyPreview','nativeUploadBegin','nativeUploadChunk','nativeUploadFinish','connectDiscovery','connectOptions','connectSubmit','connectProof','connectStatus','connectCandidateReview'],true)?$value:'other';
+        return is_string($value)&&in_array($value,['status','authOptions','authVerify','session','list','sessionReveal','sessionTimeout','prepare','approve','logout','configurationPreview','nativeSetupPreview','nativeSetupRun','nativeSupportStatus','nativeSupportUpload','nativeSupportUploadStatus','nativeOverviewStatus','nativeGlobalStatus','nativePairingStatus','nativeRetryPeerDelivery','nativeOperationStatus','nativeCandidateOptions','nativeCandidateSubmit','legacySources','legacyPreview','nativeUploadBegin','nativeUploadChunk','nativeUploadFinish','connectDiscovery','connectOptions','connectSubmit','connectProof','connectStatus','connectCandidateReview'],true)?$value:'other';
     }
     public static function operation($value): ?string
     {
@@ -18,6 +18,9 @@ final class SecretsBackendRequestDiagnostics
     public static function classify(Throwable $error,string $stage): string
     {
         return match($error->getMessage()){
+            'A different setup plan is already awaiting review.','Stop the existing setup authorization before approving a different plan.'=>'SETUP_PLAN_CHANGED',
+            'Automatic setup is not authorized on this server.'=>'SETUP_AUTH_REQUIRED',
+            'Setup plan has a different local vault identity.','A setup member was revoked or changed identity. Review a new plan.'=>'SETUP_IDENTITY_CHANGED',
             'Administrator login is required.'=>'LOGIN_REQUIRED',
             'Administrator session expired.'=>'SESSION_EXPIRED',
             'Administrator session expired or revoked.','Origin authorization changed.'=>'SESSION_INVALID',
@@ -38,6 +41,9 @@ final class SecretsBackendRequestDiagnostics
     public static function message(string $code): string
     {
         return match($code){
+            'SETUP_PLAN_CHANGED'=>'This server already has another setup plan. In Mailbox, review and authorize that existing plan. If it is the wrong server list, stop that plan here before starting a new one.',
+            'SETUP_AUTH_REQUIRED'=>'This server has not authorized automatic setup, or its authorization was revoked. Open Mailbox, review the server list and authorize it with this server’s passkey.',
+            'SETUP_IDENTITY_CHANGED'=>'A server’s vault identity or approved connection changed. Stop the outdated setup plan and discover the current servers before authorizing again.',
             'LOGIN_REQUIRED'=>'Sign in with your administrator passkey, then repeat the action.',
             'SESSION_EXPIRED'=>'Your administrator session expired. Sign in again, then check whether the action completed before repeating it.',
             'SESSION_INVALID'=>'Your administrator session is no longer valid. Sign in again, then check whether the action completed before repeating it.',

@@ -373,16 +373,16 @@ final class SecretsBackendNativeOperations
     {
         if(in_array($action,['nativeSetupPreview','nativeSetupRun'],true)){
             SecretsBackendNativePeer::exact($data,[]);$s=$this->store->read()['state'];$session=$this->store->get($this->session,'session');if(!SecretsBackendBackupOriginPolicy::credentialFull($s,$s['identity']['credentials'][$session['credential']]??[]))throw new RuntimeException('Full administrator access required.');
-            $setup=new SecretsBackendAutomaticSetup($this->store,$this->peer);if($action==='nativeSetupPreview'){$this->store->rate('setup-discovery',12);return $setup->preview($this->session);}$this->store->rate('setup-start',3);$setup->start();return ['automaticSetup'=>$setup->status($this->store->read()['state'])];
+            $setup=new SecretsBackendAutomaticSetup($this->store,$this->peer);if($action==='nativeSetupPreview'){return $setup->preview($this->session);}$this->store->rate('setup-start',3);$setup->start();return ['automaticSetup'=>$setup->status($this->store->read()['state'])];
         }
-        if(in_array($action,['nativeSupportStatus','nativeSupportUpload'],true)){
-            SecretsBackendNativePeer::exact($data,$action==='nativeSupportStatus'?[]:['instance']);
+        if(in_array($action,['nativeSupportStatus','nativeSupportUpload','nativeSupportUploadStatus'],true)){
+            SecretsBackendNativePeer::exact($data,$action==='nativeSupportStatus'?[]:($action==='nativeSupportUploadStatus'?['job']:['instance']));
             $s=$this->store->read()['state'];$session=$this->store->get($this->session,'session');
             if(!SecretsBackendBackupOriginPolicy::credentialFull($s,$s['identity']['credentials'][$session['credential']]??[]))throw new RuntimeException('Full administrator access required.');
             if($action==='nativeSupportStatus')return SecretsBackendSupportReport::discovery()+['platform'=>$s['policy']['origin']];
-            if(!is_int($data['instance']))throw new RuntimeException('Select a Configuration Backup installation.');
-            $this->store->rate('support-upload:'.$s['native']['vaultId'],2);
-            return SecretsBackendSupportReport::upload($data['instance']);
+            if($action==='nativeSupportUploadStatus'){SecretsBackendNativePeer::uuid($data['job']);return SecretsBackendSupportReport::status($this->store,$data['job']);}
+            if(!is_int($data['instance'])||$data['instance']<0)throw new RuntimeException('Select a Configuration Backup installation.');
+            return SecretsBackendSupportReport::queue($this->store,$session,$data['instance']);
         }
         if($action==='nativeOverviewStatus'){SecretsBackendNativePeer::exact($data,[]);$s=$this->store->read()['state'];return $this->pairingStatus($s)+['overview'=>$this->overviewStatus($s),'backupOrigin'=>$s['policy']['backupOrigin']??null,'routeRevision'=>$s['native']['routeRevision']??'0'];}
         if($action==='nativeGlobalStatus'){SecretsBackendNativePeer::exact($data,[]);$s=$this->store->read()['state'];return ['revision'=>$s['vault']['revision'],'global'=>SecretsBackendTree::listing(SecretsBackendSharedGlobal::available($s)),'local'=>SecretsBackendTree::listing($s['vault']['local']),'sharedGlobal'=>SecretsBackendSharedGlobal::metadata($s)];}

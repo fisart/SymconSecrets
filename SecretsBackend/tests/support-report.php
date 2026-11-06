@@ -5,12 +5,12 @@ function IPS_GetInstanceListByModuleID($id){if($GLOBALS['listFailure'])throw new
 function IPS_GetConfiguration($id){if($GLOBALS['readFailure'])throw new RuntimeException('PRIVATE-CANARY');return json_encode($GLOBALS['cfg']);}
 function IPS_GetName($id){return 'Configuration Backup';}
 function IPS_HasChanges($id){return $GLOBALS['changed'];}
-function MCB_UploadSecretsDiagnostics($id){$GLOBALS['calls']++;if($GLOBALS['mode']==='throw')throw new RuntimeException('PRIVATE-CANARY');return json_encode($GLOBALS['mode']==='ok'?['ok'=>true,'commit'=>str_repeat('a',40),'warning'=>'']:['ok'=>false,'error'=>'PRIVATE-CANARY']);}
+function MCB_UploadSecretsDiagnostics($id){$GLOBALS['calls']++;if($GLOBALS['mode']==='throw')throw new RuntimeException('PRIVATE-CANARY');return json_encode($GLOBALS['mode']==='ok'?['ok'=>true,'repository'=>'fisart/private-backup','branch'=>'main','commit'=>str_repeat('a',40),'warning'=>'']:['ok'=>false,'error'=>'PRIVATE-CANARY']);}
 function check($yes,$why){if(!$yes)throw new RuntimeException($why);}
 check(!str_contains(json_encode(SecretsBackendSupportReport::targets()),'PRIVATE-CANARY'),'Configuration values leaked.');
 check(SecretsBackendSupportReport::upload(999)['ok']===false&&$calls===0,'Unrelated instance invoked.');
-$cfg['ReadableSecretsDiagnostics']=false;check(!SecretsBackendSupportReport::upload(123)['ok']&&$calls===0,'Opt-in bypassed.');$cfg['ReadableSecretsDiagnostics']=true;$changed=true;check(!SecretsBackendSupportReport::upload(123)['ok']&&$calls===0,'Pending settings accepted.');$changed=false;
-$r=SecretsBackendSupportReport::upload(123);check($r['ok']&&$r['commit']===str_repeat('a',40)&&$calls===1,'Confirmed commit missing.');
+$cfg['ReadableSecretsDiagnostics']=false;$changed=true;$readFailure=true;check(SecretsBackendSupportReport::upload(0)['ok']&&$calls===1,'Direct upload was blocked by configuration preflight.');$cfg['ReadableSecretsDiagnostics']=true;$changed=false;$readFailure=false;
+$r=SecretsBackendSupportReport::upload(123);check($r['ok']&&$r['commit']===str_repeat('a',40)&&$calls===2,'Confirmed commit missing.');
 foreach(['throw','error']as$mode){$r=SecretsBackendSupportReport::upload(123);check(!$r['ok']&&!str_contains(json_encode($r),'PRIVATE-CANARY'),'Raw uploader error leaked.');}
 $mode='ok';$readFailure=true;$d=SecretsBackendSupportReport::discovery();check(count($d['targets'])===1&&$d['targets'][0]['code']==='CONFIGURATION_UNREADABLE'&&!str_contains(json_encode($d),'PRIVATE-CANARY'),'Unreadable configuration hid an installed instance or leaked its error.');$readFailure=false;
 $missingInstance=true;check(SecretsBackendSupportReport::discovery()['code']==='NO_INSTANCE_ON_THIS_SERVER','Missing local instance was not distinguished.');$missingInstance=false;$listFailure=true;check(SecretsBackendSupportReport::discovery()['code']==='INSTANCE_LOOKUP_FAILED','Failed lookup was presented as no instance.');
