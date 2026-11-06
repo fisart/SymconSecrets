@@ -46,6 +46,7 @@ function IPS_GetInstance(int $id): array
 }
 function IPS_GetInstanceListByModuleID(string $id): array { return array_keys(array_filter($GLOBALS['moduleIDs'], static fn($value) => $value === $id)); }
 function IPS_GetProperty(int $id, string $name) { return $GLOBALS['instances'][$id]->properties[$name]; }
+function IPS_GetConfiguration(int $id): string { return json_encode($GLOBALS['instances'][$id]->properties, JSON_THROW_ON_ERROR); }
 function IPS_SetProperty(int $id, string $name, $value): void { $GLOBALS['instances'][$id]->properties[$name] = $value; }
 function IPS_ApplyChanges(int $id): void { $GLOBALS['instances'][$id]->ApplyChanges(); }
 function IPS_SemaphoreEnter(string $key, int $ms): bool { if ($GLOBALS['locks'][$key] ?? false) return false; $GLOBALS['locks'][$key] = true; return true; }

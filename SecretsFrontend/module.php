@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/Http.php';
 require_once __DIR__ . '/PortalNavigation.php';
 require_once __DIR__ . '/GuidedSetup.php';
+require_once __DIR__ . '/ConfigurationBackup.php';
 require_once __DIR__ . '/../libs/SystemPortalNavigation.php';
 
 class SecretsFrontend extends IPSModule
@@ -263,10 +264,27 @@ class SecretsFrontend extends IPSModule
     }
     public function ExportConfiguration(): string
     {
+        $json = $this->configurationExport(); $this->UpdateFormField('ExportJSON', 'value', $json); return $json;
+    }
+    private function configurationExport(): string
+    {
         $raw = $this->ReadAttributeString('DeploymentDraft');
         $draft = $raw === '' ? null : json_decode($raw, true, 12, JSON_THROW_ON_ERROR);
         if ($draft !== null && !is_array($draft)) throw new RuntimeException('Invalid deployment draft.');
-        $json = SecretsFrontendConfiguration::export($this->settings(), $draft); $this->UpdateFormField('ExportJSON', 'value', $json); return $json;
+        return SecretsFrontendConfiguration::export($this->settings(), $draft);
+    }
+    public function ExportConfigurationBackup(): string
+    {
+        if (IPS_HasChanges($this->InstanceID)) throw new RuntimeException('Apply or discard pending configuration edits before backup.');
+        return SecretsConfigurationBackup::export('{8D6AE8F7-EA3A-4513-AA14-C3F9613B0E83}',
+            SecretsFrontendConfiguration::decode($this->configurationExport()),
+            json_decode(IPS_GetConfiguration($this->InstanceID), true, 128, JSON_THROW_ON_ERROR),
+            ['DeploymentDraft' => $this->ReadAttributeString('DeploymentDraft')]);
+    }
+    public function ValidateConfigurationBackup(string $JSON): string
+    {
+        $payload = SecretsFrontendConfiguration::decode($JSON);
+        return SecretsConfigurationBackup::validation($payload, static function () use ($JSON): void { SecretsFrontendConfiguration::import($JSON); });
     }
     public function ImportConfiguration(string $JSON): bool
     {
