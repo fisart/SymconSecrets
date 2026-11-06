@@ -1,3 +1,10 @@
+<section id="nativeMailbox" class="panel" hidden>
+<div class="sectionLabel">Approvals and delivery</div><h2>Mailbox</h2>
+<p class="panelPurpose muted">See who must act, what is still being delivered and which replies are unconfirmed. A delayed or unavailable answer is never treated as a refusal.</p>
+<div class="row"><label>Servers <select id="mailboxServer"><option value="all">All servers</option><option value="local">This server</option></select></label><label>Show <select id="mailboxState"><option value="outstanding">Outstanding</option><option value="all">All, including completed</option></select></label><button id="mailboxRefresh">Refresh Mailbox</button></div>
+<p id="mailboxSummary" role="status"></p><p id="mailboxCoverage" class="muted"></p><div id="mailboxRows"></div>
+<div class="card"><h3>Send support report to GitHub</h3><p>Send diagnostics and redacted configuration for the Secrets backends on this installation through Configuration Backup. Secret values, vault contents, private keys, tokens and sessions are excluded. This uses its existing private repository and readable diagnostics setting.</p><label>Configuration Backup <select id="supportTarget"></select></label><p id="supportDestination" class="muted"></p><label class="checkline"><input id="supportConsent" type="checkbox"> Send this readable report to the destination above</label><button id="supportUpload" disabled>Send diagnostics and configuration</button><p id="supportResult" role="status"></p></div>
+</section>
 <section id="nativePeers" class="panel" hidden>
 <div class="sectionLabel">Shared installation · guided setup</div><h2>Connections</h2><p class="panelPurpose muted">Connect this vault to other Symcon platforms and check their sharing status. Connected platforms share one Global set of secrets; Local stays private.</p>
 <p>Start here and keep this wizard open. It opens the other platform’s approval popup and handles the invitation, connection request and progress automatically. Sign in and confirm the displayed approvals when asked. No invitation needs to be copied. Global is shared automatically. Local stays private. Different versions appear in Conflicts.</p>

@@ -117,6 +117,7 @@ function renderMeshMatrix(){
 }
 
 function renderNativeOverview(){
+ renderMailbox();
  if(snapshot?.native&&$('nativeEmergencyPanel'))renderEmergencyAccess();
  renderMeshMatrix();
  const n=snapshot?.native,show=!!n;$('nativeOverview').hidden=!show;$('overviewRefresh').hidden=!show;
@@ -186,7 +187,7 @@ function renderEmergencyAccess(){
  const clients=$('nativeEmergencyClients');clients.replaceChildren();for(const c of e.clients||[])nativeRow(clients,c.name,'Approved Global read source.',[['Remove source',()=>review({kind:'nativeEmergencyRemove',peerId:c.peerId},'Stop using this vault for emergency reads.')]]);if(!clients.children.length)clients.textContent='No emergency sources configured.';
  const grants=$('nativeEmergencyGrants');grants.replaceChildren();for(const g of e.grants||[])nativeRow(grants,g.name+(g.active?' · enabled':' · revoked'),'Read-only Global access from this vault.',g.active?[['Revoke emergency access',()=>review({kind:'nativeEmergencyRevoke',id:g.id},'Revoke this exact emergency credential immediately on this vault.')]]:[]);if(!grants.children.length)grants.textContent='No emergency access granted.';
 }
-function renderNative(){meshReceivedAt=Date.now();overviewStale=false;renderNativeOverview();scheduleGlobalRefresh();const n=snapshot?.native;for(const id of ['nativePeersNav','nativeRecoveryNav','nativeMachinesNav','nativeKeysNav','nativeProvidersNav'])$(id).hidden=!n;if(!n)return;renderEmergencyAccess();
+function renderNative(){meshReceivedAt=Date.now();overviewStale=false;renderNativeOverview();scheduleGlobalRefresh();const n=snapshot?.native;for(const id of ['nativeMailboxNav','nativePeersNav','nativeRecoveryNav','nativeMachinesNav','nativeKeysNav','nativeProvidersNav'])$(id).hidden=!n;if(!n)return;renderEmergencyAccess();
  renderConnect();renderLegacyImports();
  $('nativePeerURL').value=n.peerEndpoint;$('nativeStorageInfo').textContent='Vault '+n.info.vaultId+' · '+Math.ceil(n.info.usedBytes/1024)+' / '+Math.floor(n.info.capacityBytes/1024)+' KiB · '+(n.info.directorySync?'file and directory synchronization':'file synchronization; platform qualification required')+' · standalone full-state rollback detection unavailable.'+(n.storage?' Vault folder: '+n.storage.vaultDirectory+'. Key folder: '+n.storage.keyDirectory+'.':'');
  const scopes=[['global','Global'],['local','Local']];nativeSelect('scope',scopes);nativeSelect('nativeMachineScope',scopes);nativeSelectionChanged();renderTree();renderGlobalConflicts();
@@ -341,7 +342,7 @@ function renderGlobalConflicts(){
 let globalRefreshTimer=null;
 function scheduleGlobalRefresh(){clearTimeout(globalRefreshTimer);if(!snapshot?.native||!pageActive||!window.document)return;globalRefreshTimer=setTimeout(async()=>{
  renderMeshMatrix();
- try{if(!document.hidden&&(!$('overview').hidden||!$('nativePeers').hidden)){await refreshNativeOverview(generation);return;}if(document.hidden||!fullAdministration()||($('secrets').hidden&&$('conflicts').hidden)||$('review').open||!$('browserForm').hidden||!$('revealed').hidden||$('nativeSensitiveDialog').open)return;
+ try{if(!document.hidden&&(!$('overview').hidden||!$('nativePeers').hidden||!$('nativeMailbox').hidden)){await refreshNativeOverview(generation);return;}if(document.hidden||!fullAdministration()||($('secrets').hidden&&$('conflicts').hidden)||$('review').open||!$('browserForm').hidden||!$('revealed').hidden||$('nativeSensitiveDialog').open)return;
  const ticket=generation,r=await api('nativeGlobalStatus',{},ticket);if(r.revision===snapshot.revision)return;
  snapshot.revision=r.revision;revision=r.revision;snapshot.global=r.global;snapshot.local=r.local;snapshot.native.sharedGlobal=r.sharedGlobal;clearSecrets();renderTree();renderGlobalConflicts();
  }catch(error){if(error.name!=='AbortError')message('Sign in or refresh to update secrets.',true);}finally{scheduleGlobalRefresh();}
@@ -355,4 +356,58 @@ $('compatTarget').addEventListener('change',()=>{compatViewKey='';renderLegacyAc
 run($('compatApprove'),()=>{
  const target=legacyAccessTargets().find(t=>t.instance===Number($('compatTarget').value));if(!target)throw Error('The selected backend/manager is unavailable. Refresh the page.');
  return review({kind:'nativeLegacyAccess',instance:target.instance,mode:target.mode,enabled:$('compatEnabled').checked,read:$('compatRead').checked,write:$('compatWrite').checked,portal:$('compatPortal').checked,frozen:$('compatFrozen').checked,bulk:$('compatBulk').checked},'Change application access for the automatically detected instance. Local scripts may read application Global and Local secrets. This does not switch existing applications.');
+});
+
+const mailboxLabels={APPROVAL_REQUIRED:'Your approval required',WAITING_REMOTE:'Waiting for the other server',SENDING:'Sending / retrying delivery',CONFIRMATION_PENDING:'Approval sent — confirmation pending',COMPLETED:'Completed',EXPIRED:'Expired',REVOKED:'Revoked',UNKNOWN:'Status unknown — confirmation outstanding'};
+function renderMailbox(){
+ const m=snapshot?.native?.mailbox,nodes=m?.nodes||[],local=nodes.find(n=>n.local),localActions=(local?.rows||[]).filter(r=>r.state==='APPROVAL_REQUIRED').length;
+ const pending=nodes.reduce((sum,n)=>sum+(n.rows||[]).filter(r=>['WAITING_REMOTE','SENDING','CONFIRMATION_PENDING','UNKNOWN'].includes(r.state)).length,0);
+ $('nativeMailboxNav').textContent='Mailbox'+(localActions?' · '+localActions+' to approve':'')+(pending?' · '+pending+' waiting':'');
+ const selected=$('mailboxServer').value;nativeSelect('mailboxServer',[['all','All servers'],['local','This server'],...nodes.filter(n=>!n.local).map(n=>[n.id,n.name])]);if(selected==='local')$('mailboxServer').value='local';
+ $('mailboxSummary').textContent=localActions+' approval(s) need your action on this server · '+pending+' waiting for delivery, another server or confirmation.';
+ $('mailboxCoverage').textContent=(!m?'Update this backend to load the Mailbox. ':overviewStale?'Refresh failed. Last shown states are unconfirmed. ':'')+'Remote summaries arrive with existing background checks. Unavailable, stale or older servers remain unknown. Request times are shown only when recorded; existing workflows may have no saved timestamp. Completed entries are retained while their workflow records exist.';
+ const list=$('mailboxRows');list.replaceChildren();let count=0;
+ for(const node of nodes){if($('mailboxServer').value==='local'&&!node.local||!['all','local'].includes($('mailboxServer').value)&&$('mailboxServer').value!==node.id)continue;
+  const heading=document.createElement('h3');heading.textContent=node.name+(node.local?' · this server':'');list.append(heading);
+  const stamp=node.checkedAt?new Date(node.checkedAt*1000).toLocaleString():'not confirmed';
+  if(!node.available||!node.fresh||node.partial){const note=document.createElement('p');note.className='muted';note.textContent=(!node.available?'Mailbox unavailable; update or open this server.':!node.fresh?'Status unknown; showing last known requests.':'Summary is incomplete; open this server for the full list.')+' Last confirmed update: '+stamp;list.append(note);}
+  for(const row of node.rows||[]){if($('mailboxState').value==='outstanding'&&['COMPLETED','REVOKED','EXPIRED'].includes(row.state))continue;count++;
+   const peer=nodes.find(n=>n.id===row.peerId),peerName=peer?.name||row.peerId||'';
+   const title=row.type==='emergency'?((row.direction==='provider'?peerName:node.name)+' may read Global from '+(row.direction==='provider'?node.name:peerName)):({'pairing':'Connect platforms','ownership':'Transfer ownership','backup-access':'Magic backup access','provider-operation':'OAuth operation'}[row.type]||row.type)+(peerName?' · '+peerName:'');
+   let state=overviewStale?'UNKNOWN':row.state;const status=state==='APPROVAL_REQUIRED'&&!node.local?'Approval required on '+node.name:mailboxLabels[state]||'Status unknown';
+   const actions=node.local?[['Open workflow',()=>tab(row.action)]]:[];
+   nativeRow(list,title,status+(row.lastKnownState?' · last known: '+(mailboxLabels[row.lastKnownState]||row.lastKnownState):''),actions);
+   const card=list.lastElementChild,detail=card.querySelector('p');detail.classList.add('mailboxStatus');const facts=document.createElement('dl');facts.className='mailboxFacts';
+   const fields=[];
+   if(row.type==='emergency')fields.push(['Provider approval',row.state==='REVOKED'?'Revoked or pairing retired':row.direction==='provider'?'Granted on this server':'Signed offer received'],['Consumer acceptance',row.state==='COMPLETED'?'Confirmed':row.state==='REVOKED'?'Inactive':row.direction==='consumer'&&row.state!=='APPROVAL_REQUIRED'?'Approved locally; confirmation pending':'Awaiting confirmation']);
+   fields.push(['Responsible server',state==='WAITING_REMOTE'?peerName:node.name],['Requested',row.requestedAt?new Date(row.requestedAt*1000).toLocaleString():'Time not recorded'],['Last confirmed update',stamp]);
+   if(row.expiresAt)fields.push(['Expires',new Date(row.expiresAt*1000).toLocaleString()]);
+   for(const [label,value]of fields){const field=document.createElement('div'),term=document.createElement('dt'),definition=document.createElement('dd');term.textContent=label;definition.textContent=value;field.append(term,definition);facts.append(field);}detail.after(facts);
+
+  }
+ }
+ if(!count){const empty=document.createElement('p');empty.textContent='No matching requests in the available summaries. Unknown or incomplete servers may still have outstanding approvals.';list.append(empty);}
+}
+for(const id of ['mailboxServer','mailboxState'])$(id).addEventListener('change',renderMailbox);
+run($('mailboxRefresh'),async ticket=>{await refreshNativeOverview(ticket);await loadSupportTargets(ticket);});
+let supportTargets=[],supportBusy=false;
+function renderSupportTargets(){
+ const target=supportTargets.find(t=>String(t.id)===$('supportTarget').value);
+ $('supportDestination').textContent=target?target.repository+' · branch '+target.branch+(target.enabled?'':' · Enable and save readable Secrets diagnostics in Configuration Backup first.'):'No compatible Configuration Backup instance found. Install or update Configuration Backup and enable readable Secrets diagnostics.';
+ $('supportUpload').disabled=supportBusy||!target?.enabled||!$('supportConsent').checked;
+}
+async function loadSupportTargets(ticket=generation){
+ if(!fullAdministration()){$('supportDestination').textContent='Full administrator access is required.';return;}
+ try{const r=await api('nativeSupportStatus',{},ticket);supportTargets=r.targets||[];nativeSelect('supportTarget',supportTargets.map(t=>[String(t.id),t.name]));renderSupportTargets();}
+ catch(e){if(ticket===generation){supportTargets=[];renderSupportTargets();$('supportResult').textContent='Could not load the upload destination. '+e.message;}}
+}
+$('supportTarget').addEventListener('change',()=>{$('supportConsent').checked=false;renderSupportTargets();});$('supportConsent').addEventListener('change',renderSupportTargets);
+$('supportUpload').addEventListener('click',async()=>{
+ const ticket=generation;
+ const target=supportTargets.find(t=>String(t.id)===$('supportTarget').value);if(supportBusy||!target?.enabled||!$('supportConsent').checked)return;
+ supportBusy=true;renderSupportTargets();$('supportResult').textContent='Sending report; waiting for GitHub confirmation…';
+ try{const r=await api('nativeSupportUpload',{instance:target.id},ticket);if(ticket!==generation)return;
+  $('supportResult').textContent=r.ok?'Saved to '+r.repository+' · '+r.branch+' · commit '+r.commit+(r.incomplete?' · Some backend reports are incomplete; review the uploaded status.':''):r.error||'Upload was not confirmed. Check Configuration Backup before trying again.';
+ }catch(e){if(ticket===generation)$('supportResult').textContent='Upload was not confirmed. Check Configuration Backup before trying again. '+e.message;}
+ finally{supportBusy=false;$('supportConsent').checked=false;renderSupportTargets();}
 });

@@ -1,0 +1,20 @@
+<?php
+$a=$peers[0]->descriptor()['vaultId'];$b=$peers[1]->descriptor()['vaultId'];
+$g=$operation(0,['kind'=>'nativeEmergencyGrant','peerId'=>$b])['grant'];
+$find=static function(array $m,string $id):array{foreach($m['rows']as$r)if($r['id']==='grant:'.$id)return $r;throw new RuntimeException('Missing mailbox row.');};
+$s=$stores[0]->read();$m=SecretsBackendMailbox::local($s['state']);SecretsBackendMailbox::validate($m);
+$ok($find($m,$g['id'])['state']==='SENDING','Undelivered approval was described as absent or received.');
+$ok(!str_contains(json_encode($m),$g['token']),'Emergency token leaked into mailbox.');
+$pump();$m=SecretsBackendMailbox::local($stores[0]->read()['state']);$ok($find($m,$g['id'])['state']==='WAITING_REMOTE','Delivered offer did not wait for remote approval.');
+$m=SecretsBackendMailbox::local($stores[1]->read()['state']);$ok($find($m,$g['id'])['state']==='APPROVAL_REQUIRED','Receiver lost the outstanding approval.');
+$operation(1,['kind'=>'nativeEmergencyImport','package'=>SecretsBackendEmergency::exportGrant($stores[0],$peers[0],$g)]);$pump();
+$mesh=['reports'=>[['report'=>$peers[0]->meshReport($stores[0]->read()['state'],true,true),'age'=>0],['report'=>$peers[1]->meshReport($stores[1]->read()['state'],true,true),'age'=>0]]];
+$head=$stores[0]->head();$view=SecretsBackendMailbox::view($stores[0]->read()['state'],$mesh);$ok($find($view['nodes'][0],$g['id'])['state']==='COMPLETED','Exact bilateral approvals were not completed.');
+$mesh['reports'][1]['age']=9999;$view=SecretsBackendMailbox::view($stores[0]->read()['state'],$mesh);$r=$find($view['nodes'][0],$g['id']);$ok($r['state']==='UNKNOWN'&&$r['lastKnownState']==='WAITING_REMOTE','Stale proof became missing approval.');
+$view=SecretsBackendMailbox::view($stores[0]->read()['state'],['reports'=>[]]);$ok($view['nodes'][1]['available']===false,'Missing remote summary appeared complete.');
+$ok($stores[0]->head()===$head,'Mailbox mutated approved state.');
+$bad=SecretsBackendMailbox::local($stores[0]->read()['state']);$bad['rows'][0]['token']='PRIVATE-CANARY';$no(fn()=>SecretsBackendMailbox::validate($bad),'Mailbox accepted an unapproved field.');
+$sample=$stores[0]->read()['state'];$transfer=SecretsBackendCodec::uuid();$sample['native']['transfers'][$transfer]=['state'=>'TRANSFERRED','direction'=>'outgoing','peerId'=>$b];$rows=SecretsBackendMailbox::local($sample)['rows'];$ok(count(array_filter($rows,static fn($r)=>$r['id']==='transfer:'.$transfer&&$r['state']==='COMPLETED'))===1,'Transferred ownership remained pending.');
+$report=$peers[1]->meshReport($stores[1]->read()['state'],true,true);SecretsBackendMeshStatus::validate($report,$b);
+$report['mailbox']['rows'][0]['state']='PRIVATE-CANARY';$no(fn()=>SecretsBackendMeshStatus::validate($report,$b),'Signed mesh accepted arbitrary mailbox data.');
+echo "PASS mailbox: delivery vs approval, bilateral identity, stale/missing peers, secret exclusion and read-only projection\n";

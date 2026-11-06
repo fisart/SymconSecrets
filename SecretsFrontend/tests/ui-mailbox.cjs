@@ -1,0 +1,21 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {fixture,tick}=require('./ui-native.cjs');
+(async()=>{
+ const f=await fixture(),$=f.$,n=f.state.native;
+ const row=(state,direction='provider')=>({id:'grant:g',type:'emergency',state,peerId:'remote',direction,action:'nativePeers',requestedAt:null});
+ n.mailbox={nodes:[{id:'local',name:'Test',local:true,fresh:true,available:true,checkedAt:1793656603,rows:[row('SENDING'),{...row('APPROVAL_REQUIRED','consumer'),id:'grant:h'}]},{id:'remote',name:'Heartbeat <img src=x>',local:false,fresh:false,available:false,checkedAt:null,rows:[]}]};
+ const original=f.dom.window.fetch;let uploads=0,resolve,targets=[{id:123,name:'Backup',repository:'fisart/Module-Configuration-Backup',branch:'main',enabled:true}];
+ f.dom.window.fetch=async(url,options)=>{const r=JSON.parse(options.body);if(r.action==='nativeSupportStatus')return {ok:true,json:async()=>({targets})};if(r.action==='nativeSupportUpload'){uploads++;assert.equal(r.data.instance,123);return new Promise(done=>{resolve=done;});}return original(url,options);};
+ f.dom.window.document.querySelector('[data-tab=nativeMailbox]').click();await tick();await tick();
+ assert.match($('nativeMailboxNav').textContent,/1 to approve.*1 waiting/);assert.match($('mailboxRows').textContent,/Sending \/ retrying.*RequestedTime not recorded/);assert.match($('mailboxRows').textContent,/Your approval required/);assert.match($('mailboxRows').textContent,/Mailbox unavailable/);assert.equal($('mailboxRows').querySelector('img'),null);
+ $('mailboxServer').value='local';$('mailboxServer').dispatchEvent(new f.dom.window.Event('change'));assert.doesNotMatch($('mailboxRows').textContent,/Mailbox unavailable/);
+ n.mailbox.nodes[0].rows=[row('COMPLETED')];$('mailboxRefresh').click();await tick();await tick();assert.match($('mailboxRows').textContent,/No matching/);
+ $('mailboxState').value='all';$('mailboxState').dispatchEvent(new f.dom.window.Event('change'));assert.match($('mailboxRows').textContent,/Completed/);
+ assert.equal($('supportUpload').disabled,true);$('supportConsent').checked=true;$('supportConsent').dispatchEvent(new f.dom.window.Event('change'));assert.equal($('supportUpload').disabled,false);
+ $('supportUpload').click();await tick();$('supportUpload').click();assert.equal(uploads,1);assert.match($('supportResult').textContent,/waiting for GitHub/);
+ resolve({ok:true,json:async()=>({ok:true,repository:targets[0].repository,branch:'main',commit:'a'.repeat(40)})});await tick();await tick();assert.match($('supportResult').textContent,/Saved to.*commit a{40}/);assert.equal($('supportConsent').checked,false);assert.equal($('supportUpload').disabled,true);
+ targets[0].enabled=false;$('mailboxRefresh').click();await tick();await tick();assert.match($('supportDestination').textContent,/Enable and save/);assert.equal($('supportUpload').disabled,true);
+ assert.equal(f.errors.length,0,f.errors.map(e=>e.message).join('\n'));f.dom.window.close();
+ console.log('PASS Mailbox and support upload: direction, waiting, missing remote coverage, filters, safe text, explicit destination consent, single flight and confirmed commit');
+})().catch(e=>{process.stderr.write(e.stack+'\n');process.exitCode=1;});

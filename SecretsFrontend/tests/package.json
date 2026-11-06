@@ -6,7 +6,7 @@
     "test": "node ui.cjs",
     "test:security": "node ui-transport.cjs && node ui-races.cjs",
     "test:guided": "node ui-guided.cjs",
-    "test:native": "node ui-native.cjs && node ui-legacy-import.cjs && node ui-bootstrap.cjs && node ui-connect.cjs && node ui-pairing.cjs && node ui-pairing-coordinator.cjs && node ui-full-connect.cjs && node ui-overview.cjs && node ui-health.cjs && node ui-tab-purpose.cjs && node ui-legacy-api.cjs && node ui-emergency.cjs && node ui-mesh.cjs && node ui-request-diagnostics.cjs"
+    "test:native": "node ui-native.cjs && node ui-legacy-import.cjs && node ui-bootstrap.cjs && node ui-connect.cjs && node ui-pairing.cjs && node ui-pairing-coordinator.cjs && node ui-full-connect.cjs && node ui-overview.cjs && node ui-health.cjs && node ui-tab-purpose.cjs && node ui-legacy-api.cjs && node ui-emergency.cjs && node ui-mesh.cjs && node ui-request-diagnostics.cjs && node ui-mailbox.cjs"
   },
   "devDependencies": {
     "jsdom": "26.1.0"

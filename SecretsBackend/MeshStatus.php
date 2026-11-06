@@ -1,10 +1,12 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/Mailbox.php';
 
 /** Bounded diagnostic reports. Never authority, secret data, or transitive network discovery. */
 final class SecretsBackendMeshStatus
 {
     public const FORMAT='SECB.MeshStatus.1';
+    public const MAILBOX='SECB.MeshStatus.Mailbox.1';
     public const DETAILS='SECB.MeshStatus.Details.1';
     private $clock;
     public function __construct(private SecretsBackendNativeStore $store,private SecretsBackendNativePeer $peer,?callable $clock=null) { $this->clock=$clock??static fn():int=>time(); }
@@ -40,11 +42,11 @@ final class SecretsBackendMeshStatus
         if($chosen===null)return ['status'=>'MESH_IDLE'];[$p,$url]=$chosen;$previous=$this->record($p,$url);$r=['at'=>$now,'state'=>'unknown','problem'=>null,'httpStatus'=>0,'certificateReason'=>'unknown','failedChecks'=>0,'lastSuccessAt'=>$previous['lastSuccessAt']??null];$report=null;
         try{
             $target=$p;$target['routes']['endpoints']=[$url];
-            try{$reply=$this->peer->exchange($target,'MESH_STATUS',['format'=>self::DETAILS],SecretsBackendCodec::uuid());}
-            catch(SecretsBackendNativePeerDeliveryFailure $e){if($e->problem!=='http'||$e->httpStatus!==403)throw $e;$reply=$this->peer->exchange($target,'MESH_STATUS',['format'=>self::FORMAT],SecretsBackendCodec::uuid());}
+            $formats=isset($previous['protocol'],$previous['protocolAt'])&&$now-$previous['protocolAt']<3600?array_slice([self::MAILBOX,self::DETAILS,self::FORMAT],array_search($previous['protocol'],[self::MAILBOX,self::DETAILS,self::FORMAT],true)):[self::MAILBOX,self::DETAILS,self::FORMAT];
+            foreach($formats as$format){try{$reply=$this->peer->exchange($target,'MESH_STATUS',['format'=>$format],SecretsBackendCodec::uuid());break;}catch(SecretsBackendNativePeerDeliveryFailure $e){if($format===self::FORMAT||$e->problem!=='http'||$e->httpStatus!==403)throw $e;}}
             SecretsBackendNativePeer::exact($reply,['requestId','requestKind','requestDigest','status','report']);
             if($reply['status']!=='MESH_STATUS')throw new RuntimeException('Unexpected mesh reply.');
-            self::validate($reply['report'],$p['id']);$report=$reply['report'];$r['state']='ok';$r['lastSuccessAt']=$now;
+            self::validate($reply['report'],$p['id']);$report=$reply['report'];$r['protocol']=$format;$r['protocolAt']=($previous['protocol']??null)===$format?($previous['protocolAt']??$now):$now;$r['state']='ok';$r['lastSuccessAt']=$now;
         }catch(Throwable $e){$r['failedChecks']=min(100,($previous['failedChecks']??0)+1);$r['problem']=$e instanceof SecretsBackendNativePeerDeliveryFailure&&in_array($e->problem,SecretsBackendNativePeerDeliveryFailure::PROBLEMS,true)?$e->problem:'invalid-reply';if($e instanceof SecretsBackendNativePeerDeliveryFailure){$r['httpStatus']=max(0,min(599,$e->httpStatus));$r['certificateReason']=in_array($e->certificateReason,SecretsBackendNativePeerDeliveryFailure::CERTIFICATE_REASONS,true)?$e->certificateReason:'unknown';}$r['state']=$e instanceof SecretsBackendNativePeerDeliveryFailure&&$e->problem==='http'&&in_array($e->httpStatus,[400,403,404],true)?'unknown':'error';}
         $live=$this->store->read()['state']['pairing']['peers'][$p['id']]??null;
         if(!$live||!self::eligible($live)||$live['pairingId']!==$p['pairingId']||$live['epoch']!==$p['epoch']||!in_array($url,$live['routes']['endpoints']??[$live['descriptor']['endpoint']],true))return ['status'=>'MESH_CONNECTION_CHANGED'];
@@ -52,6 +54,7 @@ final class SecretsBackendMeshStatus
             // Diagnostics must not consume an unbounded part of the secret journal.
             $budget=max(800,(int)floor($this->store->metadata()['capacityBytes']/8/max(1,count(array_filter($s['pairing']['peers'],[self::class,'eligible'])))));
             $localId=$s['native']['vaultId'];usort($report['links'],static fn($a,$b)=>($b['id']===$localId)<=>($a['id']===$localId));
+            while(strlen(SecretsBackendCodec::json($report))>$budget&&!empty($report['mailbox']['rows'])){array_pop($report['mailbox']['rows']);$report['mailbox']['partial']=true;}
             while(strlen(SecretsBackendCodec::json($report))>$budget&&$report['links']){array_pop($report['links']);$report['truncated']=true;}
             $this->save($p,'report',['at'=>$now,'endpoint'=>$url,'report'=>$report]);
         }
@@ -64,6 +67,7 @@ final class SecretsBackendMeshStatus
     }
     public static function validate(array $r,string $id):void {
         if(strlen(SecretsBackendCodec::json($r))>24000)throw new RuntimeException('Mesh report too large.');
+        if(isset($r['mailbox'])){self::mailboxCheck($r['mailbox']);unset($r['mailbox']);}
         SecretsBackendNativePeer::exact($r,['format','id','name','components','backupService','source','fallback','activeSource','conflicts','storagePercent','links','ttl','truncated']);
         if($r['format']!==self::FORMAT||$r['id']!==$id||!is_string($r['name'])||strlen($r['name'])>160||!is_int($r['ttl'])||$r['ttl']<180||$r['ttl']>2000)throw new RuntimeException('Invalid mesh report.');
         SecretsBackendNativePeer::uuid($r['id']);SecretsBackendNativePeer::exact($r['components'],['frontend','backend','vault']);
@@ -78,6 +82,7 @@ final class SecretsBackendMeshStatus
             self::indicator($l['primary'],true,true);self::indicator($l['backup'],true,true);$seen[$l['id']]=true;
         }
     }
+    private static function mailboxCheck(array $m):void { SecretsBackendMailbox::validate($m); }
     /** A node reports only its own observations, never repeats another node's report. */
     public function report(array $s,array $runtime=[]):array {
         $unknown=['state'=>'unknown','age'=>null];$components=($runtime['components']??[])+['frontend'=>$unknown,'backend'=>$unknown,'vault'=>$unknown];
