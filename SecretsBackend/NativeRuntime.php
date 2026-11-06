@@ -85,7 +85,7 @@ trait SecretsBackendNativeRuntime
                 'providers'=>fn():array=>[$effects->tick()],
                 'setup'=>function()use($store,$peer):array{if(SecretsBackendSupportReport::pending($store)){$this->peerWork->providerAttempt();return [SecretsBackendSupportReport::tick($store)];}return [($peer->automaticSetup(fn()=>$this->syncEmergencyAccess(true)))->tick()];}
             ];
-            return SecretsBackendCodec::json($this->peerWork->run((int)$this->GetBuffer('NativeJobsPhase'),$phases,fn(int $next)=>$this->SetBuffer('NativeJobsPhase',(string)$next)));
+            return SecretsBackendCodec::json($this->peerWork->run((int)$this->GetBuffer('NativeJobsPhase'),$phases,fn(int $next)=>$this->SetBuffer('NativeJobsPhase',(string)$next),$setup));
         }catch(Throwable $e){$this->debug('request-rejected');return '[{"status":"RECOVERY_REQUIRED"}]';}
         finally{$this->peerWork=null;$this->peerSetupWork=false;IPS_SemaphoreLeave($lock);}
     }

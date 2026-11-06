@@ -7,6 +7,7 @@ final class SecretsBackendPeerWork
     public const BUDGET=45.0;
     public const SETUP_BUDGET=90.0;
     public const PHASES=['delivery','health','mesh','providers','setup'];
+    public const SETUP_PHASES=['delivery','setup','health','setup','mesh','setup','providers'];
     private float $deadline;
     private int $attempts=0;
     private float $budget;
@@ -21,11 +22,12 @@ final class SecretsBackendPeerWork
     }
     public function providerAttempt():void { ++$this->attempts; }
     /** Idle phases are cheap; stop after one phase actually attempted network I/O. */
-    public function run(int $start,array $phases,callable $next):array {
-        $out=[];$start=max(0,$start)%count(self::PHASES);
-        for($offset=0;$offset<count(self::PHASES)&&$this->remaining()>=4.6;$offset++){
-            $index=($start+$offset)%count(self::PHASES);$next(($index+1)%count(self::PHASES));
-            $out=array_merge($out,$phases[self::PHASES[$index]]());
+    public function run(int $start,array $phases,callable $next,bool $setup=false):array {
+        $order=$setup?self::SETUP_PHASES:self::PHASES;
+        $out=[];$start=max(0,$start)%count($order);
+        for($offset=0;$offset<count($order)&&$this->remaining()>=4.6;$offset++){
+            $index=($start+$offset)%count($order);$next(($index+1)%count($order));
+            $out=array_merge($out,$phases[$order[$index]]());
             if($this->attempts>0)break;
         }return $out;
     }

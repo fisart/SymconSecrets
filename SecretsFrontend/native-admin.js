@@ -451,7 +451,7 @@ function renderAutomaticSetup(){
  const holder=$('setupMembers');holder.replaceChildren();
  for(const m of members){
   const details=m.details||{};
-  const description=m.ready&&(m.local||m.fresh)?'Mesh setup verified.':m.deliveryPending?'Waiting for this server’s reply.':m.authorized===false?'Automatic authorization has not been accepted. Check delivery errors and the installed module version.':!m.fresh&&!m.local?'Waiting for a fresh authenticated reply.':'Completing connections and verification.';
+  const description=m.ready&&(m.local||m.fresh)?'Mesh setup verified.':m.enrollment?'Delivering automatic authorization. Attempts: '+m.enrollment.attempts+'.':m.deliveryPending?'Waiting for this server’s reply.':m.authorized===false?'Automatic authorization has not been accepted. Check delivery errors and the installed module version.':!m.fresh&&!m.local?'Waiting for a fresh authenticated reply.':'Completing connections and verification.';
   nativeRow(holder,m.name+(m.local?' · this server':''),description,[]);
   if(details.backupRouteProblem)nativeRow(holder,m.name+' · Magic route',details.backupRouteProblem,[]);
   for(const l of details.links||[])nativeRow(holder,m.name+' → '+l.server,'Connection: '+(l.connected?'active':'pending')+' · Primary: '+l.primary?.state+' · Backup: '+l.backup?.state+' · Synchronization: '+l.synchronization+' · Emergency receive/send: '+(l.emergencyReceive?'OK':'pending')+'/'+(l.emergencySend?'OK':'pending')+' · Route acknowledgement: '+(l.routesAcknowledged?'OK':'pending'),[]);
@@ -459,7 +459,7 @@ function renderAutomaticSetup(){
  }
  for(const w of a.report?.discovery?.waiting||[])nativeRow(holder,w.server,w.step+': '+w.message,[]);
  const errors=[...(a.report?.errors||[]),...members.filter(m=>!m.local).flatMap(m=>m.details?.errors||[])];
- const deliveries=members.flatMap(m=>(m.details?.links||[]).filter(l=>l.delivery).map(l=>({server:m.name,target:l.server,...l.delivery})));
+ const deliveries=[...members.filter(m=>m.enrollment).map(m=>({target:m.name,...m.enrollment})),...members.flatMap(m=>(m.details?.links||[]).filter(l=>l.delivery).map(l=>({server:m.name,target:l.server,...l.delivery})))];
  if(errors.length||deliveries.length){const pre=document.createElement('pre');pre.className='break';pre.textContent='Attempt history (earlier failures may have recovered):\n'+JSON.stringify({errors,deliveries},null,2);holder.append(pre);}
 }
 run($('setupFinish'),async ticket=>{
@@ -468,9 +468,16 @@ run($('setupFinish'),async ticket=>{
  catch(e){automaticSetupNotice='Setup request was not confirmed: '+e.message+' Refresh status before retrying; the server may already be working.';}
  finally{automaticSetupBusy=false;renderAutomaticSetup();}
 });
-$('setupReport').addEventListener('click',()=>{
- const a=snapshot?.native?.automaticSetup||{};
+$('setupReport').addEventListener('click',async()=>{
+ const button=$('setupReport');if(button.disabled)return;button.disabled=true;
+ try{
+ const r=await api('nativeOverviewStatus');
+ if(!r.automaticSetup)throw new Error('The server returned no mesh setup status.');
+ Object.assign(snapshot.native,r);renderAutomaticSetup();
+ const a=r.automaticSetup;
  const blob=new Blob([JSON.stringify({generatedAt:new Date().toISOString(),setup:a},null,2)],{type:'application/json'});
  const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download='mesh-setup-report.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+ }catch(e){message('Could not refresh the setup report: '+e.message,true);}
+ finally{button.disabled=false;}
 });
 run($('setupStop'),()=>{const a=snapshot?.native?.automaticSetup;if(!a?.policy)return;return approveMailboxEntry({operation:{kind:'nativeSetupStop',id:a.policy.id},summary:'Stop this server’s automatic setup and invalidate its private setup capabilities. Existing connections and emergency approvals are retained.'});});

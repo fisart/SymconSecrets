@@ -354,12 +354,12 @@ $reply=SecretsFrontendConfiguration::decodeBounded($response,65536,32);self::exa
             $this->store->change($cur['head'],SecretsBackendCodec::uuid(),self::digest(['auto-global'=>$p['pairingId']]),static function($s)use($p){$s['outbox']['jobs'][]=self::job($p,'GLOBAL_ENABLE',['mode'=>SecretsBackendSharedGlobal::SCOPE]);return $s;},['action'=>'global-connect-queued','actor'=>'background','target'=>$p['pairingId']]);return;
         }
     }
-    public function dispatch(int $maximum=2,?string $onlyPeer=null,bool $retryNow=false,?string $onlyPairing=null): array
+    public function dispatch(int $maximum=2,?string $onlyPeer=null,bool $retryNow=false,?string $onlyPairing=null,array $onlyKinds=[]): array
     {
         if($this->automaticGlobal){$this->queueAutomaticGlobal();$this->queueRoutes();}
         $results=[];
         for($n=0;$n<$maximum;++$n){$current=$this->store->read();$job=null;
-            $seen=[];foreach($current['state']['outbox']['jobs']as$item){if(($onlyPeer!==null&&$item['receiverId']!==$onlyPeer)||($onlyPairing!==null&&$item['pairingId']!==$onlyPairing)||isset($seen[$item['receiverId']]))continue;$seen[$item['receiverId']]=true;
+            $seen=[];foreach($current['state']['outbox']['jobs']as$item){if(($onlyKinds&&!in_array($item['kind'],$onlyKinds,true))||($onlyPeer!==null&&$item['receiverId']!==$onlyPeer)||($onlyPairing!==null&&$item['pairingId']!==$onlyPairing)||isset($seen[$item['receiverId']]))continue;$seen[$item['receiverId']]=true;
                 try{$backoff=$this->store->get('backoff:'.$item['id'],'delivery-backoff');}catch(Throwable $ignored){$backoff=['nextAttemptAt'=>0,'attempts'=>0];}
                 if(($item['status']??'')==='queued'&&($retryNow||$backoff['nextAttemptAt']<=time())){$job=$item;break;}}
             if($job===null)break;$peer=$current['state']['pairing']['peers'][$job['receiverId']]??null;

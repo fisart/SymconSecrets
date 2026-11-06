@@ -20,6 +20,16 @@ const {fixture,tick}=require('./ui-native.cjs');
  n.automaticSetup.members[2].fresh=false;f.dom.window.document.querySelector('[data-tab=nativeMailbox]').click();await tick();await tick();assert.doesNotMatch($('setupProgress').textContent,/^OK/,'Stale peer result displayed OK');
  n.automaticSetup.report={errors:[{server:'server-2.example',direction:'node-0 → node-2',step:'SETUP_ADVANCE',code:'timeout',attempts:[{route:'https://server-2.example/hook/secrets_peer_102',elapsedMs:45000,httpStatus:0}]}]};
  f.dom.window.document.querySelector('[data-tab=nativeMailbox]').click();await tick();await tick();assert.match($('setupMembers').textContent,/SETUP_ADVANCE/);assert.match($('setupMembers').textContent,/45000/);assert.ok($('setupReport'));
+ // Download must read the latest backend state, not relabel the cached UI with a new time.
+ let downloaded=null;f.dom.window.Blob=class{constructor(parts){downloaded=JSON.parse(parts[0]);}};
+ n.automaticSetup=status(true);n.automaticSetup.observedAt=1794007400;
+ const reads=f.calls.filter(c=>c.action==='nativeOverviewStatus').length;
+ $('setupReport').click();await tick();await tick();
+ assert.equal(f.calls.filter(c=>c.action==='nativeOverviewStatus').length,reads+1);
+ assert.equal(downloaded.setup.observedAt,1794007400);assert.equal(downloaded.setup.running,false);
+ downloaded=null;const fetchWorking=f.dom.window.fetch;
+ f.dom.window.fetch=async(url,options)=>JSON.parse(options.body).action==='nativeOverviewStatus'?Promise.reject(Error('Offline')):fetchWorking(url,options);
+ $('setupReport').click();await tick();await tick();assert.equal(downloaded,null,'Failed refresh downloaded stale status');assert.equal($('setupReport').disabled,false);
  assert.equal(f.errors.length,0,f.errors.map(e=>e.message).join('\n'));f.dom.window.close();
  const refused=await fixture(),original=refused.dom.window.fetch;let starts=0;
  refused.dom.window.fetch=async(url,options)=>{const r=JSON.parse(options.body);if(r.action==='nativeSetupRun'){starts++;return {ok:false,json:async()=>({error:'Session token changed',code:'CSRF_INVALID'})};}return original(url,options);};

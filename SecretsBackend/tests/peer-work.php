@@ -20,6 +20,13 @@ for($tick=0;$tick<count(SecretsBackendPeerWork::PHASES)*2;$tick++){
  $assert(count($result)===1,'Worker stacked multiple outbound phases.');
 }
 $assert($called===array_merge(SecretsBackendPeerWork::PHASES,SecretsBackendPeerWork::PHASES),'Queued delivery starved health, mesh or provider work.');
+$next=0;$called=[];
+foreach(SecretsBackendPeerWork::SETUP_PHASES as$unused){
+ $work=new SecretsBackendPeerWork($clock);$phases=[];
+ foreach(SecretsBackendPeerWork::PHASES as$name)$phases[$name]=static function()use($name,&$called,$work,$primary):array{$called[]=$name;$work->attempt($primary,true);return [];};
+ $work->run($next,$phases,static function($n)use(&$next){$next=$n;},true);
+}
+$assert($called===SecretsBackendPeerWork::SETUP_PHASES,'Active setup did not progress frequently while preserving health, mesh and provider fairness.');
 $work=new SecretsBackendPeerWork($clock);$next=0;$called=[];
 $work->run(0,['delivery'=>static fn():array=>[], 'health'=>static fn():array=>[['status'=>'HEALTH_IDLE']], 'mesh'=>static function()use($work,$backup,&$called):array{$called[]='mesh';$work->attempt($backup);return [['status'=>'MESH_CHECKED']];},'providers'=>static function()use(&$called):array{$called[]='providers';return [];}],static function(int $n)use(&$next):void{$next=$n;});
 $assert($called===['mesh']&&$next===3,'Idle phases delayed useful work or outbound phases stacked.');

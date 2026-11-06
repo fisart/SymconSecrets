@@ -2,14 +2,17 @@
 declare(strict_types=1);
 require_once __DIR__.'/Fixture.php';
 require_once __DIR__.'/../NativeOperations.php';
+require_once __DIR__.'/../PeerWork.php';
 // Each fixture's local Connect core provides its own route; no browser enrollment.
 $GLOBALS['fixtureNode']=0;
 function IPS_GetInstanceListByModuleID(string $module):array {return [2000+$GLOBALS['fixtureNode']];}
 function IPS_GetInstance(int $id):array {return ['InstanceStatus'=>102];}
 function CC_GetConnectURL(int $id):string {return 'https://'.str_repeat(dechex($id-2000+1),32).'.ipmagic.de';}
-$roots=[];$stores=[];$peers=[];$ops=[];$routes=[];$workers=[];$now=time();$attempts=0;$mutating=[];$failDiscovery=false;$failedRoutes=[];
+$roots=[];$stores=[];$peers=[];$ops=[];$routes=[];$workers=[];$now=time();$attempts=0;$mutating=[];$failDiscovery=false;$failedRoutes=[];$orderViolations=[];$activeWork=null;
 $clock=static function()use(&$now):int{return $now;};
-$transport=static function($d,$bytes,$policy)use(&$routes,&$attempts,&$mutating,&$failDiscovery,&$failedRoutes){$attempts++;if(in_array($d['endpoint'],$failedRoutes,true))throw new SecretsBackendNativePeerDeliveryFailure('timeout');$m=json_decode($bytes,true);if($failDiscovery&&$m['kind']==='SETUP_INFO'){$failDiscovery=false;throw new SecretsBackendNativePeerDeliveryFailure('timeout');}$mutating[]=$m['kind'];if(!isset($routes[$d['endpoint']]))throw new SecretsBackendNativePeerDeliveryFailure('connect');try{return $routes[$d['endpoint']]->receive($bytes);}catch(Throwable $e){fwrite(STDERR,$m['kind'].': '.$e->getMessage()."\n");throw $e;}};
+$transport=static function($d,$bytes,$policy)use(&$routes,&$attempts,&$mutating,&$failDiscovery,&$failedRoutes,&$stores,&$orderViolations,&$activeWork){$attempts++;if($activeWork)$activeWork->attempt($d['endpoint'],true);if(in_array($d['endpoint'],$failedRoutes,true))throw new SecretsBackendNativePeerDeliveryFailure('timeout');$m=json_decode($bytes,true);
+ if($m['kind']==='SETUP_HELLO')foreach($stores as$sender){$v=$sender->read()['state'];if($v['native']['vaultId']!==$m['sender'])continue;foreach($v['outbox']['jobs']as$j)if($j['kind']==='SETUP_ENROLL'&&$j['receiverId']===$m['receiver'])$orderViolations[]=$m['receiver'];}
+ if($failDiscovery&&$m['kind']==='SETUP_INFO'){$failDiscovery=false;throw new SecretsBackendNativePeerDeliveryFailure('timeout');}$mutating[]=$m['kind'];if(!isset($routes[$d['endpoint']]))throw new SecretsBackendNativePeerDeliveryFailure('connect');try{return $routes[$d['endpoint']]->receive($bytes);}catch(Throwable $e){fwrite(STDERR,$m['kind'].': '.$e->getMessage()."\n");throw $e;}};
 $commit=static function(int $i,callable $fn)use(&$stores){$s=$stores[$i];$c=$s->read();$s->change($c['head'],SecretsBackendCodec::uuid(),hash('sha256',random_bytes(16)),$fn);};
 $operation=static function(int $i,array $raw)use(&$stores,&$ops,$commit){$s=$stores[$i]->read()['state'];$op=$ops[$i]->normalize($raw,$s,false);$commit($i,fn($v)=>$ops[$i]->apply($op,$v));return $op;};
 $pump=static function()use(&$peers,&$stores){for($j=0;$j<12;$j++){foreach($peers as$p)$p->dispatch(1,null,true);$pending=0;foreach($stores as$s){$v=$s->read()['state'];$pending+=count($v['outbox']['jobs']);foreach($v['pairing']['peers']as$p)if($p['active']&&($p['routeReceipt']??null)!==($v['native']['routeRevision']??'0'))$pending++;}if(!$pending)return;}};
@@ -30,11 +33,24 @@ try{
  // Start from one full administrator session; no remote authorize() calls.
  $credential=array_key_first($stores[0]->read()['state']['identity']['credentials']);
  $workers[0]->requestStart(['credential'=>$credential]);
- for($turn=0;$turn<15;$turn++){$now+=95;$workers[0]->tick();$pump();}
+ // Real worker scheduling: one network phase per pass, no artificial queue draining.
+ $next=array_fill(0,4,0);
+ for($turn=0;$turn<80;$turn++){
+  $now+=10;foreach($stores as$s)foreach($peers as$p)$s->delete('rate:'.hash('sha256','automatic-setup:'.$p->descriptor()['vaultId'].':'.intdiv(time(),60)));
+  foreach($workers as$i=>$w){$GLOBALS['fixtureNode']=$i;$activeWork=new SecretsBackendPeerWork(null,90,90);
+   $phases=['delivery'=>fn()=>$peers[$i]->dispatch(1),'setup'=>fn()=>[$w->tick()],'health'=>fn()=>[(new SecretsBackendNativeHealth($stores[$i],$peers[$i]))->tick()],'mesh'=>fn()=>[(new SecretsBackendMeshStatus($stores[$i],$peers[$i]))->tick()],'providers'=>fn()=>[]];
+   $activeWork->run($next[$i],$phases,static function($n)use(&$next,$i){$next[$i]=$n;},true);$activeWork=null;
+  }
+ }
+ secExpect(!$orderViolations,'SETUP_HELLO overtook queued SETUP_ENROLL.');
  $policy=$stores[0]->read()['state']['native']['automaticSetup']['policy'];
  secExpect($policy['format']===SecretsBackendAutomaticSetup::AUTOMATIC_FORMAT,'Single button did not select automatic setup.');
  foreach($stores as$i=>$store){$v=$store->read()['state'];secExpect(SecretsBackendAutomaticSetup::enabled($v),'Remote node was not automatically enrolled: '.$i);secExpect($i===0||$v['native']['automaticSetup']['credential']===null,'Remote enrollment required a local credential.');secExpect($v['native']['globalSetupSecret']['token']===$stores[0]->read()['state']['native']['globalSetupSecret']['token'],'Protected Global setup credential was not shared.');}
  // Replay and token tampering cannot change or restore local authority.
+ $stale=$stores[0]->read()['state'];unset($stale['native']['automaticSetup'],$stale['native']['setupProposal']);
+ $before=$attempts;$fresh=$workers[0]->status($stale);
+ secExpect($fresh['authorized']&&count($fresh['members'])===4&&isset($fresh['observedAt']),'Status mixed an old caller snapshot with current progress.');
+ secExpect($attempts===$before,'Report snapshot performed peer network I/O.');
  $targetState=$stores[1]->read()['state'];$token=$targetState['native']['globalSetupSecret']['token'];
  secReject(fn()=>$workers[1]->enroll($targetState,$policy,SecretsBackendCodec::b64(random_bytes(32)),null,$peers[0]->descriptor()['vaultId']),'Changed Global credential was accepted.');
  $suspended=$targetState;$suspended['native']['automaticSetup']['enabled']=false;
@@ -62,7 +78,7 @@ try{
  $savedGeneration=$stores[0]->read()['state']['native']['automaticSetup']['generation'];$workers[0]->start();
  $failedRoutes=[$peers[1]->descriptor()['endpoint'],'https://'.str_repeat('2',32).'.ipmagic.de/hook/secrets_peer_9001'];
  for($j=0;$j<12;$j++){$now+=95;$GLOBALS['fixtureNode']=0;$workers[0]->tick();}
- $report=$workers[0]->status($stores[0]->read()['state'])['report'];$routeFailures=array_filter($report['errors'],static fn($e)=>count($e['attempts'])===2&&$e['code']==='timeout');secExpect(count($routeFailures)>0,'No detailed primary+backup timeout report was retained.');
+ $report=$workers[0]->status($stores[0]->read()['state'])['report'];$routeFailures=array_filter($report['errors'],static fn($e)=>count($e['attempts'])===2&&$e['code']==='timeout');secExpect(!array_filter($report['errors'],static fn($e)=>$e['step']==='Advance mesh setup'&&$e['code']==='timeout'),'A route failure was recorded twice.');secExpect(count($routeFailures)>0,'No detailed primary+backup timeout report was retained.');
  secExpect($stores[0]->read()['state']['native']['automaticSetup']['generation']===$savedGeneration,'Retry discarded established authority.');$failedRoutes=[];
  foreach($stores as$i=>$store){$v=$store->read()['state'];secExpect(!str_contains(json_encode($workers[$i]->diagnostics($v)),$v['native']['globalSetupSecret']['token']),'Report leaked the protected Global token.');}
  // Capabilities cannot run arbitrary actions, survive revocation, or alter Global values.
@@ -76,5 +92,5 @@ try{
  $commit(1,static function($v){$v['native']['automaticSetup']['enabled']=false;return $v;});
  secReject(fn()=>$peers[0]->exchange($target,'SETUP_ADVANCE',['token'=>$hello['token'],'expires'=>$hello['expires'],'run'=>SecretsBackendCodec::uuid()],SecretsBackendCodec::uuid()),'Stopped capability still worked.');
  foreach($stores as$s){$v=$s->read()['state'];secExpect(json_encode(SecretsBackendTree::value($v['vault']['global']))==='{}','Setup wrote application Global secrets.');}
- echo "PASS automatic mesh: four encrypted servers from sparse topology, one initiating administrator, protected Global credential, deterministic full mesh, reciprocal emergency grants, automatic Magic discovery without browser keys, detailed two-route failure reporting, private capabilities and restricted/revoked commands\n";
+ echo "PASS automatic mesh: fair one-network-phase scheduling, enrollment before capabilities, consistent fresh reports, four encrypted servers from sparse topology, one initiating administrator, protected Global credential, deterministic full mesh, reciprocal emergency grants, automatic Magic discovery without browser keys, detailed two-route failure reporting, private capabilities and restricted/revoked commands\n";
 }finally{$remove=static function($p)use(&$remove){if(is_dir($p)&&!is_link($p)){foreach(scandir($p)as$n)if($n!=='.'&&$n!=='..')$remove($p.'/'.$n);rmdir($p);}elseif(file_exists($p)||is_link($p))unlink($p);};foreach($roots as$r)if(is_dir($r))$remove($r);}
