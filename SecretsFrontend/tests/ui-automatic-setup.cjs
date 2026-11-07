@@ -8,7 +8,7 @@ const {fixture,tick}=require('./ui-native.cjs');
  let runs=0;
  f.dom.window.fetch=async(url,options)=>{
   const r=JSON.parse(options.body);
-  if(r.action==='nativeSetupRun'){runs++;n.automaticSetup=status();return {ok:true,json:async()=>({automaticSetup:n.automaticSetup})};}
+  if(r.action==='nativeSetupRun'){runs++;n.automaticSetup=status();return {ok:true,json:async()=>require('./monitoring-response.cjs')({automaticSetup:n.automaticSetup})};}
   return base(url,options);
  };
  f.dom.window.document.querySelector('[data-tab=nativeMailbox]').click();await tick();await tick();

@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/Bootstrap.php';
 require_once __DIR__ . '/ConnectDiscovery.php';
+require_once __DIR__ . '/MonitoringView.php';
 
 trait SecretsFrontendGuidedSetup
 {
@@ -41,6 +42,11 @@ trait SecretsFrontendGuidedSetup
             $reply['data']=SecretsFrontendConnectDiscovery::local();
         }
         if(($reply['status']??0)===200){if($action==='nativeOverviewStatus')$reply['data']['connectDiscovery']=SecretsFrontendConnectDiscovery::local();elseif($action==='session'&&isset($reply['data']['native']))$reply['data']['native']['connectDiscovery']=SecretsFrontendConnectDiscovery::local();}
+        if(($reply['status']??0)===200){
+            $path='/hook/secrets_frontend_'.$this->InstanceID;
+            if(isset($reply['data']['native']))$reply['data']['native']=SecretsFrontendMonitoringView::decorate($reply['data']['native'],$path);
+            elseif(in_array($action,['nativeOverviewStatus','nativePairingStatus','nativeRetryPeerDelivery','nativeSetupRun','nativeSetupPreview'],true))$reply['data']=SecretsFrontendMonitoringView::decorate($reply['data'],$path);
+        }
         return $reply;
     }
 }

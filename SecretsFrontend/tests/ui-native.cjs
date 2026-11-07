@@ -1,5 +1,6 @@
 'use strict';
 const assert=require('node:assert/strict');
+const monitoringResponse=require('./monitoring-response.cjs');
 const {webcrypto}=require('node:crypto');
 const {TextEncoder}=require('node:util');
 const {JSDOM,VirtualConsole}=require('jsdom');
@@ -37,6 +38,8 @@ async function fixture(config={}){
    if(r.action==='nativeOperationStatus')data={result:'COMMITTED'};
    if(r.action==='nativeCandidateOptions')data={prepare:'candidate-prepare',options:{challenge:'AQ',user:{id:'AQ'},excludeCredentials:[]}};
    if(r.action==='nativeCandidateSubmit')data={candidate:'candidate-id',digest:'exact-digest',keyDigest:'browser-digest',label:'Second key'};
+   if(r.action==='session')data={...data,native:monitoringResponse(data.native)};
+   if(r.action==='nativeOverviewStatus')data=monitoringResponse(data);
    return{ok:true,json:async()=>data};
   };
  }});

@@ -11,8 +11,8 @@ function nativeEntries(){const scope=$('scope').value;if(scope.startsWith('owned
 function nativeOperationForSelection(kind,extra={}){const scope=$('scope').value,path=JSON.parse($('path').value);if(!Array.isArray(path)||(!path.length&&kind!=='reveal'))throw Error('Choose an exact non-root JSON path.');if(scope.startsWith('received:')||scope.startsWith('owned:')){const owned=scope.startsWith('owned:'),treeId=scope.slice(owned?6:9),tree=(owned?snapshot.native.ownedTrees:snapshot.native.received).find(t=>t.id===treeId);if(!tree)throw Error('The selected shared tree is unavailable.');if(kind==='reveal')return{kind:'nativeReveal',treeId,path,revision:tree.revision};if(!owned||tree.frozen)throw Error('This is a read-only or frozen received tree.');return{kind:kind==='save'?'nativeSharedSave':kind==='rename'?'nativeSharedRename':'nativeSharedDelete',treeId,path,revision:tree.revision,...extra};}return{kind,...target(kind==='reveal'),...extra};}
 function nativeSelectionChanged(){if($('globalScopeStatus'))$('globalScopeStatus').hidden=$('scope').value!=='global';const scope=$('scope').value,n=snapshot?.native;const readonly=scope.startsWith('received:')||(scope==='global'&&n&&!n.globalWritable)||(scope.startsWith('owned:')&&n?.ownedTrees.find(t=>t.id===scope.slice(6))?.frozen);$('save').disabled=!!readonly;$('delete').disabled=!!readonly||!selected?.path?.length;if(n){$('nativeMachineScope').value=scope;$('nativeMachinePath').value=$('path').value;}}
 function nativeSuggestProvider(){if(!$('nativeProviderURL').value&&!nativeProviderId){const entries=[];for(const scope of ['local','global'])for(const entry of snapshot[scope]||[])entries.push({scope,path:entry.path,type:entry.type});const find=names=>entries.filter(x=>x.type==='string'&&names.includes(String(x.path.at(-1)).replace(/[^a-z]/gi,'').toLowerCase()));const refresh=find(['refreshtoken']),secret=find(['clientsecret']);if(refresh.length===1){$('nativeProviderRefreshScope').value=refresh[0].scope;$('nativeProviderRefreshPath').value=JSON.stringify(refresh[0].path);$('nativeProviderResultScope').value=refresh[0].scope;$('nativeProviderResultPath').value=JSON.stringify(refresh[0].path.slice(0,-1));}if(secret.length===1){$('nativeProviderSecretScope').value=secret[0].scope;$('nativeProviderSecretPath').value=JSON.stringify(secret[0].path);}}}
-let overviewBusy=false,overviewStale=false;
-let meshAttention=0,meshPending=0,meshFallback=0,meshReceivedAt=0,meshSelected=null,meshFocusSelected=false,meshDescriptions=new Map();
+let overviewBusy=false,overviewRefreshFailed=false;
+let meshSelected=null,meshFocusSelected=false,meshDescriptions=new Map();
 function renderMeshDetails(){
  const description=meshDescriptions.get(meshSelected)||'',detail=$('meshCellDetail'),dialog=$('meshDetailsDialog');
  detail.hidden=!description;
@@ -27,7 +27,7 @@ function showMeshDetails(selection){
  if($('meshDetailsText').textContent&&!dialog.open)dialog.showModal();
 }
 $('meshDetailsClose').addEventListener('click',()=>$('meshDetailsDialog').close());
-function renderMeshGraph(nodes,reports,item,fresh,cells,localId){
+function renderMeshGraph(nodes,cells,localId){
  const host=$('meshGraph');host.replaceChildren();const selector=$('meshFocus'),previous=selector.value;selector.replaceChildren();
  for(const [value,label]of [['all','All connections'],...nodes.map(n=>[n.id,n.name])]){const o=document.createElement('option');o.value=value;o.textContent=label;selector.append(o);}selector.value=!meshFocusSelected&&nodes.length>8?localId:[...selector.options].some(o=>o.value===previous)?previous:(nodes.length>8?localId:'all');
  const focus=selector.value,ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');
@@ -54,66 +54,40 @@ function renderMeshGraph(nodes,reports,item,fresh,cells,localId){
    const ax=cx+ux*sign*18,ay=cy+uy*sign*18;g.append(make('path',{d:`M ${ax-ux*sign*6-uy*4} ${ay-uy*sign*6+ux*4} L ${ax} ${ay} L ${ax-ux*sign*6+uy*4} ${ay-uy*sign*6-ux*4}`,fill:'none',stroke:colors[state],'stroke-width':2}));svg.append(g);
   }
  }
- for(const n of nodes){const [x,y]=positions.get(n.id),r=reports.get(n.id),g=make('g',{'class':'meshNode'}),current=fresh(r);const summary=[];
+ for(const n of nodes){const [x,y]=positions.get(n.id),g=make('g',{'class':'meshNode'});
   g.append(make('rect',{x:x-100,y:y-67,width:200,height:134,rx:13,'class':'meshNodeBox',stroke:n.id===localId?'#1d6490':'#a8b4c2','stroke-width':n.id===localId?3:1.5}));
-  const name=n.name.length>26?n.name.slice(0,24)+'…':n.name;g.append(make('text',{x,y:y-43,'text-anchor':'middle','class':'meshNodeName'},name),make('text',{x,y:y-26,'text-anchor':'middle','class':'meshNodeMeta'},current&&r.report.fallback?'Remote fallback active':n.id===localId?'This installation':!n.direct?'Indirect · status unknown':current?'Authenticated peer report':r?'Report stale':'No report yet'));
+  const name=n.name.length>26?n.name.slice(0,24)+'…':n.name;g.append(make('text',{x,y:y-43,'text-anchor':'middle','class':'meshNodeName'},name),make('text',{x,y:y-26,'text-anchor':'middle','class':'meshNodeMeta'},n.subtitle));
   const values=[['Frontend','frontend'],['Backend','backend'],['Vault','vault'],['Source','source'],['Backup','backupService'],['Sync','sync']];
-  const syncState=!current?'unknown':r.report.links.some(l=>l.sync==='mismatch')?'error':r.report.truncated||r.report.links.some(l=>l.sync!=='verified'||l.connection!=='reachable'||!Number.isFinite(l.age)||l.age+r.age+(meshReceivedAt?(Date.now()-meshReceivedAt)/1000:0)>=l.ttl)?'unknown':'ok';
-  values.forEach(([label,key],i)=>{const v=['source','backupService'].includes(key)?r?.report[key]:r?.report.components?.[key],h=key==='sync'?{state:syncState}:item(r,v),cx=x-82+(i%3)*65,cy=y-5+Math.floor(i/3)*24;g.append(make('circle',{cx,cy,r:5,fill:colors[h.state]}),make('text',{x:cx+9,y:cy+4,'class':'meshNodeLabel'},label));summary.push(label+': '+h.state+(key==='source'&&current&&r.report.fallback?' (remote fallback from '+(nodes.find(n=>n.id===r.report.activeSource)?.name||'approved peer')+')':''));});
-  const extra=current?`${r.report.conflicts} conflict(s) · ${r.report.storagePercent===null?'?':r.report.storagePercent}% storage`:'Waiting for a fresh report';g.append(make('text',{x,y:y+49,'text-anchor':'middle','class':'meshNodeMeta'+(current&&(r.report.conflicts>0||r.report.storagePercent>=90)?' meshNodeFault':current&&r.report.storagePercent>=75?' meshNodeWarning':'')},extra));
-  interactive(g,n.name+'. '+summary.join('. ')+'. '+extra+'. '+(r&&Number.isFinite(r.age)?'Report '+Math.floor(r.age+(meshReceivedAt?(Date.now()-meshReceivedAt)/1000:0))+'s old.':'No authenticated report.'),'node|'+n.id);svg.append(g);
+  values.forEach(([label,key],i)=>{const h=n.indicators[key],cx=x-82+(i%3)*65,cy=y-5+Math.floor(i/3)*24;g.append(make('circle',{cx,cy,r:5,fill:colors[h.state]}),make('text',{x:cx+9,y:cy+4,'class':'meshNodeLabel'},label));});
+  g.append(make('text',{x,y:y+49,'text-anchor':'middle','class':'meshNodeMeta'+n.extraClass},n.extra));
+  interactive(g,n.description,'node|'+n.id);svg.append(g);
  }
+
  host.append(svg);
 }
 
 function renderMeshMatrix(){
- const host=$('meshMatrix');if(!host)return;host.replaceChildren();$('meshWarnings').replaceChildren();$('meshWarnings').hidden=true;meshDescriptions=new Map();meshAttention=0;meshPending=0;meshFallback=0;const n=snapshot?.native,m=n?.mesh;
- const info=$('meshMatrixInfo');if(!m){$('meshGraph').replaceChildren();meshSelected=null;renderMeshDetails();meshFocusSelected=false;info.textContent='Mesh reports are not available yet. Update each installation; unknown health is never treated as healthy.';return;}
- const elapsed=meshReceivedAt?Math.max(0,(Date.now()-meshReceivedAt)/1000):0,invalid=overviewStale||!meshReceivedAt||Date.now()<meshReceivedAt;
- const rows=new Map([[m.localId,{id:m.localId,name:'This installation',direct:true}]]),reports=new Map();
- for(const x of m.reports||[]){reports.set(x.report.id,x);rows.set(x.report.id,{id:x.report.id,name:x.report.name,direct:true});}
- for(const p of n.peers||[])if(p.state!=='REVOKED')rows.set(p.id,{id:p.id,name:reports.get(p.id)?.report.name||p.name,direct:true});
- for(const x of m.reports||[])for(const l of x.report.links||[])if(!rows.has(l.id)&&rows.size<64)rows.set(l.id,{id:l.id,name:l.name,direct:false});
- const nodes=[...rows.values()].sort((a,b)=>a.id===m.localId?-1:b.id===m.localId?1:a.name.localeCompare(b.name));
- const fresh=x=>!!x&&!invalid&&Number.isFinite(x.age)&&x.age>=0&&x.age+elapsed<x.report.ttl;
- const age=(x,v)=>x&&Number.isFinite(x.age)&&Number.isFinite(v?.age)?Math.floor(x.age+elapsed+v.age):null;
- const item=(x,v,ttl=x?.report.ttl||900)=>{const a=age(x,v);return {state:!fresh(x)?'unknown':v?.state==='none'?'none':a===null||a>=ttl?'unknown':v?.state||'unknown',age:a};};
+ const host=$('meshMatrix');if(!host)return;host.replaceChildren();$('meshWarnings').replaceChildren();$('meshWarnings').hidden=true;meshDescriptions=new Map();const m=snapshot?.native?.monitoring;
+ const info=$('meshMatrixInfo');if(!m){$('meshGraph').replaceChildren();meshSelected=null;renderMeshDetails();meshFocusSelected=false;info.textContent='Server-evaluated mesh reports are not available yet. Update this installation and refresh.';return;}
+ const nodes=m.nodes,cells=new Map(m.cells.map(c=>[c.key,c]));
  const words={ok:'Healthy',error:'Error',unknown:'Unknown / stale',none:'Not configured'};
  const dot=(state,label,detail='')=>{const span=document.createElement('span');span.className='meshIndicator';span.dataset.state=state;const ball=document.createElement('span');ball.className='meshDot';ball.setAttribute('aria-hidden','true');const text=document.createElement('span');text.textContent=label;span.append(ball,text);span.title=(detail||label+': '+words[state]);span.setAttribute('aria-label',span.title);return span;};
- const checked=(a,ttl)=>a===null?'No current check':a+'s since check'+(ttl?' · age warning after '+Math.round(ttl/60)+' min':'');
- const routeReason=v=>{if(!v?.problem)return v?.state==='error'?' Detailed reason unavailable; update the reporting installation.':'';const labels={dns:'DNS lookup failed',connect:'Connection failed',timeout:'Request timed out',certificate:'HTTPS certificate verification failed',tls:'TLS handshake failed',http:'HTTP request refused', 'response-size':'Response exceeded its size limit','invalid-reply':'Reply could not be authenticated or validated',transport:'HTTPS transport unavailable',unconfirmed:'Delivery unconfirmed'};return ' '+(labels[v.problem]||'Check failed')+(v.httpStatus?' (HTTP '+v.httpStatus+')':'')+(v.certificateReason&&v.certificateReason!=='unknown'?' · '+v.certificateReason:'')+(v.failedChecks?' · '+v.failedChecks+' consecutive failure(s)':'')+'.';};
-
  const table=(caption,heads)=>{const wrap=document.createElement('div');wrap.className='meshScroll';wrap.tabIndex=0;wrap.setAttribute('aria-label',caption+'; scroll horizontally for more nodes');const t=document.createElement('table');t.className='meshTable';const c=document.createElement('caption');c.textContent=caption;t.append(c);const head=document.createElement('thead'),tr=document.createElement('tr');for(const h of heads){const th=document.createElement('th');th.scope='col';th.textContent=h;th.title=h;tr.append(th);}head.append(tr);const body=document.createElement('tbody');t.append(head,body);wrap.append(t);host.append(wrap);return body;};
  const rowName=(tr,node)=>{const th=document.createElement('th');th.scope='row';th.textContent=node.name+(node.id===m.localId?' (here)':'');th.title=node.name+' · '+node.id+(node.direct?'':' · reported node; no direct pairing');tr.append(th);};
- const health=table('Node health',['Installation','Frontend','Backend','Vault','Secret source','Backup service','Conflicts','Storage','Report age']);let problems=0;
- for(const node of nodes){const x=reports.get(node.id),tr=document.createElement('tr');rowName(tr,node);
-  for(const key of ['frontend','backend','vault','source','backupService']){const v=key==='source'?x?.report.source:key==='backupService'?x?.report.backupService:x?.report.components?.[key],h=item(x,v),td=document.createElement('td');if(h.state==='error')problems++;if(h.state==='unknown')meshPending++;const label=key==='source'&&fresh(x)&&x.report.fallback?'Remote fallback':words[h.state];td.append(dot(h.state,label,node.name+' · '+key+': '+label+'. '+checked(h.age,x?.report.ttl)+(node.id!==m.localId?'. Reported by this node.':'')));tr.append(td);}
-  if(fresh(x)&&x.report.fallback)meshFallback++;
-  const current=fresh(x),conflicts=current?x.report.conflicts:null,storage=current?x.report.storagePercent:null;
-  for(const [state,label]of [[conflicts===null?'unknown':conflicts?'error':'ok',conflicts===null?'Unknown':String(conflicts)],[storage===null?'unknown':storage>=90?'error':storage>=75?'unknown':'ok',storage===null?'Unknown':storage+'%']]){const td=document.createElement('td');td.append(dot(state,label));tr.append(td);if(state==='error')problems++;}
-  const last=document.createElement('td');last.textContent=x&&Number.isFinite(x.age)?Math.floor(x.age+elapsed)+'s'+(current?'':' · stale'):'No report';tr.append(last);health.append(tr);
+ const health=table('Node health',['Installation','Frontend','Backend','Vault','Secret source','Backup service','Conflicts','Storage','Report age']);
+ for(const node of nodes){const tr=document.createElement('tr');rowName(tr,node);
+  for(const key of ['frontend','backend','vault','source','backupService','conflicts','storage']){const h=node.indicators[key],td=document.createElement('td');td.append(dot(h.state,h.label,h.description));tr.append(td);}
+  const last=document.createElement('td');last.textContent=node.reportAge;tr.append(last);health.append(tr);
  }
- const cells=new Map();
- const body=table('Connections and emergency read authorizations',['From ↓ / To →',...nodes.map(n=>n.name)]);
- const detail=$('meshCellDetail');
- for(const from of nodes){const tr=document.createElement('tr');rowName(tr,from);const x=reports.get(from.id);
+ const body=table('Connections and emergency read authorizations',['From ↓ / To →',...nodes.map(n=>n.name)]),detail=$('meshCellDetail');
+ for(const from of nodes){const tr=document.createElement('tr');rowName(tr,from);
   for(const to of nodes){const td=document.createElement('td');if(from.id===to.id){td.textContent='—';td.className='meshSelf';tr.append(td);continue;}
-   const y=reports.get(to.id),l=x?.report.links?.find(l=>l.id===to.id),reverse=y?.report.links?.find(l=>l.id===from.id),live=fresh(x),other=fresh(y);
-   const primary=item(x,l?.primary,x?.report.ttl||180),backup=item(x,l?.backup,x?.report.ttl||180);
-   if(live&&!l&&!x.report.truncated){primary.state='none';backup.state='none';}
-   const a=age(x,l);const sync=live&&!l&&!x.report.truncated?'none':!live||!l||a===null||a>=l.ttl?'unknown':l.sync==='mismatch'||l.connection==='unreachable'?'error':l.sync==='verified'&&l.connection==='reachable'?'ok':'unknown';
-   let auth='unknown',authText='Authorization cannot be confirmed from fresh reports.';
-   if(live&&other&&(!x.report.truncated||l)&&(!y.report.truncated||reverse)){const enabled=l?.consumes&&l.clientGrant;const granted=enabled&&reverse?.grants&&reverse.grantIds?.includes(l.clientGrant);auth=enabled&&granted?'ok':enabled?'error':!reverse?.grants?'none':'unknown';authText=auth==='ok'?'Exact emergency read grant approved on both installations.':auth==='none'?'Emergency reads are not configured in this direction.':auth==='error'?'The consuming installation’s exact grant is no longer approved by the provider.':'Only the provider is configured. Accept its offer on the consuming installation.';}
-   const observations=[['P',primary.state,'Primary route: '+words[primary.state]+'. '+checked(primary.age,x?.report.ttl)+routeReason(l?.primary)],['B',backup.state,'Backup route: '+words[backup.state]+'. '+checked(backup.age,x?.report.ttl)+routeReason(l?.backup)],['S',sync,'Global synchronization: '+(live&&l?l.sync:'unknown')+'. '+checked(a,l?.ttl)],['A',auth,authText]];
-   for(const o of observations){if(o[1]==='error'){const li=document.createElement('li');li.textContent=from.name+' → '+to.name+': '+o[2];$('meshWarnings').append(li);$('meshWarnings').hidden=false;}if(o[1]==='error')problems++;if(o[1]==='unknown')meshPending++;}
-   const button=document.createElement('button');button.type='button';button.className='meshCell';const description=from.name+' → '+to.name+'. '+observations.map(o=>o[2]).join(' ')+(from.id!==m.localId?' Observations reported by '+from.name+'.':' Observed on this installation.');cells.set(from.id+'|'+to.id,{key:from.id+'|'+to.id,observations,description,paired:!!l?.paired});button.title=description;button.setAttribute('aria-label',description);
-   for(const [label,state,text]of observations)button.append(dot(state,label,text));meshDescriptions.set('cell|'+from.id+'|'+to.id,description);button.addEventListener('click',()=>{meshSelected='cell|'+from.id+'|'+to.id;detail.hidden=false;detail.textContent=description;});td.append(button);tr.append(td);
+   const cell=cells.get(from.id+'|'+to.id),button=document.createElement('button');button.type='button';button.className='meshCell';button.title=cell.description;button.setAttribute('aria-label',cell.description);
+   for(const [label,state,text]of cell.observations)button.append(dot(state,label,text));meshDescriptions.set('cell|'+cell.key,cell.description);button.addEventListener('click',()=>{meshSelected='cell|'+cell.key;detail.hidden=false;detail.textContent=cell.description;});td.append(button);tr.append(td);
   }body.append(tr);
  }
- renderMeshGraph(nodes,reports,item,fresh,cells,m.localId);
- renderMeshDetails();
- meshAttention=problems;
- info.textContent=(m.unavailable?'Mesh diagnostics are temporarily unavailable. ':'')+(invalid?'Refresh failed or page data is stale. ':'')+nodes.length+' known node(s). '+(problems?problems+' health warning(s). ':'')+'Rows show the observing installation; A means the row may read Global secrets from the column. Reports are authenticated observations, not proof of current availability. '+(nodes.some(n=>!n.direct)?'Indirect nodes remain unknown until directly paired. ':'')+([...reports.values()].some(x=>x.report.truncated)?'Some remote detail is omitted to protect journal capacity; missing details remain unknown. ':'')+(rows.size>=64?'Display limited to 64 known nodes. ':'');
+ for(const warning of m.warnings){const li=document.createElement('li');li.textContent=warning;$('meshWarnings').append(li);}$('meshWarnings').hidden=!m.warnings.length;
+ renderMeshGraph(nodes,cells,m.localId);renderMeshDetails();info.textContent=m.info;
 }
 
 function renderNativeOverview(){
@@ -122,38 +96,19 @@ function renderNativeOverview(){
  renderMeshMatrix();
  const n=snapshot?.native,show=!!n;$('nativeOverview').hidden=!show;$('overviewRefresh').hidden=!show;
  if(!show){$('readiness').classList.remove('success');for(const id of ['globalCount','localCount','overviewConnections','overviewConnectionDetail','overviewMagic','overviewMagicDetail','overviewMagicURL','overviewConflicts','overviewConflictDetail','overviewStorage','overviewStorageDetail','overviewAccess','overviewEffects','overviewChecked'])$(id).textContent='';$('overviewPeerList').replaceChildren();return;}
- const o=n.overview||{},peers=(n.peers||[]).filter(p=>p.state!=='REVOKED'),active=peers.filter(p=>p.active&&p.state==='ACTIVE'),pending=peers.filter(p=>!p.active||p.state!=='ACTIVE');
- const blocked=peers.filter(peerDeliveryBlocked),expired=pending.filter(peerExpired),ready=active.filter(p=>p.health?p.health.synchronization==='verified':peerSharingProgress(p).ready),conflicts=Number(n.globalConflictCount??n.sharedGlobal?.conflicts?.length??0);
- const count=entries=>(entries||[]).filter(e=>!['object','array'].includes(e.type)).length;
- $('globalCount').textContent=o.globalValues??count(snapshot.global);$('localCount').textContent=o.localValues??count(snapshot.local);
- $('overviewConnections').textContent=String(active.length);
- $('overviewConnectionDetail').textContent=peers.length?[ready.length+' synchronized',...(active.length>ready.length?[active.length-ready.length+' awaiting data or delivery']:[]),...(pending.length?[pending.length+' awaiting approval']:[]),...(blocked.length?[blocked.length+' delivery blocked']:[]),...(expired.length?[expired.length+' expired']:[])].join(' · '):'Standalone · no connected platforms.';
- const p=n.backupOrigin,magicActive=p?.status==='active',magicMissing=magicActive&&o.magicCredentials===0,relayProblem=magicActive&&/^https:\/\/[a-z0-9]{32}\.ipmagic\.de$/.test(p.origin)&&n.connectDiscovery&&(n.connectDiscovery.available!==true||n.connectDiscovery.origin!==p.origin),routePending=magicActive&&p.version===2?active.filter(peer=>peer.routeReceipt!==(n.routeRevision||'0')).length:0;
- $('overviewMagic').textContent=relayProblem?(n.connectDiscovery.available?'Address changed':'Connect unavailable'):magicMissing?'No usable passkey':magicActive?p.version===2?'Full access active':'Limited access active':p?.status==='pending'?'Setup incomplete':p?.status==='revoked'?'Removed':'Not configured';
- $('overviewMagicDetail').textContent=relayProblem?'Access is configured, but the local Connect service does not report this address as active. Check Symcon Connect and review the address in Key enrollment.':magicMissing?'Enroll and test an eligible Magic passkey in Key enrollment.':magicActive?(p.version===2?'Same vault and administration functions.':'Approve full Magic access in Key enrollment or the Symcon console.')+(active.length&&p.version===2?' Address delivery: '+(active.length-routePending)+' of '+active.length+' platforms.':''):(p?.status==='pending'?'Finish the numbered setup in Key enrollment.':'Set up a second HTTPS address in Key enrollment.');
- $('overviewMagicURL').textContent=magicActive?new URL(boot.path,p.origin).href:'';
- $('overviewConflicts').textContent=String(conflicts);$('overviewConflictDetail').textContent=conflicts?'Resolve these secrets in Conflicts. Other secrets remain available.':'No unresolved conflicts.';
- const storage=o.storage||n.info,percent=storage.capacityBytes>0?Math.ceil(storage.usedBytes/storage.capacityBytes*100):null;
- $('overviewStorage').textContent=percent===null?'Unavailable':percent+'% used';$('overviewStorageDetail').textContent=percent===null?'Refresh to check storage.':Math.ceil(storage.usedBytes/1024)+' of '+Math.floor(storage.capacityBytes/1024)+' KiB'+(percent>=75?' · Export and verify an encrypted backup, then review storage.':'.');
- $('overviewAccess').textContent=(o.credentials??snapshot.credentials.filter(c=>c.active).length)+' tested passkey(s) · '+(o.hardwareCredentials??snapshot.credentials.filter(c=>c.active&&c.hardware).length)+' hardware · '+(o.machines??n.machines?.filter(m=>m.active).length??0)+' automation grant(s) · '+(o.providers??n.providers?.filter(p=>p.active).length??0)+' OAuth provider(s).';
- $('overviewEffects').textContent=o.providerIssues?o.providerIssues+' OAuth provider(s) need review in OAuth providers.':o.pendingEffects?o.pendingEffects+' OAuth operation(s) in progress.':'';
- const healthProblems=active.filter(p=>p.health&&(p.health.problem||['unreachable','retrying'].includes(p.health.connection)||p.health.synchronization==='mismatch'));
- const issues=[...(meshAttention?[meshAttention+' mesh health issue(s)']:[]),...(meshFallback?[meshFallback+' installation(s) using emergency fallback']:[]),...(healthProblems.length?[healthProblems.length+' platform(s) need synchronization attention — see Connection status below']:[]),...(blocked.length?['delivery blocked']:[]),...(expired.length?['expired connection approval']:[]),...(conflicts?['secret conflicts']:[]),...(relayProblem?['Magic connection unavailable']:[]),...(magicMissing?['Magic passkey unavailable']:[]),...(percent>=75?['storage nearing capacity']:[]),...(n.globalWritable===false?['Global changes paused']:[]),...(o.providerIssues?['OAuth providers need review']:[]),...(active.length&&n.remoteHttpsAvailable===false?['connection transport unavailable']:[])];
- // Setup completion is historical; unknown monitoring observations do not restart setup.
- const setup=n.automaticSetup,setupComplete=!!setup?.completedAt&&!setup.running;
- const waiting=[...(setup?.running?['Mesh setup is running']:setup?.policy&&!setupComplete?['Mesh setup is incomplete — see Mailbox']:[]),...(pending.length?[pending.length+' connection(s) awaiting approval']:[]),...(active.length>ready.length?[active.length-ready.length+' connection(s) awaiting synchronization verification — see Connection status below']:[]),...(p?.status==='pending'?['Magic backup access setup is incomplete']:[]),...(routePending?['Backup address delivery pending on '+routePending+' platform(s)']:[]),...(o.pendingEffects?[o.pendingEffects+' OAuth operation(s) in progress']:[])];
- const monitoring=meshPending?meshPending+' mesh check(s) unknown or stale — select a node or connection in Mesh health for details.':'';
- const current=[...(issues.length?['Needs attention · '+issues.join(' · ')+'.']:[]),...(waiting.length?[waiting.join(' · ')+'.']:[]),...(monitoring?[monitoring]:[])].join(' ')||'Vault ready.';
- $('readiness').textContent=overviewStale?'Status could not be refreshed. These figures may be out of date. Sign in again or select Refresh status.':(setupComplete?'Mesh setup completed. ':'')+current;
- $('readiness').classList.toggle('success',!overviewStale&&!issues.length&&!waiting.length&&!meshPending);
- $('overviewChecked').textContent=(n.serverTime?'Last checked '+new Date(n.serverTime*1000).toLocaleString()+'. ':'')+'Updates every 10 seconds while this tab is open. Background checks continue with this page closed. Remote age-only warnings allow 15–30 minutes for normal latency; failed checks are shown immediately.';
- const list=$('overviewPeerList');list.replaceChildren();if(!peers.length)list.textContent='No connections yet. This vault works independently.';
- for(const peer of peers){const row=document.createElement('div');row.className='overviewPeer';const name=document.createElement('strong');name.textContent=peer.name;const status=document.createElement('p');status.textContent=peerConnectionLabel(peer);if(peer.health){status.className='healthStatus';status.dataset.state=overviewStale?'unknown':peer.health.synchronization;}if(peerDeliveryBlocked(peer)||peerExpired(peer)||healthProblems.includes(peer))status.classList.add('overviewWarning');const last=document.createElement('p');last.className='muted';last.textContent=peer.health?peerHealthDetail(peer):'Last received: '+(peer.lastSync||'not yet');const button=document.createElement('button');button.type='button';button.textContent='Connection status';run(button,()=>{tab('nativePeers');peerWizardResume(peer.id);});row.append(name,status,last,button);list.append(row);}
+ const d=n.overviewDisplay;
+ if(!d){$('readiness').textContent='Server-evaluated status is unavailable. Update this installation and refresh.';$('readiness').classList.remove('success');return;}
+ for(const [id,value]of Object.entries(d.fields))$(id).textContent=String(value);
+ $('readiness').textContent=d.readiness;$('readiness').classList.toggle('success',d.success);
+ $('overviewChecked').textContent=(d.evaluatedAt?'Evaluated by Symcon '+new Date(d.evaluatedAt*1000).toLocaleString()+'. ':'')+'Updates every 10 seconds while this tab is open. Background checks continue with this page closed. Remote age-only warnings allow 15–30 minutes for normal latency; failed checks are shown immediately.';
+ const list=$('overviewPeerList');list.replaceChildren();if(!d.peerIds.length)list.textContent='No connections yet. This vault works independently.';
+ for(const id of d.peerIds){const peer=n.peers.find(p=>p.id===id);if(!peer)continue;const row=document.createElement('div');row.className='overviewPeer';const name=document.createElement('strong');name.textContent=peer.name;const status=document.createElement('p');status.textContent=peerConnectionLabel(peer);if(peer.health){status.className='healthStatus';status.dataset.state=peer.display.state;}if(peer.display.warning)status.classList.add('overviewWarning');const last=document.createElement('p');last.className='muted';last.textContent=peer.health?peerHealthDetail(peer):'Last received: '+(peer.lastSync||'not yet');const button=document.createElement('button');button.type='button';button.textContent='Connection status';run(button,()=>{tab('nativePeers');peerWizardResume(peer.id);});row.append(name,status,last,button);list.append(row);}
+
 }
 async function refreshNativeOverview(ticket=generation){
  if(overviewBusy||mailboxApprovalBusy||automaticSetupBusy||supportBusy||!snapshot?.native||document.hidden||!pageActive||$('review').open||ceremonyActive)return;overviewBusy=true;
- try{const r=await api('nativeOverviewStatus',{},ticket);if(!r.overview||!Array.isArray(r.peers))throw Error('Update this module and refresh.');Object.assign(snapshot.native,r);meshReceivedAt=Date.now();overviewStale=false;renderNativeOverview();if(!$('nativePeers').hidden){renderPeerConnections();renderPeerWizard();}}
- catch(error){if(ticket===generation&&snapshot?.native&&error.name!=='AbortError'){overviewStale=true;renderNativeOverview();$('readiness').textContent+=' '+error.message;if(!$('nativePeers').hidden){renderPeerConnections();$('nativeDeliveryInfo').textContent='Status could not be refreshed. Last shown checks may be out of date. '+error.message;}}}
+ try{const r=await api('nativeOverviewStatus',{},ticket);if(!r.overview||!Array.isArray(r.peers))throw Error('Update this module and refresh.');Object.assign(snapshot.native,r);overviewRefreshFailed=false;$('overviewConnectionNotice').hidden=true;$('overviewConnectionNotice').textContent='';renderNativeOverview();if(!$('nativePeers').hidden){renderPeerConnections();renderPeerWizard();}}
+ catch(error){if(ticket===generation&&snapshot?.native&&error.name!=='AbortError'){overviewRefreshFailed=true;renderNativeOverview();$('overviewConnectionNotice').hidden=false;$('overviewConnectionNotice').textContent='Browser connection: refresh failed. Showing the last Symcon evaluation above; current status has not been retrieved. '+error.message;if(!$('nativePeers').hidden){renderPeerConnections();$('nativeDeliveryInfo').textContent='Status could not be refreshed. Last shown checks may be out of date. '+error.message;}}}
  finally{overviewBusy=false;}
 }
 $('meshFocus').addEventListener('change',()=>{meshFocusSelected=true;renderMeshMatrix();});
@@ -191,7 +146,7 @@ function renderEmergencyAccess(){
  const clients=$('nativeEmergencyClients');clients.replaceChildren();for(const c of e.clients||[])nativeRow(clients,c.name,'Approved Global read source.',[['Remove source',()=>review({kind:'nativeEmergencyRemove',peerId:c.peerId},'Stop using this vault for emergency reads.')]]);if(!clients.children.length)clients.textContent='No emergency sources configured.';
  const grants=$('nativeEmergencyGrants');grants.replaceChildren();for(const g of e.grants||[])nativeRow(grants,g.name+(g.active?' · enabled':' · revoked'),'Read-only Global access from this vault.',g.active?[['Revoke emergency access',()=>review({kind:'nativeEmergencyRevoke',id:g.id},'Revoke this exact emergency credential immediately on this vault.')]]:[]);if(!grants.children.length)grants.textContent='No emergency access granted.';
 }
-function renderNative(){meshReceivedAt=Date.now();overviewStale=false;renderNativeOverview();scheduleGlobalRefresh();const n=snapshot?.native;for(const id of ['nativeMailboxNav','nativePeersNav','nativeRecoveryNav','nativeMachinesNav','nativeKeysNav','nativeProvidersNav'])$(id).hidden=!n;if(!n)return;renderEmergencyAccess();
+function renderNative(){overviewRefreshFailed=false;$('overviewConnectionNotice').hidden=true;$('overviewConnectionNotice').textContent='';renderNativeOverview();scheduleGlobalRefresh();const n=snapshot?.native;for(const id of ['nativeMailboxNav','nativePeersNav','nativeRecoveryNav','nativeMachinesNav','nativeKeysNav','nativeProvidersNav'])$(id).hidden=!n;if(!n)return;renderEmergencyAccess();
  renderConnect();renderLegacyImports();
  $('nativePeerURL').value=n.peerEndpoint;$('nativeStorageInfo').textContent='Vault '+n.info.vaultId+' · '+Math.ceil(n.info.usedBytes/1024)+' / '+Math.floor(n.info.capacityBytes/1024)+' KiB · '+(n.info.directorySync?'file and directory synchronization':'file synchronization; platform qualification required')+' · standalone full-state rollback detection unavailable.'+(n.storage?' Vault folder: '+n.storage.vaultDirectory+'. Key folder: '+n.storage.keyDirectory+'.':'');
  const scopes=[['global','Global'],['local','Local']];nativeSelect('scope',scopes);nativeSelect('nativeMachineScope',scopes);nativeSelectionChanged();renderTree();renderGlobalConflicts();
@@ -345,7 +300,6 @@ function renderGlobalConflicts(){
 
 let globalRefreshTimer=null;
 function scheduleGlobalRefresh(){clearTimeout(globalRefreshTimer);if(!snapshot?.native||!pageActive||!window.document)return;globalRefreshTimer=setTimeout(async()=>{
- renderMeshMatrix();
  try{if(!document.hidden&&(!$('overview').hidden||!$('nativePeers').hidden||!$('nativeMailbox').hidden)){await refreshNativeOverview(generation);return;}if(document.hidden||!fullAdministration()||($('secrets').hidden&&$('conflicts').hidden)||$('review').open||!$('browserForm').hidden||!$('revealed').hidden||$('nativeSensitiveDialog').open)return;
  const ticket=generation,r=await api('nativeGlobalStatus',{},ticket);if(r.revision===snapshot.revision)return;
  snapshot.revision=r.revision;revision=r.revision;snapshot.global=r.global;snapshot.local=r.local;snapshot.native.sharedGlobal=r.sharedGlobal;clearSecrets();renderTree();renderGlobalConflicts();
@@ -372,7 +326,7 @@ function renderMailbox(){
  $('nativeMailboxNav').textContent='Mailbox'+(localActions?' · '+localActions+' to approve':'')+(pending?' · '+pending+' waiting':'');
  const selected=$('mailboxServer').value;nativeSelect('mailboxServer',[['all','All servers'],['local','This server'],...nodes.filter(n=>!n.local).map(n=>[n.id,n.name])]);if(selected==='local')$('mailboxServer').value='local';
  $('mailboxSummary').textContent=localActions+' approval(s) need your action on this server · '+pending+' waiting for delivery, another server or confirmation.';
- $('mailboxCoverage').textContent=(!m?'Update this backend to load the Mailbox. ':overviewStale?'Refresh failed. Last shown states are unconfirmed. ':'')+'Remote summaries arrive with existing background checks. Unavailable, stale or older servers remain unknown. Request times are shown only when recorded; existing workflows may have no saved timestamp. Completed entries are retained while their workflow records exist.';
+ $('mailboxCoverage').textContent=(!m?'Update this backend to load the Mailbox. ':overviewRefreshFailed?'Refresh failed. Last shown states are unconfirmed. ':'')+'Remote summaries arrive with existing background checks. Unavailable, stale or older servers remain unknown. Request times are shown only when recorded; existing workflows may have no saved timestamp. Completed entries are retained while their workflow records exist.';
  const list=$('mailboxRows');list.replaceChildren();let count=0;
  for(const node of nodes){if($('mailboxServer').value==='local'&&!node.local||!['all','local'].includes($('mailboxServer').value)&&$('mailboxServer').value!==node.id)continue;
   const heading=document.createElement('h3');heading.textContent=node.name+(node.local?' · this server':'');list.append(heading);
@@ -381,9 +335,9 @@ function renderMailbox(){
   for(const row of node.rows||[]){if($('mailboxState').value==='outstanding'&&['COMPLETED','REVOKED','EXPIRED'].includes(row.state))continue;count++;
    const peer=nodes.find(n=>n.id===row.peerId),peerName=peer?.name||row.peerId||'';
    const title=row.type==='emergency'?((row.direction==='provider'?peerName:node.name)+' may read Global from '+(row.direction==='provider'?node.name:peerName)):({'pairing':'Connect platforms','ownership':'Transfer ownership','backup-access':'Magic backup access','provider-operation':'OAuth operation'}[row.type]||row.type)+(peerName?' · '+peerName:'');
-   let state=overviewStale?'UNKNOWN':row.state;const status=row.type==='backup-access'&&state==='CONFIRMATION_PENDING'?'Waiting for a tested backup passkey':state==='APPROVAL_REQUIRED'&&!node.local?'Approval required on '+node.name:mailboxLabels[state]||'Status unknown';
+   let state=row.state;const status=row.type==='backup-access'&&state==='CONFIRMATION_PENDING'?'Waiting for a tested backup passkey':state==='APPROVAL_REQUIRED'&&!node.local?'Approval required on '+node.name:mailboxLabels[state]||'Status unknown';
    const managed=row.type==='emergency'&&snapshot?.native?.automaticSetup?.authorized&&(snapshot.native.automaticSetup.policy?.members||[]).some(m=>m.descriptor.vaultId===row.peerId);
-   const approvals=node.local&&!overviewStale&&!managed?(m.approvals?.[row.id]||[]):[];
+   const approvals=node.local&&!overviewRefreshFailed&&!managed?(m.approvals?.[row.id]||[]):[];
    const actions=approvals.map(a=>[a.label||'Approve with passkey',()=>approveMailboxEntry(a)]);
    if(node.local&&!actions.length&&!managed)actions.push([row.type==='backup-access'&&row.state==='CONFIRMATION_PENDING'?'Continue backup setup':row.state==='APPROVAL_REQUIRED'?'Refresh approval details':'Open workflow',()=>row.state==='APPROVAL_REQUIRED'?refreshNativeOverview(generation):tab(row.action)]);
    nativeRow(list,title,status+(row.lastKnownState?' · last known: '+(mailboxLabels[row.lastKnownState]||row.lastKnownState):''),actions);
@@ -448,15 +402,14 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden&&supportJo
 let automaticSetupBusy=false,automaticSetupPreview=null,automaticSetupNotice="",automaticSetupTimer=null;
 function renderAutomaticSetup(){
  if(automaticSetupBusy)return;
- const a=snapshot?.native?.automaticSetup||{},members=a.members||[],ready=members.filter(m=>m.ready&&(m.local||m.fresh)).length,completed=!!a.completedAt&&!a.running;
+ const a=snapshot?.native?.automaticSetup||{},members=a.members||[];
  $('setupFinish').disabled=!fullAdministration();$('setupStop').hidden=!a.policy;
  $('setupFinish').textContent='Finish setup on all servers';
- $('setupProgress').textContent=automaticSetupNotice||(members.length&&ready===members.length&&!a.running?'OK — all '+members.length+' servers completed mesh setup. Primary and backup routes, synchronization and emergency access were verified.':a.running?'Setup is running in the background. '+ready+' of '+members.length+' servers ready. Slow servers are retried automatically.':a.completedAt?'Mesh setup completed. Current health is shown in Overview; expired setup confirmations do not require another setup run.':a.policy||a.report?.state==='incomplete'?'Setup is incomplete. See the connection details and error report below. Select Finish setup to resume.':'Click once to configure the mesh across your existing trusted Global connections.');
+ $('setupProgress').textContent=automaticSetupNotice||a.display||'Setup status has not been supplied by Symcon. Refresh status.';
  const holder=$('setupMembers');holder.replaceChildren();
  for(const m of members){
   const details=m.details||{};
-  const description=completed?'Included in the completed mesh setup. '+(m.local?'Current local checks are shown below.':'See Overview for current authenticated health reports.') :m.ready&&(m.local||m.fresh)?'Mesh setup verified.':m.enrollment?'Delivering automatic authorization. Attempts: '+m.enrollment.attempts+'.':m.deliveryPending?'Waiting for this server’s reply.':m.authorized===false?'Automatic authorization has not been accepted. Check delivery errors and the installed module version.':!m.fresh&&!m.local?'Waiting for a fresh authenticated reply.':'Completing connections and verification.';
-  nativeRow(holder,m.name+(m.local?' · this server':''),description,[]);
+  nativeRow(holder,m.name+(m.local?' · this server':''),m.display||'Status not supplied by Symcon.',[]);
   if(details.backupRouteProblem)nativeRow(holder,m.name+' · Magic route',details.backupRouteProblem,[]);
   for(const l of details.links||[])nativeRow(holder,m.name+' → '+l.server,'Connection: '+(l.connected?'active':'pending')+' · Primary: '+l.primary?.state+' · Backup: '+l.backup?.state+' · Synchronization: '+l.synchronization+' · Emergency receive/send: '+(l.emergencyReceive?'OK':'pending')+'/'+(l.emergencySend===true?'OK':l.emergencySend===false?'not approved':'not currently confirmed')+' · Route acknowledgement: '+(l.routesAcknowledged?'OK':'pending'),[]);
   if(details.queuedMessages||details.conflicts)nativeRow(holder,m.name+' · outstanding','Queued messages: '+details.queuedMessages+' · Conflicts: '+details.conflicts,[]);
@@ -479,7 +432,7 @@ $('setupReport').addEventListener('click',async()=>{
  if(!r.automaticSetup)throw new Error('The server returned no mesh setup status.');
  Object.assign(snapshot.native,r);renderAutomaticSetup();
  const a=r.automaticSetup;
- const blob=new Blob([JSON.stringify({generatedAt:new Date().toISOString(),setup:a},null,2)],{type:'application/json'});
+ const blob=new Blob([JSON.stringify({generatedAt:new Date(r.serverTime*1000).toISOString(),setup:a},null,2)],{type:'application/json'});
  const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download='mesh-setup-report.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
  }catch(e){message('Could not refresh the setup report: '+e.message,true);}
  finally{button.disabled=false;}

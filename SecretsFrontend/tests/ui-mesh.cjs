@@ -24,7 +24,7 @@ const {fixture,tick}=require('./ui-native.cjs');
  n.automaticSetup.running=false;n.automaticSetup.completedAt=null;n.automaticSetup.report.state='incomplete';await update();
  assert.match($('readiness').textContent,/Mesh setup is incomplete/);
  n.automaticSetup.completedAt=1794013666;n.automaticSetup.report.state='complete';await update();
- // Remote component age must include latency without reapplying a 90-second
+ // Symcon includes remote component age and its cached report age without reapplying a 90-second
  // local watchdog to a healthy cached report. Actual source faults stay visible.
  const oldReports=n.mesh.reports;
  n.mesh.reports=ids.map((_,i)=>{const r=report(i);r.ttl=900;for(const l of r.links){l.ttl=900;l.age=395;l.primary.age=395;l.backup.age=395;}for(const h of Object.values(r.components))h.age=20;return {report:r,age:395,direct:true};});await update();
@@ -66,9 +66,20 @@ const {fixture,tick}=require('./ui-native.cjs');
  n.mesh.reports[1].report.links.find(l=>l.id===ids[0]).grantIds=['different-grant'];await update();assert.equal($('meshMatrix').querySelector('.meshCell').lastElementChild.dataset.state,'error','A different active grant incorrectly approved this consumer.');
  $('meshFocus').value=ids[0];$('meshFocus').dispatchEvent(new f.dom.window.Event('change'));assert.equal($('meshGraph').querySelectorAll('.meshEdge').length,8);
  n.mesh.reports[0].report.links[1].backup={state:'none',age:null};await update();assert.equal([...$('meshMatrix').querySelectorAll('.meshCell')].find(b=>b.getAttribute('aria-label').startsWith('Production 121 → Test Hermitage.')).children[1].dataset.state,'none','Unconfigured backup was confused with failed or stale health.');
- // Every cached green ages out, including an open details panel.
+ // Symcon expires old reports, including details; the browser cannot expire them.
  for(const r of n.mesh.reports)r.age=181;await update();assert.equal($('meshMatrix').querySelectorAll('[data-state="ok"]').length,0);assert.match($('meshCellDetail').textContent,/Unknown/);
- for(const r of n.mesh.reports)r.age=0;f.failOverview(true);await update();assert.equal($('meshMatrix').querySelectorAll('[data-state="ok"]').length,0);assert.match($('meshMatrixInfo').textContent,/stale/);f.failOverview(false);
+ for(const r of n.mesh.reports)r.age=0;await update();
+ const lastMatrix=$('meshMatrix').textContent,lastInfo=$('meshMatrixInfo').textContent,lastReady=$('readiness').textContent,lastDots=[...$('meshMatrix').querySelectorAll('[data-state]')].map(e=>e.dataset.state);
+ const originalNow=f.dom.window.Date.now;
+ for(const skew of [86400000,-86400000]){f.dom.window.Date.now=()=>originalNow()+skew;$('meshFocus').dispatchEvent(new f.dom.window.Event('change'));assert.equal($('meshMatrix').textContent,lastMatrix);assert.deepEqual([...$('meshMatrix').querySelectorAll('[data-state]')].map(e=>e.dataset.state),lastDots,'Browser clock altered server-evaluated health.');}
+ f.dom.window.Date.now=originalNow;f.failOverview(true);await update();assert.deepEqual([...$('meshMatrix').querySelectorAll('[data-state]')].map(e=>e.dataset.state),lastDots);assert.equal($('readiness').textContent,lastReady);assert.equal($('meshMatrixInfo').textContent,lastInfo);assert.match($('overviewConnectionNotice').textContent,/Browser connection: refresh failed/);f.failOverview(false);await update();assert.equal($('overviewConnectionNotice').hidden,true);
+ // Hold an already evaluated server response while the browser clock advances.
+ const fetchNow=f.dom.window.fetch;let releaseResponse,prepared=false;
+ f.dom.window.fetch=async(...args)=>{const response=await fetchNow(...args);if(JSON.parse(args[1].body).action!=='nativeOverviewStatus')return response;const evaluated=await response.json();prepared=true;return {ok:true,json:()=>new Promise(resolve=>{releaseResponse=()=>resolve(evaluated);})};};
+ $('overviewRefresh').click();await tick();await tick();assert(prepared);
+ const beforeDelay=$('meshMatrix').textContent;f.dom.window.Date.now=()=>originalNow()+3600000;
+ releaseResponse();await tick();await tick();assert.equal($('meshMatrix').textContent,beforeDelay,'Response transit time changed the server verdict.');
+ f.dom.window.Date.now=originalNow;f.dom.window.fetch=fetchNow;
  // Partial reports do not claim an absent edge or authorization is unconfigured.
  n.mesh.reports[0].report.truncated=true;n.mesh.reports[0].report.links=[];await update();assert.equal($('meshMatrix').querySelector('.meshCell').firstElementChild.dataset.state,'unknown');assert.match($('meshMatrixInfo').textContent,/omitted/);
  n.mesh.reports[1].report.name='<img src=x onerror=alert(1)>';await update();assert.equal($('meshGraph').querySelector('img'),null);assert.equal($('meshMatrix').querySelector('img'),null);
@@ -88,5 +99,5 @@ const {fixture,tick}=require('./ui-native.cjs');
  // Larger meshes automatically focus one installation instead of drawing every edge.
  for(let i=5;i<9;i++){ids.push('node-'+i);names.push('Installation '+i);}
  const large=await fixture();large.state.native.mesh={localId:ids[0],reports:ids.map((_,i)=>({report:report(i),age:0,direct:true}))};large.$('overviewRefresh').click();await tick();await tick();assert.equal(large.$('meshFocus').value,ids[0]);assert.equal(large.$('meshGraph').querySelectorAll('.meshNode').length,9);assert.equal(large.$('meshGraph').querySelectorAll('.meshEdge').length,16);assert.equal(large.errors.length,0);large.dom.window.close();
- console.log('PASS graphical mesh: five nodes, primary/backup separation, exact directional grants, focus, live detail, stale failure, partial reports, safe labels and standalone');
+ console.log('PASS graphical mesh: five nodes, primary/backup separation, exact directional grants, focus, live detail, server expiry, browser clock/delay isolation, partial reports, safe labels and standalone');
 })().catch(e=>{process.stderr.write(e.stack+'\n');process.exitCode=1;});

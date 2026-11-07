@@ -1,5 +1,6 @@
 'use strict';
 const assert=require('node:assert/strict');
+const monitoringResponse=require('./monitoring-response.cjs');
 const {webcrypto}=require('node:crypto');
 const {TextEncoder,TextDecoder}=require('node:util');
 const {JSDOM,VirtualConsole}=require('jsdom');
@@ -26,6 +27,8 @@ async function fixture(first,config={}){const calls=[],errors=[],timers=[],clipb
    if(['nativePairingStatus','nativeRetryPeerDelivery'].includes(r.action)){if(r.action==='nativeRetryPeerDelivery'&&config.onRetry)await config.onRetry(r);if(failStatus)return {ok:false,json:async()=>({error:'Request refused.'})};if(deferred){const wait=deferred;deferred=null;result=await wait;}else result={deliveryAttempted:r.action==='nativeRetryPeerDelivery',serverTime:n.serverTime,peers:n.peers,pairingReceived:n.pairingReceived,pairingSent:n.pairingSent,outbox:n.outbox,globalWritable:n.globalWritable,globalRevision:n.globalRevision,globalTreeId:n.globalTreeId};}
    if(r.action==='prepare')result={challengeId:'challenge',operationId:'operation',options:{challenge:'AQ',allowCredentials:[]},requiresHardware:false,reviewSummary:{kind:r.data.operation.kind,peerURL:descriptor(!first).endpoint,peerVault:descriptor(!first).vaultId,comparison:code,...config.tlsSummary}};
    if(r.action==='approve')result=typeof next==='function'?next():next;
+   if(r.action==='session')result={...result,native:monitoringResponse(result.native)};
+   if(['nativePairingStatus','nativeRetryPeerDelivery'].includes(r.action))result=monitoringResponse(result);
    return {ok:true,json:async()=>clone(result)};
   };if(config.beforeParse)config.beforeParse(w);
  }});await tick();await tick();const $=id=>dom.window.document.getElementById(id);
