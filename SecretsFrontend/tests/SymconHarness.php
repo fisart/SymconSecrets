@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /** Small Symcon lifecycle simulator; no production instance is contacted. */
-$GLOBALS['instances'] = []; $GLOBALS['changed'] = []; $GLOBALS['locks'] = [];
+$GLOBALS['instances'] = []; $GLOBALS['changed'] = []; $GLOBALS['locks'] = []; $GLOBALS['moduleIDs'] = [];
 class IPSModule
 {
     public int $InstanceID;

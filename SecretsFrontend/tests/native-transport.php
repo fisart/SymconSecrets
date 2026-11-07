@@ -25,11 +25,23 @@ if(PHP_OS_FAMILY==='Linux'){
     $sockets=[];
     try{
         $listener=stream_socket_server('tcp://127.0.0.1:0',$errno,$error);if($listener===false)throw new RuntimeException('Loopback listener unavailable.');$sockets[]=$listener;
-        $address=stream_socket_get_name($listener,false);$client=stream_socket_client('tcp://'.$address,$errno,$error,2);$sockets[]=$client;$accepted=stream_socket_accept($listener,2);$sockets[]=$accepted;
+        $address=stream_socket_get_name($listener,false);$clientContext=stream_context_create(['socket'=>['bindto'=>'127.0.0.2:0']]);$client=stream_socket_client('tcp://'.$address,$errno,$error,2,STREAM_CLIENT_CONNECT,$clientContext);$sockets[]=$client;$accepted=stream_socket_accept($listener,2);$sockets[]=$accepted;
         $peer=stream_socket_get_name($accepted,true);$remotePort=(int)substr($peer,strrpos($peer,':')+1);$localPort=(int)substr($address,strrpos($address,':')+1);
         $core->properties['Port']=$localPort;$core->properties['Server']='127.0.0.1';
-        $s=['REQUEST_METHOD'=>'POST','REQUEST_URI'=>'/hook/secrets_frontend_50365','REMOTE_ADDR'=>'127.0.0.1','REMOTE_PORT'=>$remotePort,'HTTP_HOST'=>'heartbeat.ap-fischer.de:46901','HTTP_ORIGIN'=>'https://heartbeat.ap-fischer.de:46901','CONTENT_TYPE'=>'application/json'];
+        $s=['REQUEST_METHOD'=>'POST','REQUEST_URI'=>'/hook/secrets_frontend_50365','REMOTE_ADDR'=>'127.0.0.2','REMOTE_PORT'=>$remotePort,'HTTP_HOST'=>'heartbeat.ap-fischer.de:46901','HTTP_ORIGIN'=>'https://heartbeat.ap-fischer.de:46901','CONTENT_TYPE'=>'application/json'];
         $GLOBALS['_IPS']=['SENDER'=>'WebHook','INSTANCE'=>0];$ok(SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$s),'Actual kernel connection did not match the configured SSL listener.');
+        $noSource=$s;unset($noSource['REMOTE_PORT']);$ok(SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$noSource),'Missing source port rejected an unambiguously SSL-only peer.');
+        $destination=$s;$destination['REMOTE_PORT']=$localPort;$ok(SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$destination),'Symcon destination-port metadata was treated as an unavailable client source port.');
+        $internalHTTP=$noSource;$internalHTTP['HTTPS']='off';$internalHTTP['REQUEST_SCHEME']='http';$ok(SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$internalHTTP),'Generic PHP flags overrode the kernel-bound SSL listener.');
+        // A concurrent plaintext request from the same client must never borrow TLS proof.
+        $plainListener=stream_socket_server('tcp://127.0.0.1:0',$errno,$error);$sockets[]=$plainListener;
+        $plainAddress=stream_socket_get_name($plainListener,false);$plainClient=stream_socket_client('tcp://'.$plainAddress,$errno,$error,2,STREAM_CLIENT_CONNECT,$clientContext);$sockets[]=$plainClient;$plainAccepted=stream_socket_accept($plainListener,2);$sockets[]=$plainAccepted;
+        $ok(!SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$noSource),'A concurrent plain socket borrowed another connection’s TLS proof.');
+        $ok(SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$s),'An exact SSL tuple was blocked by an unrelated plain connection.');
+        stream_socket_shutdown($plainClient,STREAM_SHUT_WR);
+        for($i=0;$i<10&&!feof($plainAccepted);$i++)fread($plainAccepted,1);
+        $ok(!SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$noSource),'Half-closed plaintext request disappeared from the candidate set.');
+        fclose($plainAccepted);fclose($plainClient);fclose($plainListener);
         $settings=array_replace(SecretsFrontendConfiguration::DEFAULTS,['Enabled'=>true,'AdminOrigin'=>'https://heartbeat.ap-fischer.de:46901']);$calls=0;
         $gateway=static function($request)use(&$calls){$calls++;return ['status'=>401,'data'=>['error'=>'Administrator session required.']];};
         $r=SecretsFrontendHttp::response($settings,50365,$s,$s['REQUEST_URI'],'','','{"action":"session","data":{}}',$gateway);
