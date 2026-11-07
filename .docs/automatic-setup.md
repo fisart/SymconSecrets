@@ -73,3 +73,7 @@ Incoming receiver diagnostics retain bounded timings without envelopes, values, 
 A newly accepted run clears that server's prior-run error history and includes the run identifier. This prevents an old 60-minute deadline from appearing to describe a newly restarted run. Existing credentials and links remain intact. Configuration backup format is unchanged; timing buffers and transient run reports are not configuration.
 
 The workload reduction is verified locally. Whether it resolves a particular deployment's timeouts requires a new live run; local tests are not a substitute for that result.
+
+## Overview after setup completion (2026-11-07)
+
+The overview keeps the completed setup result separate from ongoing monitoring. Previously any unknown mesh observation triggered the generic ‘Setup or synchronization in progress’ banner, even after `SETUP_COMPLETE`. It now identifies unknown/stale mesh checks and points to their node/connection details. Actual setup runs, incomplete setup, pending approvals, synchronization verification, backup address delivery and OAuth work have separate descriptions. Existing faults still require attention, and unknown checks prevent a green ready indication. Expired setup-contact records do not erase the recorded completion milestone. This is a presentation change; it does not refresh expired evidence or change authorization, verification windows or configuration formats.
