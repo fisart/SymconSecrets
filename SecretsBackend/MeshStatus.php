@@ -95,11 +95,15 @@ final class SecretsBackendMeshStatus
         }
         $r=['format'=>self::FORMAT,'id'=>$s['native']['vaultId'],'name'=>substr(SecretsBackendPeerName::address($this->store->identity()['binding']['origin']),0,160),'components'=>$components,'backupService'=>$runtime['backupService']??$unknown,'source'=>$runtime['source']??$unknown,'fallback'=>$runtime['fallback']??false,'activeSource'=>$runtime['activeSource']??null,'conflicts'=>isset($s['native']['sharedGlobal'])?SecretsBackendNativeHealth::stamp($s)['conflicts']:0,'storagePercent'=>($storage=$this->store->metadata())['capacityBytes']>0?min(100,(int)ceil(100*$storage['usedBytes']/$storage['capacityBytes'])):null,'links'=>$links,'ttl'=>self::interval($s)*3,'truncated'=>false];self::validate($r,$r['id']);return $r;
     }
+    /** Cached authenticated observation for this exact active pairing; never authority. */
+    public function peerReport(array $p):?array {
+        if(!self::eligible($p))return null;$r=$this->record($p,'report');
+        if(!isset($r['report'])||!in_array($r['endpoint'],$p['routes']['endpoints']??[$p['descriptor']['endpoint']],true))return null;
+        return ['report'=>$r['report'],'age'=>self::age($this->now(),$r['at']),'direct'=>true];
+    }
     public function view(array $s):array {
-        $reports=[['report'=>$this->peer->meshReport($s),'age'=>0,'direct'=>true]];$now=$this->now();
-        foreach($s['pairing']['peers']as$p){if(!self::eligible($p))continue;$r=$this->record($p,'report');
-            if(isset($r['report'])&&in_array($r['endpoint'],$p['routes']['endpoints']??[$p['descriptor']['endpoint']],true))$reports[]=['report'=>$r['report'],'age'=>self::age($now,$r['at']),'direct'=>true];
-        }
-        return ['localId'=>$s['native']['vaultId'],'reports'=>$reports,'observedAt'=>$now];
+        $reports=[['report'=>$this->peer->meshReport($s),'age'=>0,'direct'=>true]];
+        foreach($s['pairing']['peers']as$p)if(($r=$this->peerReport($p))!==null)$reports[]=$r;
+        return ['localId'=>$s['native']['vaultId'],'reports'=>$reports,'observedAt'=>$this->now()];
     }
 }

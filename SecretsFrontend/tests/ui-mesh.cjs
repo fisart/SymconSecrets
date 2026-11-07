@@ -14,6 +14,7 @@ const {fixture,tick}=require('./ui-native.cjs');
  for(const peer of n.peers)peer.health={connection:'reachable',synchronization:'verified',pendingMessages:0,problem:null,intervalSeconds:60};
  n.automaticSetup={policy:{id:'completed-plan'},running:false,completedAt:1794013666,report:{state:'complete'},members:[{ready:false,fresh:false,authorized:null}]};await update();
  assert.equal($('readiness').textContent,'Mesh setup completed. Vault ready.');
+ n.automaticSetup.report={state:'idle',steps:[],errors:[]};await update();assert.equal($('readiness').textContent,'Mesh setup completed. Vault ready.');
  n.mesh.reports[1].age=181;await update();
  assert.match($('readiness').textContent,/^Mesh setup completed\. .*mesh check\(s\) unknown or stale/);
  assert.doesNotMatch($('readiness').textContent,/setup is running|synchronization in progress|setup is incomplete/i);

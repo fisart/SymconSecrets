@@ -17,7 +17,13 @@ const {fixture,tick}=require('./ui-native.cjs');
  assert.match($('setupProgress').textContent,/running.*0 of 4/);assert.doesNotMatch($('setupMembers').textContent,/Authorize on this server|device step/);
  n.automaticSetup=status(true);f.dom.window.document.querySelector('[data-tab=nativeMailbox]').click();await tick();await tick();
  assert.match($('setupProgress').textContent,/OK.*all 4 servers/,'Browser backup keys blocked mesh completion');
- n.automaticSetup.members[2].fresh=false;f.dom.window.document.querySelector('[data-tab=nativeMailbox]').click();await tick();await tick();assert.doesNotMatch($('setupProgress').textContent,/^OK/,'Stale peer result displayed OK');assert.match($('setupProgress').textContent,/setup completed.*checks need refreshing/,'A completed run was mislabeled as unfinished setup');
+ n.automaticSetup.members[2].fresh=false;f.dom.window.document.querySelector('[data-tab=nativeMailbox]').click();await tick();await tick();assert.doesNotMatch($('setupProgress').textContent,/^OK/,'Stale peer result displayed OK');assert.match($('setupProgress').textContent,/setup completed.*expired setup confirmations/,'A completed run was mislabeled as unfinished setup');
+ n.automaticSetup.report={state:'idle',steps:[],errors:[]};for(const m of n.automaticSetup.members){m.ready=false;m.fresh=m.local;m.authorized=m.local?true:null;}
+ n.automaticSetup.members[0].details.links=[{server:'server-1.example',connected:true,primary:{state:'ok'},backup:{state:'ok'},synchronization:'verified',emergencyReceive:true,emergencySend:null,routesAcknowledged:true}];
+ f.dom.window.document.querySelector('[data-tab=nativeMailbox]').click();await tick();await tick();
+ assert.match($('setupProgress').textContent,/Mesh setup completed/);assert.doesNotMatch($('setupProgress').textContent,/incomplete|resume/);
+ assert.match($('setupMembers').textContent,/Included in the completed mesh setup/);assert.doesNotMatch($('setupMembers').textContent,/Completing connections|Waiting for a fresh/);
+ assert.match($('setupMembers').textContent,/Emergency receive\/send: OK\/not currently confirmed/);
  n.automaticSetup.report={errors:[{server:'server-2.example',direction:'node-0 → node-2',step:'SETUP_ADVANCE',code:'timeout',attempts:[{route:'https://server-2.example/hook/secrets_peer_102',elapsedMs:45000,httpStatus:0}]}]};
  f.dom.window.document.querySelector('[data-tab=nativeMailbox]').click();await tick();await tick();assert.match($('setupMembers').textContent,/SETUP_ADVANCE/);assert.match($('setupMembers').textContent,/45000/);assert.ok($('setupReport'));
  // Download must read the latest backend state, not relabel the cached UI with a new time.
