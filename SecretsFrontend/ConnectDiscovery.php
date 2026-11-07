@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/Configuration.php';
+require_once __DIR__ . '/Transport.php';
 
 /** Read-only suggestion; this never approves an origin or changes vault policy. */
 final class SecretsFrontendConnectDiscovery
@@ -29,7 +30,7 @@ final class SecretsFrontendConnectDiscovery
      */
     public static function secureRoute(array $server,string $origin,array $trusted,array $connect): bool
     {
-        return in_array($server['HTTPS']??'', ['on','1'],true)||(in_array($server['REMOTE_ADDR']??'',$trusted,true)&&($server['HTTP_X_FORWARDED_PROTO']??'')==='https')||self::loopbackRelay($server,$origin,$connect);
+        return in_array($server['HTTPS']??'', ['on','1'],true)||(in_array($server['REMOTE_ADDR']??'',$trusted,true)&&($server['HTTP_X_FORWARDED_PROTO']??'')==='https')||self::loopbackRelay($server,$origin,$connect)||SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS']??[],$server);
     }
     public static function loopbackRelay(array $server,string $approvedOrigin,array $connect): bool
     {
