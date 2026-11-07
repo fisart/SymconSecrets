@@ -23,7 +23,7 @@ trait SecretsBackendNativeRuntime
                 }
                 if($this->peerWork===null&&$requestWork===null){$setup=str_starts_with((string)(json_decode($bytes,true,16)['kind']??''),'SETUP_');if($setup&&function_exists('set_time_limit'))@set_time_limit(100);$max=$setup?SecretsBackendPeerWork::SETUP_BUDGET:SecretsBackendPeerWork::BUDGET;$requestWork=new SecretsBackendPeerWork(null,SecretsBackendPeerWork::phpBudget((int)ini_get('max_execution_time'),microtime(true)-($this->peerRequestStarted>0?$this->peerRequestStarted:$created),$max),$max);}
                 return $this->timedPeerHTTPS($target,$bytes,$policy,$requestWork);
-            },true,fn(array $state)=>$this->meshRuntimeStatus($state));
+            },true,fn(array $state)=>$this->meshRuntimeStatus($state),null,fn():array=>$this->incomingPeerDiagnostics());
     }
     private function meshRuntimeStatus(array $state):array
     {
@@ -57,15 +57,30 @@ trait SecretsBackendNativeRuntime
     }
     public function ReceiveNativePeer(string $EnvelopeJSON): string
     {
+        $started=microtime(true);$header=strlen($EnvelopeJSON)<=65536?json_decode($EnvelopeJSON,true,16):null;
+        $kind=$header['kind']??null;$kind=is_string($kind)&&in_array($kind,['SETUP_INFO','SETUP_ENROLL','SETUP_OFFER','SETUP_HELLO','SETUP_ADVANCE','SETUP_PRUNE','MESH_STATUS','HEALTH','SYNC','RESYNC','STATUS','PAIR_REQUEST','PAIR_ACCEPT','ROUTES','EMERGENCY_OFFER','REVOKE','GLOBAL_ENABLE','TREE_SYNC'],true)?$kind:'other';
+        $sender=$header['sender']??null;$sender=is_string($sender)&&preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/D',$sender)?$sender:null;
+        $row=['id'=>SecretsBackendCodec::uuid(),'claimedPeerId'=>$sender,'kind'=>$kind,'startedAt'=>gmdate('c'),'outcome'=>'processing','elapsedMs'=>0];
+        // Buffer diagnostics do not contain envelopes, tokens, secrets or exception text.
+        try{$this->SetBuffer('PeerIncomingActive',SecretsBackendCodec::json($row));}catch(Throwable $ignored){}
+        try{$reply=$this->receiveNativePeerRequest($EnvelopeJSON);$row['outcome']='response';return $reply;}
+        catch(Throwable $e){$row['outcome']='refused';throw $e;}
+        finally{
+            $row['elapsedMs']=min(86400000,max(0,(int)round(1000*(microtime(true)-$started))));
+            try{$rows=json_decode($this->GetBuffer('PeerIncomingTimings'),true);$rows=is_array($rows)?$rows:[];$rows[]=$row;$this->SetBuffer('PeerIncomingTimings',SecretsBackendCodec::json(array_slice($rows,-16)));$active=json_decode($this->GetBuffer('PeerIncomingActive'),true);if(($active['id']??null)===$row['id'])$this->SetBuffer('PeerIncomingActive','');}catch(Throwable $ignored){}
+        }
+    }
+    private function receiveNativePeerRequest(string $EnvelopeJSON): string
+    {
         $envelope=json_decode($EnvelopeJSON,true,16);
         if(is_array($envelope)&&($envelope['format']??'')===SecretsBackendEmergency::FORMAT){
             if(!$this->ReadPropertyBoolean('Enabled')||!$this->nativeInitialized())throw new SecretsBackendEmergencyUnavailable('Native peer receiver unavailable.');
-            try{$this->nativeApplication();}catch(Throwable $e){throw new SecretsBackendEmergencyUnavailable('Remote vault unavailable.');}
-            return SecretsBackendEmergency::serve($this->nativeStore(),$EnvelopeJSON);
+            try{$store=$this->nativeStore();$this->nativeApplication(null,$store);}catch(Throwable $e){throw new SecretsBackendEmergencyUnavailable('Remote vault unavailable.');}
+            return SecretsBackendEmergency::serve($store,$EnvelopeJSON);
         }
         if(!$this->ReadPropertyBoolean('Enabled')||!$this->nativeInitialized())throw new RuntimeException('Native peer receiver is disabled.');
-        $this->nativeApplication(); // Verify the pinned active security profile before accepting peer effects.
-        return $this->nativePeer()->receive($EnvelopeJSON);
+        $store=$this->nativeStore();$this->nativeApplication(null,$store); // Verify the pinned active security profile before accepting peer effects.
+        return $this->nativePeer($store)->receive($EnvelopeJSON);
     }
     public function RunNativeJobs(): string
     {
@@ -73,7 +88,7 @@ trait SecretsBackendNativeRuntime
         $lock='SECB.NativeJobs.'.$this->InstanceID;if(!IPS_SemaphoreEnter($lock,1))return '[]';
         try{
             if(!$this->ReadPropertyBoolean('Enabled')||!$this->nativeInitialized())return '[]';
-            $this->nativeApplication();$store=$this->nativeStore();$peer=$this->nativePeer($store);
+            $store=$this->nativeStore();$this->nativeApplication(null,$store);$peer=$this->nativePeer($store);
             $v=$store->read()['state'];$setup=($peer->automaticSetup()->requestPending()||$peer->automaticSetup()->discoveryPending())||(SecretsBackendAutomaticSetup::enabled($v)&&($v['native']['automaticSetup']['requested']??false))||count(array_filter($v['outbox']['jobs'],static fn($j)=>in_array($j['kind'],['SETUP_OFFER','SETUP_ENROLL'],true)))>0;if($setup&&function_exists('set_time_limit'))@set_time_limit(100);$max=$setup?SecretsBackendPeerWork::SETUP_BUDGET:SecretsBackendPeerWork::BUDGET;
             $this->peerSetupWork=$setup;$this->peerWork=new SecretsBackendPeerWork(null,SecretsBackendPeerWork::phpBudget((int)ini_get('max_execution_time'),microtime(true)-$started,$max),$max);
             $this->SetBuffer('PeerBudgetMs',(string)$this->peerWork->budgetMilliseconds());
@@ -109,11 +124,16 @@ trait SecretsBackendNativeRuntime
             }catch(Throwable $ignored){}
         }
     }
+    private function incomingPeerDiagnostics():array
+    {
+        $rows=json_decode($this->GetBuffer('PeerIncomingTimings'),true);$active=json_decode($this->GetBuffer('PeerIncomingActive'),true);
+        return ['recent'=>is_array($rows)?array_values(array_slice($rows,-4)):[],'lastUnfinished'=>is_array($active)?$active:null];
+    }
     /** Local metadata only. HTTP response timing is not proof of a valid signed peer reply. */
     public function GetTransportDiagnostics():string
     {
-        $rows=json_decode($this->GetBuffer('PeerTimings'),true);
-        return SecretsBackendCodec::json(['schema'=>'SECB.TransportDiagnostics.v1','limits'=>SecretsBackendPeerWork::limits($this->GetBuffer('PeerBudgetMs')!==''?(int)$this->GetBuffer('PeerBudgetMs'):null),'requests'=>is_array($rows)?array_values(array_slice($rows,-64,null,true)):[]]);
+        $rows=json_decode($this->GetBuffer('PeerTimings'),true);$incoming=json_decode($this->GetBuffer('PeerIncomingTimings'),true);$active=json_decode($this->GetBuffer('PeerIncomingActive'),true);
+        return SecretsBackendCodec::json(['schema'=>'SECB.TransportDiagnostics.v1','limits'=>SecretsBackendPeerWork::limits($this->GetBuffer('PeerBudgetMs')!==''?(int)$this->GetBuffer('PeerBudgetMs'):null),'requests'=>is_array($rows)?array_values(array_slice($rows,-64,null,true)):[],'incoming'=>is_array($incoming)?array_values(array_slice($incoming,-16)):[],'incomingActive'=>is_array($active)?$active:null]);
     }
     public function ExportTransportDiagnostics():string
     {

@@ -197,7 +197,9 @@ final class SecretsBackendAutomaticSetup
         if($kind==='SETUP_HELLO'){SecretsBackendNativePeer::exact($p,['format']);if($p['format']!==self::FORMAT)throw new RuntimeException('Invalid setup status purpose.');return $this->response($s,$m['sender']);}
         if($kind==='SETUP_ADVANCE'){
             SecretsBackendNativePeer::exact($p,['token','expires','run']);self::uuid($p['run']);$this->token($s,$m['sender'],$p);
-            if(!in_array($p['run'],$s['native']['automaticSetup']['seenRuns'],true)||!isset($s['pairing']['peers'][$m['sender']]))$this->commit('request',function($v)use($m,$p){$this->token($v,$m['sender'],$p);$v=$this->ensurePair($v,$m['sender']);$a=&$v['native']['automaticSetup'];if(!in_array($p['run'],$a['seenRuns'],true)){$a['requested']=true;$a['startedAt']=time();$a['run']=$p['run'];$a['dispatch']=false;$a['completedAt']=null;$a['meshCompletedAt']=null;$a['seenRuns']=array_slice([...$a['seenRuns'],$p['run']],-32);}return $v;});
+            $newRun=!in_array($p['run'],$s['native']['automaticSetup']['seenRuns'],true);$started=false;
+            if($newRun||!isset($s['pairing']['peers'][$m['sender']]))$this->commit('request',function($v)use($m,$p,&$started){$this->token($v,$m['sender'],$p);$v=$this->ensurePair($v,$m['sender']);$a=&$v['native']['automaticSetup'];if(!in_array($p['run'],$a['seenRuns'],true)){$started=true;$a['requested']=true;$a['startedAt']=time();$a['run']=$p['run'];$a['dispatch']=false;$a['completedAt']=null;$a['meshCompletedAt']=null;$a['seenRuns']=array_slice([...$a['seenRuns'],$p['run']],-32);}return $v;});
+            if($started)$this->cache(self::REPORT,['state'=>'running','run'=>$p['run'],'startedAt'=>time(),'steps'=>[['at'=>time(),'status'=>'SETUP_RUN_STARTED']],'errors'=>[]]);
             return ['status'=>'SETUP_ADVANCED'];
         }
         if($kind==='SETUP_PRUNE'){
@@ -266,7 +268,7 @@ final class SecretsBackendAutomaticSetup
         }
         foreach(SecretsBackendEmergency::publicMetadata($s)['offers']as$o){try{self::member($a['policy'],$o['peerId']);}catch(Throwable $ignored){continue;}$ops=new SecretsBackendNativeOperations($this->store,$this->peer);$op=$ops->normalize(['kind'=>'nativeEmergencyAccept','peerId'=>$o['peerId'],'digest'=>$o['digest']],$s,false);$this->commit('accept-emergency',function($v)use($ops,$op){$this->active($v);return $ops->apply($op,$v,true);});if($this->emergencySync!==null)($this->emergencySync)();return ['status'=>'SETUP_EMERGENCY_ACCEPTED'];}
         // Completion must not wait behind an endless rotation of due status polls.
-        if($this->localReady($s)){
+        if($this->store->withActiveSnapshot(fn($current)=>$this->localReady($current['state']))){
             $remoteReady=true;foreach($a['policy']['members']as$m){$id=$m['descriptor']['vaultId'];if($id===$own)continue;$c=$contacts[$id]??null;if(!$c||!$c['ready']||(($a['policy']['format']??'')===self::AUTOMATIC_FORMAT&&($c['run']??null)!==$a['run'])||$this->now()-$c['at']>=self::CONFIRMATION_SECONDS)$remoteReady=false;}
             if($a['completedAt']===null||($remoteReady&&$a['requested'])){$this->commit('complete',function($v)use($remoteReady){$this->active($v);if(!$this->localReady($v))throw new RuntimeException('Setup verification changed before completion.');$v['native']['automaticSetup']['requested']=!$remoteReady;$v['native']['automaticSetup']['completedAt']??=$this->now();if($remoteReady)$v['native']['automaticSetup']['meshCompletedAt']=$this->now();return $v;});return ['status'=>$remoteReady?'SETUP_COMPLETE':'SETUP_LOCAL_COMPLETE'];}
         }
@@ -310,7 +312,7 @@ final class SecretsBackendAutomaticSetup
         foreach($a['policy']['members']??[]as$m){$id=$m['descriptor']['vaultId'];if($id===$s['native']['vaultId'])continue;$q=$s['pairing']['peers'][$id]??null;$c=$contacts[$id]??[];$grant=false;foreach($s['native']['emergencyGrants']??[]as$g)if($g['source']===$id&&$g['active']&&$g['id']===($c['clientGrant']??null))$grant=true;
             $links[]=['server'=>SecretsBackendPeerName::address($m['descriptor']['endpoint']),'connected'=>$q&&$q['active']&&$q['state']==='ACTIVE','primary'=>$q?$mesh->route($s,$q,false,self::VERIFICATION_SECONDS):['state'=>'none'],'backup'=>$q?$mesh->route($s,$q,true,self::VERIFICATION_SECONDS):['state'=>'none'],'delivery'=>$delivery[$id]??null,'synchronization'=>$health[$id]['synchronization']??'unknown','emergencyReceive'=>isset($s['native']['emergencyClients'][$id]),'emergencySend'=>$grant,'routesAcknowledged'=>$q&&($q['routeReceipt']??null)===($s['native']['routeRevision']??'0')];
         }
-        $r=$this->report();return ['backupRoute'=>isset($s['native']['setupPeerBackupOrigin'])?'configured':'not-configured','backupRouteProblem'=>isset($s['native']['setupPeerBackupOrigin'])?null:'The local Symcon Connect service has not supplied an active HTTPS Magic route. Check Connect Control on this server.','links'=>$links,'queuedMessages'=>count($s['outbox']['jobs']),'conflicts'=>count(SecretsBackendSharedGlobal::metadata($s)['conflicts']??[]),'errors'=>array_slice($r['errors']??[],-3)];
+        $r=$this->report();return ['backupRoute'=>isset($s['native']['setupPeerBackupOrigin'])?'configured':'not-configured','backupRouteProblem'=>isset($s['native']['setupPeerBackupOrigin'])?null:'The local Symcon Connect service has not supplied an active HTTPS Magic route. Check Connect Control on this server.','links'=>$links,'queuedMessages'=>count($s['outbox']['jobs']),'conflicts'=>count(SecretsBackendSharedGlobal::metadata($s)['conflicts']??[]),'errors'=>array_slice($r['errors']??[],-3),'receiver'=>$this->peer->setupRuntimeDiagnostics()];
     }
     public function status(array $s):array {
         // One local lock includes contact caches, delivery state and the report. No peer I/O.

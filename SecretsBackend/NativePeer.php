@@ -42,7 +42,8 @@ final class SecretsBackendNativePeer
 {
     use SecretsBackendNativeTransfer;
     private $transport;
-    public function __construct(private SecretsBackendNativeStore $store, private string $endpoint, ?callable $transport = null, private bool $automaticGlobal=true,private $meshComponents=null,private $setupClock=null) { self::endpoint($endpoint); $this->transport = $transport; }
+    public function __construct(private SecretsBackendNativeStore $store, private string $endpoint, ?callable $transport = null, private bool $automaticGlobal=true,private $meshComponents=null,private $setupClock=null,private $setupDiagnostics=null) { self::endpoint($endpoint); $this->transport = $transport; }
+    public function setupRuntimeDiagnostics():array { try{return $this->setupDiagnostics!==null?($this->setupDiagnostics)():[];}catch(Throwable $ignored){return [];} }
     public function automaticSetup(?callable $sync=null):SecretsBackendAutomaticSetup { return new SecretsBackendAutomaticSetup($this->store,$this,$sync,$this->setupClock); }
     public function meshReport(array $state,bool $detailed=true,bool $mailbox=false):array {
         try{$runtime=$this->meshComponents!==null?($this->meshComponents)($state):[];}catch(Throwable $ignored){$runtime=[];}
@@ -146,6 +147,24 @@ final class SecretsBackendNativePeer
         unset($message['payload'],$message['signature']);return self::digest(['header'=>$message,'payload'=>$payload]);
     }
     public function receive(string $json): string
+    {
+        // These handlers perform local verification/metadata work only. Use one
+        // fresh locked snapshot for the whole authenticated reply, not dozens of
+        // decrypt/reload cycles for its nested cache reads. Never include a
+        // handler that performs outbound I/O in this list.
+        $header=strlen($json)<=65536?json_decode($json,true,16):null;
+        if(is_array($header)&&in_array($header['kind']??null,['SETUP_HELLO','SETUP_INFO','HEALTH','MESH_STATUS'],true)){
+            $failure=null;
+            $reply=$this->store->withActiveSnapshot(function()use($json,&$failure):?string{
+                try{return $this->receiveEnvelope($json);}catch(Throwable $e){$failure=$e;return null;}
+            });
+            // Rejected signed requests must still consume their rate allowance.
+            if($failure!==null)throw $failure;
+            return $reply;
+        }
+        return $this->receiveEnvelope($json);
+    }
+    private function receiveEnvelope(string $json): string
     {
         $m=SecretsFrontendConfiguration::decodeBounded($json,$this->store->metadata()['capacityBytes']*2+65536,96);
         self::exact($m,['format','kind','sender','receiver','pairingId','epoch','id','sequence','payload','signature']);

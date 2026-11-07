@@ -29,3 +29,5 @@ for name in ['SecretsFrontend/tests/configuration-backup.php', 'SecretsBackend/t
 
 subprocess.run([sys.executable, str(root / '.migration/tests/build.py')], cwd=root, check=True, timeout=30)
 subprocess.run([sys.executable, str(root / '.migration/tests/read-load.py'), '--php', args.php, '--reads', '30'], cwd=root, check=True, timeout=120)
+
+subprocess.run([sys.executable, str(root / 'SecretsBackend/tests/peer-status-load.py'), '--php', args.php], cwd=root, check=True, timeout=120)

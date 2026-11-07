@@ -54,4 +54,10 @@ $assert(!str_contains(json_encode($report),'CANARY')&&!str_contains(json_encode(
 $probe->fail=false;$setupWork=new SecretsBackendPeerWork(null,90,SecretsBackendPeerWork::SETUP_BUDGET);$method->invoke($probe,$target,'{"kind":"SETUP_HELLO","payload":"SETUP-TOKEN-CANARY"}',['mode'=>'strict'],$setupWork);$assert($probe->timeout===60.0,'Native transport did not apply the generous setup Magic timeout.');$timings=json_decode($probe->GetTransportDiagnostics(),true);$last=end($timings['requests']);$assert($last['timeoutMs']===60000&&$last['kind']==='SETUP_HELLO'&&!str_contains(json_encode($timings),'CANARY'),'Setup timing was clipped, misclassified or leaked credentials.');
 $probe->fail=false;for($i=0;$i<70;$i++){$target['vaultId']=sprintf('%08x-1111-4111-8111-111111111111',$i);$method->invoke($probe,$target,'{"kind":"HEALTH"}',['mode'=>'strict']);}
 $assert(count(json_decode($probe->GetTransportDiagnostics(),true)['requests'])===64,'Route timing storage is unbounded.');
+// Malformed/refused requests retain bounded timing without the request body.
+for($i=0;$i<20;$i++){try{$probe->ReceiveNativePeer(json_encode(['sender'=>'INBOUND-SECRET-CANARY','kind'=>'CANARY','payload'=>'TOKEN-CANARY']));}catch(Throwable $expected){}}
+$incoming=json_decode($probe->GetTransportDiagnostics(),true);
+$assert(count($incoming['incoming'])===16&&$incoming['incomingActive']===null,'Incoming diagnostics are unbounded or retain completed work as active.');
+$last=end($incoming['incoming']);$assert($last['kind']==='other'&&$last['claimedPeerId']===null&&$last['outcome']==='refused'&&is_int($last['elapsedMs']),'Refused incoming request timing is missing.');
+$assert(!str_contains(json_encode($incoming),'CANARY'),'Incoming timing exposed untrusted envelope contents.');
 echo "PASS peer latency: 15s primary, 25s Magic, shared 45s budget, exact remaining failover allowance, fair phases, idle skip and no stacked outbound work\n";

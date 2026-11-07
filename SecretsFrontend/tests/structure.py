@@ -32,7 +32,16 @@ replacement_files=manifest(root).get("replacementBaselineFiles",{})
 assert set(replacement_files).issubset({".github/workflows/portal-navigation.yml"})
 verify_replacement(root)
 for name, expected in baseline.items():
-    if name in replacement_files:
+    if name == 'library.json':
+        # Release build/date may advance; the original library identity, version,
+        # compatibility and all other metadata must remain exactly pinned.
+        content=subprocess.check_output(['git','-C',str(root),'show',manifest(root)['sourceCommit']+':'+name])
+        original=json.loads(content)
+        current=json.loads((root/name).read_text())
+        for key in ['build','date']:
+            assert type(current.get(key)) is int and current[key] >= original[key], f'Invalid release {key}'
+        assert {k:v for k,v in current.items() if k not in ['build','date']} == {k:v for k,v in original.items() if k not in ['build','date']}, 'Library identity or compatibility changed'
+    elif name in replacement_files:
         assert hashlib.sha256((root/name).read_bytes()).hexdigest()==replacement_files[name]
         content=subprocess.check_output(['git','-C',str(root),'show',manifest(root)['sourceCommit']+':'+name])
     else:
@@ -49,4 +58,4 @@ for file in [root / "SecretsFrontend/page.html", root / "SecretsFrontend/module.
     text = file.read_text()
     assert "localStorage" not in text and "sessionStorage" not in text
     assert "SEC_GetSecret" not in text and "SEC_EncryptAndSave" not in text
-print(f"PASS {len(baseline)-1-len(replacement_files)} original repository blobs unchanged and exact native-only SEC replacement verified; distinct new module IDs, valid JSON and no legacy secret forwarding/browser storage")
+print(f"PASS {len(baseline)-2-len(replacement_files)} original repository blobs unchanged, library identity pinned with release build/date allowed, and exact native-only SEC replacement verified; distinct new module IDs, valid JSON and no legacy secret forwarding/browser storage")
