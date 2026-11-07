@@ -1,3 +1,5 @@
+Current operating reference: [OPERATING_GUIDE.md](OPERATING_GUIDE.md), reviewed for build 16. In an existing trusted Global group, Mailbox → Finish setup on all servers can provision reciprocal permissions through restricted mesh authority. The two-sided manual approvals below remain available for individually managed access.
+
 # Availability-first emergency Global access
 
 Implemented for the native replacement branch. Runtime qualification on the actual installations remains a deployment check. No remote access is enabled merely by installing the module update or by pairing vaults.

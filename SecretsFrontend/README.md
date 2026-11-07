@@ -1,140 +1,27 @@
-# Symcon-native secrets administration
+# Secrets administration
 
-This development branch adds two separate modules, `SecretsFrontend` (SECF) and
-`SecretsBackend` (SECB). The existing `SecretsManager` and its SEC APIs are
-unchanged. No old vault, passkey or integration is adopted automatically.
+The native **SecretsFrontend (SECF)** and **SecretsBackend (SECB)** provide passkey administration, encrypted local storage, one shared writable Global namespace, private Local values, peer/Magic routes, emergency Global reads and independent recovery material. The supported installed branch is **migration/legacy-sec-replacement**. It preserves original SEC module identity/instance IDs through the native-only adapter; retired master/slave transport and old credential administration do not run in parallel on this branch.
 
-The native backend now implements encrypted local storage, passkey administration,
-optional peer synchronization, scoped integration access, backups/value recovery,
-data-key rotation and OAuth uncertainty handling. It requires only functions in
-the supplied Symcon PHP. No SQLite/PDO, database, Go/Python service, shell command
-or installed extension is used by the native runtime. Development tools and the
-retained historical prototype tests are separate.
+Start with the [operating and recovery manual](OPERATING_GUIDE.md). It covers all tabs, initial setup, production permissions, Mailbox, primary/Magic access, monitoring, backup/restore, configuration backup, migration, limits, troubleshooting and the current parameter/child-variable inventory. [Current release status](RELEASE_STATUS.md) distinguishes shipped code, owner-supplied deployment observations, executed CI and outstanding acceptance. Older checkpoint files are historical.
 
-See [release status](RELEASE_STATUS.md) for executed checks and acceptance gates.
-This is a development implementation awaiting independent audit and real Symcon
-qualification, not production/migration approval.
+## Existing installations
 
-## Initial setup
+Update this branch through Module Control and reload the existing page. Keep instance IDs, data/key folders, credentials and approved bindings. Completed mesh setup remains completed; use Overview for current health. Confirm required native/SEC applications and protected pages after an update. Full browser administration uses separately enrolled passkeys at each approved origin.
 
-Update the development branch and use the separate SecretsFrontend. A unique
-eligible backend is selected automatically; if none exists, setup proposes one.
+**Mailbox → Production application writes → Enable production writes** and the identical Automation access shortcut enable ordinary local application writes and clear the compatibility freeze after passkey approval. They preserve current read, protected-page and bulk permissions. To authorize older SEC HTML pages, explicitly enable **Authenticate protected pages** through **Review & approve access changes**. An update itself does not grant these rights.
 
-1. In the console, click **Step 1: Open setup**. Enter the trusted HTTPS address
-   if requested and confirm private persistent setup storage if asked.
-2. In the browser, click **Prepare first passkey** and follow the device prompt.
-   Leave the browser open.
-3. In the console, click **Step 3: Refresh approval requests**. Compare all four
-   identifier groups and click the matching **Step 3: Approve** button. Return
-   to the browser; it checks automatically and continues after approval.
-4. Review the suggested settings in the browser. Confirm storage persistence or
-   permissions if requested, then click **Review setup plan**.
-5. Check the summary, click **Set up and sign in**, and confirm with the prepared
-   passkey. The vault contains that administrator when it becomes usable.
+## Connections and availability
 
-Test with invented secrets. After a lost completion reply, use **Resolve accepted
-setup** in the console; never start a second setup to replace an uncertain operation.
+Every approved member can edit Global; Local stays private. Use Connections for the first trusted pair, then **Mailbox → Finish setup on all servers** for the existing group. Background work handles pinned pairs, peer routes and reciprocal Global-only emergency grants. The restricted mesh authority does not grant arbitrary application-write or administrator rights.
 
-The [code-free implementation contract](BOOTSTRAP_IMPLEMENTATION.md) documents
-nonce recovery, cancellation/restart, automatic backend creation and test limits.
-Additional keys are prepared before an existing administrator approves the exact
-credential. Independent console recovery uses a replacement candidate and preserves
-current data/policy. Ordinary-key recovery is blocked under an active hardware
-policy until a separate hardware-recovery procedure is qualified. No manual-code
-setup or administrator-enrollment fallback remains in native mode.
+All monitoring evaluation runs in Symcon. The browser displays it; it does not calculate staleness from its clock or network delay. Remote age-only warnings allow 15–30 minutes; genuine failed checks remain visible. Current complete Global verification satisfies sharing even if an old ACK is absent, provided no pending sharing or failures remain. [Shared Global](SHARED_GLOBAL.md), [monitoring](GLOBAL_HEALTH.md), [mesh display](MESH_HEALTH_DISPLAY.md) and [emergency access](EMERGENCY_GLOBAL_ACCESS.md) give technical detail.
 
-The trusted HTTPS origin cannot safely be inferred from an unauthenticated
-request header. Available PHP/Symcon functions, storage capacity, instance IDs,
-paths and peer descriptors are detected; only unresolved choices are requested.
-Default folders are recommendations, never an assertion that a Docker volume is
-persisted or privately backed up.
+## Recovery and limits
 
-## HTML administration
+Keep a complete encrypted backup and separate recovery key, plus module configuration backups. Configuration export is not a value/key backup. Default recovery prepares a separate Local copy and preserves current authority; conflict-containing backups retain all variants. Actual saved-file recovery must be tested on an isolated installation. No live test restore is performed automatically.
 
-- **Secrets:** browse folders on the left and contents on the right. Choose
-  **Show folder values** to show direct values beside their names, or select a
-  secret and use the eye icon. Click a displayed text value to edit or delete
-  it. The eye shows or masks the value being edited.
-  Changes and deletion require review and passkey approval. Hide values
-  manually or wait 30 seconds. Hardware-protected reveal still requires a key.
-  Lists and other typed values remain in the advanced editor. Local values are
-  not synchronized. Conflicting Global versions appear in Conflicts. Each sign-in can
-  use a 1, 5 or 15-minute inactivity timeout (maximum session: one hour).
-- **Peers:** create a short-lived invitation, approve its exact recipient on the
-  issuing vault, inspect immutable pending deliveries and revoke connections.
-  Every vault works standalone. One owner writes each shared tree. Optional
-  transfer freezes the old owner before the selected new owner accepts. A fork
-  creates a different tree identity and never claims to fence a lost old writer.
-- **Recovery:** approve an encrypted complete backup and keep the separately
-  displayed recovery key apart from it. Recover into a separately initialized
-  vault if needed. The default restore creates a local copy; replace-values is
-  explicit. Current administrators, rights and peer identities are retained.
-  Thus a backup never silently restores old administrative authority.
-- **Automation access:** grant one named integration an exact local/global path
-  and its descendants. Read-only is the default. Tokens are shown once; writes
-  require an expected revision, sequence and stable operation UUID. Revoke grants
-  individually. See the backend README for callable APIs.
-- **Keys:** approve new credentials and independently reviewed public hardware
-  trust roots/AAGUIDs. Ordinary attestation inspection never establishes hardware
-  trust. Two eligible hardware credentials must pass real assertion tests before
-  hardware-only policy is enabled. Adding a key invalidates previous sessions.
-- **OAuth:** choose an HTTPS provider and stored token references. Recognized
-  field names are suggested from masked metadata. Manual approved refresh is
-  available; automatic refresh requires explicitly confirmed provider idempotency.
-  Unknown non-idempotent outcomes are quarantined, not retried automatically.
+Vault storage is the complete snapshot's memory-derived byte budget, not VM disk use. Retained operations are completed receipts, not waiting deliveries. The small Heartbeat ceiling is unresolved work; existing compaction keeps up to 512 receipts and does not solve a 157-receipt byte-limit case.
 
-One-use outputs clear on navigation/page hiding and are never put in URLs,
-properties, exports, logs or browser persistent storage. A lost commit response
-is resolved by its operation ID; the browser never automatically repeats the
-change. A lost secret-bearing output must be regenerated through fresh approval.
+The runtime requires only supplied Symcon PHP/crypto, with no added database or external process. Strict HTTPS uses native listener/proxy/qualified Connect evidence; build 16 includes IPv4-mapped IPv6 matching. A public certificate screenshot alone is not server-side request binding. The module changes no router, VM, Docker or certificate configuration to qualify transport.
 
-## Deployment and recovery limits
-
-HTTPS must be provided by the configured public listener and any relay hops.
-The browser enforces secure context/exact origin, and server requests enforce
-fixed Host/Origin/schema, authentication and CSRF. These checks do not prove that
-an alternate plaintext listener is isolated. Verify the real endpoints.
-
-Every restart invalidates sessions/approvals and checks the committed snapshot.
-Corrupt newest state or missing keys lock the vault rather than selecting older
-permissions. Standalone cannot detect a consistent restoration of *all* trusted
-files without an independent current reference. Directory/file sync does not
-certify physical power-loss durability. Windows uses an explicitly labelled
-file-sync-only profile and requires private-ACL confirmation.
-
-The earlier external anchor/quorum prototypes remain in repository history and
-component tests. They are never a native-mode fallback or runtime requirement.
-
-## One shared Global vault
-
-New connections merge Global across platforms. Local stays private. Concurrent
-versions are preserved for explicit conflict resolution. Existing active connections join automatically in the background.
-See [the automatic operation, security contract and tests](SHARED_GLOBAL.md).
-
-## Mesh consistency and emergency reads
-
-The native mesh currently acknowledges local durable writes and synchronizes asynchronously. A matching peer-health check is not a guarantee of the latest committed value. The approved availability-first policy uses separately authorized emergency peers without quorum. See [emergency Global access](EMERGENCY_GLOBAL_ACCESS.md) for setup and limits; [strict mesh verification](STRICT_MESH_CONSISTENCY.md) preserves the earlier counterexamples and superseded proposal.
-
-## Emergency Global access
-
-[Availability-first fallback](EMERGENCY_GLOBAL_ACCESS.md) supports existing Global SEC application reads through independently approved peers when the local vault cannot open. It requires two explicit approvals, uses separate encrypted credentials, works with one approved peer, and exposes alarm variables. There is no quorum or automatic Local/admin/capability fallback. Remote freshness is uncertain; known older/conflicting data is refused.
-
-## Graphical mesh health
-
-Overview now includes a graphical network with component lights, primary/backup route lines, directional emergency authorization arrows and an expandable comparison matrix. See [Mesh health display](MESH_HEALTH_DISPLAY.md) for interpretation, refresh intervals and limits.
-
-## Portal link on the administration page
-
-1. Select the local SystemPortal instance under Portal in the frontend configuration and Apply.
-2. Enable/configure that Portal with either the old SecretsManager or the new Secrets backend (Portal 1.5 supports both). Its webhook must be registered.
-3. Reload Secrets administration. **Portal** appears in the header beside **Dokumentation**, at the top right on desktop and below the title on narrow screens. **Add to Portal** creates the opposite link, from Portal to Secrets administration.
-
-The frontend uses its own native-aware metadata lookup so inactive old manager properties do not suppress the link. If no eligible registered Portal is found, the header shows Portal unavailable with a setup hint. Navigation does not grant access; Portal validates its own session. Original legacy helper files remain unchanged.
-
-### Refused requests
-
-Known refusals now explain the next action and show a diagnostic reference. Expired/invalid administrator sessions or CSRF failures return to sign-in and clear sensitive controls. Mutations are never retried automatically. Safe failure details are available from the paired Backend’s **Show refused-request diagnostics** console action and in Configuration Backup 1.3.10 GitHub diagnostic uploads. The previous generic error alone cannot establish which check failed.
-
-### Session changes in other tabs
-
-A new sign-in on the same vault replaces its shared browser cookie. An older tab can still hold its previous session’s CSRF token. On a `CSRF_INVALID` refusal, the page now clears sensitive state and any pending approval, loads the current authenticated session through the existing same-origin session endpoint, and asks the user to review and confirm the current action again. It never automatically repeats the refused prepare/approve request and never reuses an approval from another session. If session refresh fails, normal passkey sign-in is required. Browser back/forward restoration also reloads the session before reusing the page. Backend CSRF, exact-session approval, revocation and WebAuthn checks remain unchanged.
+Standalone has no independent whole-state rollback reference; asynchronous peers do not prove the newest value during a partition. Read the [current audit disposition](../.docs/security-remediation.md) before interpreting a green Overview as final security acceptance.

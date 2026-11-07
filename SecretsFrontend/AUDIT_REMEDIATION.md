@@ -1,3 +1,5 @@
+> Historical design, review or incident record. Current operation and implemented behavior: [OPERATING_GUIDE.md](OPERATING_GUIDE.md) and [RELEASE_STATUS.md](RELEASE_STATUS.md). This record is retained as evidence and does not override the current native-only replacement.
+
 # PR #8 implementation audit — remediation evidence
 
 Reviewed baseline: `c0e995d8f355a36c19349e2b56ad223184accf4f` (30 October 2026). The auditor's adverse hardware, revocation, acquisition and DOM outputs were reproduced on that exact source before editing. This change addresses the concrete findings without changing the old SecretsManager, its dependencies, or any other existing module. Independent verification of the replacement commit remains pending.

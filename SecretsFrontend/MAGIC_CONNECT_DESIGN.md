@@ -1,3 +1,5 @@
+> Historical design, review or incident record. Current operation and implemented behavior: [OPERATING_GUIDE.md](OPERATING_GUIDE.md) and [RELEASE_STATUS.md](RELEASE_STATUS.md). This record is retained as evidence and does not override the current native-only replacement.
+
 # Backup HTTPS origin for Symcon Connect — implementation contract
 
 Status: **development implementation; live qualification and independent implementation audit pending**. This document describes required controls, not production acceptance.

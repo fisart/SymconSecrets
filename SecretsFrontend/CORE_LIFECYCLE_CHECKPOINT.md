@@ -1,3 +1,5 @@
+> Historical design, review or incident record. Current operation and implemented behavior: [OPERATING_GUIDE.md](OPERATING_GUIDE.md) and [RELEASE_STATUS.md](RELEASE_STATUS.md). This record is retained as evidence and does not override the current native-only replacement.
+
 # Human core lifecycle — implementation review handoff
 
 Development parent: `e6958bd79d4debda2dc0604dae352af99db617d6`.

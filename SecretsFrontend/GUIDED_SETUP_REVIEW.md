@@ -1,3 +1,5 @@
+> Historical design, review or incident record. Current operation and implemented behavior: [OPERATING_GUIDE.md](OPERATING_GUIDE.md) and [RELEASE_STATUS.md](RELEASE_STATUS.md). This record is retained as evidence and does not override the current native-only replacement.
+
 # HTML commissioning review handoff
 
 Parent: `c43ee3a09f067422ae90f57311b37fb2477c9491`. The Go core lifecycle and frozen

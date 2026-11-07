@@ -1,3 +1,5 @@
+> Historical design, review or incident record. Current operation and implemented behavior: [OPERATING_GUIDE.md](OPERATING_GUIDE.md) and [RELEASE_STATUS.md](RELEASE_STATUS.md). This record is retained as evidence and does not override the current native-only replacement.
+
 # Response to the independent audit of 154d575
 
 Date: 31 October 2026 (Europe/Rome).

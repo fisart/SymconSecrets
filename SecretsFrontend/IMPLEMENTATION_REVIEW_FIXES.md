@@ -1,3 +1,5 @@
+> Historical design, review or incident record. Current operation and implemented behavior: [OPERATING_GUIDE.md](OPERATING_GUIDE.md) and [RELEASE_STATUS.md](RELEASE_STATUS.md). This record is retained as evidence and does not override the current native-only replacement.
+
 # IR-01--IR-03 and G-01 correction checkpoint
 
 Review baseline: `ffe0e8d4818b82c6ea48611c08a25cee3e588947`.

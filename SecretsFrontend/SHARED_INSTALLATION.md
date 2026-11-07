@@ -19,3 +19,5 @@ details are under Connections. Older module versions must be updated before
 they can participate in the unified Global vault.
 
 See [SHARED_GLOBAL.md](SHARED_GLOBAL.md) for the protocol, limits and acceptance tests.
+
+For an existing trusted multi-platform group, use Mailbox → Finish setup on all servers for missing direct pairs, primary/Magic peer routes and reciprocal emergency Global grants. This does not authorize general application writes. A completed setup remains completed when old setup contacts expire; current readiness is evaluated in Symcon and shown in Overview. See [the current operating manual](OPERATING_GUIDE.md).

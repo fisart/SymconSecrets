@@ -1,5 +1,7 @@
 # One-button mesh setup
 
+Current guide: SecretsFrontend/OPERATING_GUIDE.md. Reviewed against runtime build 16 on 7 November 2026. The dated incident sections below preserve development history; their older timeout/freshness values do not override current server monitoring.
+
 ## User flow
 
 Update every participating installation to the supporting `migration/legacy-sec-replacement` branch. Sign in as a full administrator on any existing member and select **Mailbox → Finish setup on all servers** once. This queues discovery and setup in the backend. The browser never waits for a remote server and can be closed while work continues.
@@ -115,3 +117,7 @@ The connection wizard could remain at Step 5 with “Verified in sync”, zero q
 Symcon now accepts that current comparison for Step 6, without fabricating or updating a delivery receipt. The peer must still be active, approved for shared Global, reachable, verified by the backend, free of health/delivery problems and pending sharing messages, with local Global writes enabled. A stale/unknown/mismatched comparison cannot be rescued by old receipts. Existing initial-exchange behavior for installations without health metadata remains unchanged. Overview counts synchronized connections from the same server-computed verification result; paused writes and pending delivery remain separate concerns. The wizard displays whether full-state verification satisfied the check instead of claiming that a missing ACK arrived.
 
 This only changes status presentation. It does not change synchronization, grant approval, emergency reads, pairing authentication or the configuration-backup schema. No reconnect or setup restart is required.
+
+## Current completion versus current health
+
+A recorded completedAt is historical mesh completion. Setup contacts/step logs may expire; null remote details or historyAvailable=false do not reopen setup. Overview uses independent current authenticated health and Symcon-side 15–30 minute remote age-only allowances. Browser refresh failure is separate from server evaluation. Do not run Finish setup again merely to refresh a completed group's indicators. Current complete HEALTH verification also satisfies the guided sharing check despite an older missing outgoing ACK, while pending sharing or actual failures still block readiness.

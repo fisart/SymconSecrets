@@ -1,6 +1,6 @@
 # Background Global synchronization checks
 
-Implemented on the development branch. These are authenticated observations of
+Current native-only replacement on migration/legacy-sec-replacement (runtime baseline 5.4.6 build 16). These are authenticated observations of
 trusted peers, not remote host attestation or proof that an unreachable platform
 is offline. Actual deployment checks remain separate from automated tests.
 
@@ -24,21 +24,16 @@ Conflicts are also separate: matching replicas may contain the same unresolved
 conflict versions. Local values never participate in comparison or replication.
 
 The page refreshes metadata every ten seconds while Overview or Connections is
-visible. Failed page refreshes explicitly mark the displayed status stale rather
-than retaining a green label. No refresh extends the administrator's idle limit.
+visible. All freshness, color and readiness evaluation is performed in Symcon. A failed browser retrieval shows a separate notice beside the last server evaluation; JavaScript does not re-age or reclassify it. No refresh extends the administrator's idle limit.
 
 ## Background cadence and bounded work
 
 The existing ten-second backend worker performs at most one health request per
 run, independently of browser activity. It selects the oldest due peer fairly.
 For four platforms in a full mesh, each platform checks its three peers every
-60 seconds. Three missed checks, or three check intervals without a successful
-response, invalidate prior reachability evidence. A stopped worker becomes an
-overdue-check warning, including after a restart clears cached proofs.
+60 seconds as a target, subject to load/latency and fair bounded work. Remote age-only warnings allow 15–30 minutes. MonitoringFreshness uses a 900-second minimum and up to three times the largest of the last eight consecutive successful gaps, capped at 1800 seconds. Failure, overdue/outage gaps and clock reversal cannot extend the allowance. Latest real failures remain visible immediately. Larger groups expose their actual interval in metadata. Local watchdog/heartbeat alarms retain their independent timing.
 
-Larger groups use a feasible interval of max(60, (active shared peers + 1) * 10)
-seconds, with a stale threshold of three intervals. UI metadata reports the actual
-interval. Each check uses the existing bounded HTTPS exchange, at most two
+Each check uses the existing bounded HTTPS exchange, at most two
 approved addresses, strict TLS/pinned-primary rules and Magic-first failover.
 No redirect, new peer, URL discovery result or unapproved route creates trust.
 
