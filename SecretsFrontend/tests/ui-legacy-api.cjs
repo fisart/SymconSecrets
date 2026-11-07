@@ -4,6 +4,8 @@ const {fixture,tick}=require('./ui-native.cjs');
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 (async()=>{
  const f=await fixture(),$=f.$;
+ $('productionCheck').click();await tick();assert.equal($('review').open,true);assert.deepEqual(f.calls.filter(c=>c.action==='prepare').at(-1).data.operation,{kind:'nativeProductionCheck'});
+ f.setOutput({productionChecks:{evaluatedAt:1794036008,complete:false,checks:[{name:'Backup recovery round trip',state:'passed',detail:'Verified in memory'},{name:'Fresh Magic login',state:'not-tested',detail:'User action required'}]}});$('approve').click();await tick();await tick();assert.match($('productionCheckResult').textContent,/PASSED.*Backup recovery.*NOT-TESTED.*Fresh Magic/s);
  const ids=[...f.dom.window.document.querySelectorAll('[id]')].map(n=>n.id);assert.equal(new Set(ids).size,ids.length,'Duplicate control IDs interfere with existing workflows.');
  assert.equal($('compatFrozen').checked,true);assert.equal($('compatEnabled').checked,true);assert.equal($('compatRead').checked,true);assert.equal($('compatInstance'),null);assert.equal($('compatMode'),null);assert.equal($('compatTarget').value,'456');assert.equal($('compatWrite').checked,false);assert.equal($('compatBulk').checked,false);
  $('productionWrites').click();await tick();assert.equal($('review').open,true);

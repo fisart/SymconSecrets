@@ -42,6 +42,10 @@ trait SecretsFrontendGuidedSetup
             $reply['data']=SecretsFrontendConnectDiscovery::local();
         }
         if(($reply['status']??0)===200){if($action==='nativeOverviewStatus')$reply['data']['connectDiscovery']=SecretsFrontendConnectDiscovery::local();elseif($action==='session'&&isset($reply['data']['native']))$reply['data']['native']['connectDiscovery']=SecretsFrontendConnectDiscovery::local();}
+        if(($reply['status']??0)===200&&isset($reply['data']['productionChecks'])){
+            $secure=SecretsFrontendConnectDiscovery::secureRoute($_SERVER,$request['origin'],$this->settings()['TrustedHTTPSProxyIPs'],SecretsFrontendConnectDiscovery::local());
+            $reply['data']['productionChecks']['checks'][]=['name'=>'Current administration transport','state'=>$secure?'passed':'not-tested','detail'=>$secure?'This request has independently verified HTTPS evidence. This does not prove another address or a primary-outage login.':'No HTTP transport observation is available in this execution context.'];
+        }
         if(($reply['status']??0)===200){
             $path='/hook/secrets_frontend_'.$this->InstanceID;
             if(isset($reply['data']['native']))$reply['data']['native']=SecretsFrontendMonitoringView::decorate($reply['data']['native'],$path);

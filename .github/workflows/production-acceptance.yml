@@ -1,0 +1,74 @@
+name: Native production acceptance
+on:
+  workflow_dispatch:
+  push:
+    branches: [migration/legacy-sec-replacement, fix/security-audit-production]
+    paths: ['SecretsBackend/**', 'SecretsFrontend/**', '.migration/**', '.github/workflows/production-acceptance.yml']
+  pull_request:
+    paths: ['SecretsBackend/**', 'SecretsFrontend/**', '.migration/**', '.github/workflows/production-acceptance.yml']
+permissions:
+  contents: read
+jobs:
+  acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: openssl, sodium
+          coverage: none
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Native audit, recovery, TLS, partition and fault checks
+        id: native
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p acceptance-evidence
+          python SecretsBackend/tests/native-runtime.py 2>&1 | tee acceptance-evidence/native.log
+      - name: Install isolated browser fixture dependencies
+        if: always()
+        working-directory: SecretsFrontend/tests
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: All native browser regressions
+        id: browser
+        if: always()
+        shell: bash
+        run: |
+          set -o pipefail
+          python -u - <<'PY' 2>&1 | tee acceptance-evidence/browser.log
+          import pathlib, subprocess
+          for script in sorted(pathlib.Path('SecretsFrontend/tests').glob('ui-*.cjs')):
+              print(script, flush=True)
+              subprocess.run(['node', str(script)], check=True, timeout=90)
+          PY
+      - name: Write scoped evidence
+        if: always()
+        shell: bash
+        env:
+          NATIVE_RESULT: ${{ steps.native.outcome }}
+          BROWSER_RESULT: ${{ steps.browser.outcome }}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, subprocess
+          path=pathlib.Path('acceptance-evidence'); path.mkdir(exist_ok=True)
+          report={'format':'SECB.AcceptanceEvidence.1', 'commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(), 'run':os.environ['GITHUB_RUN_ID'], 'native':os.environ['NATIVE_RESULT'], 'browser':os.environ['BROWSER_RESULT'], 'liveDeployment':'not-tested', 'physicalKeys':'not-tested', 'realMagicOutageLogin':'not-tested', 'externalSavedBackupRestore':'not-tested'}
+          (path/'summary.json').write_text(json.dumps(report,indent=2)+'\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
+              f.write('Native: '+report['native']+'; browser: '+report['browser']+'\n\nCommit: `'+report['commit']+'`\n\nLive TLS/proxy, physical keys, fresh Magic outage login and external saved-backup restore require installation evidence.\n')
+          PY
+      - name: Retain exact-commit acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-acceptance-${{ github.sha }}
+          path: acceptance-evidence/
+          retention-days: 30

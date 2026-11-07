@@ -87,6 +87,11 @@ try {
     secReject(static fn()=>$back->ReadNativeSecret($writeGrant['capabilityToken'],'global','["ASK"]'),'Revoked machine token still reads.');
     $approved(['kind'=>'nativeRotateKey']);
     secExpect(count(glob($root.'/keys/data-*.key'))===2,'Key rotation lost the retained key generation.');
+    $beforeChecks=$nativeStore->read()['state'];
+    $checks=$approved(['kind'=>'nativeProductionCheck'])['productionChecks'];
+    secExpect($checks['complete']===false&&count(array_filter($checks['checks'],static fn($c)=>$c['state']==='not-tested'))>=3,'Automated checks claimed physical/deployment acceptance.');
+    secExpect($checks['checks'][0]['state']==='passed'&&!str_contains(json_encode($checks),'NATIVE-SECRET-CANARY'),'Approved backup round trip failed or disclosed a secret.');
+    $afterChecks=$nativeStore->read()['state'];secExpect($afterChecks['vault']===$beforeChecks['vault']&&$afterChecks['pairing']===$beforeChecks['pairing'],'Production checks restored live values or changed peers.');
     $backup=$approved(['kind'=>'nativeBackup']);
     secExpect(!str_contains($backup['backup'],'NATIVE-SECRET-CANARY')&&!str_contains($backup['backup'],$backup['recoveryKey']),'Portable backup exposed a value or its wrapping key.');
     $material=SecretsBackendNativeBackup::decrypt($backup['backup'],$backup['recoveryKey'],4*1024*1024);

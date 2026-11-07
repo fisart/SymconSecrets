@@ -12,6 +12,7 @@ require_once __DIR__ . '/NativeTLSDiagnostics.php';
 require_once __DIR__ . '/Emergency.php';
 require_once __DIR__ . '/Mailbox.php';
 require_once __DIR__ . '/SupportReport.php';
+require_once __DIR__ . '/ProductionChecks.php';
 
 /** All web mutations below enter through the existing fresh, exact WebAuthn approval. */
 final class SecretsBackendNativeOperations
@@ -20,7 +21,7 @@ final class SecretsBackendNativeOperations
     private ?array $legacyCommitSource=null;
     public function __construct(private SecretsBackendNativeStore $store,private SecretsBackendNativePeer $peer,private $hardwareApplied=null,private $emergencyApplied=null,private $emergencyHealth=null){}
     public function bindSession(string $hash): void { $this->session=$hash; }
-    public static function actionClass(string $kind): string { return match($kind){'nativeBackup'=>'export','nativeGlobalReveal','nativeReveal'=>'reveal','nativeGlobalResolve','nativeRestore','nativeSharedSave','nativeSharedDelete','nativeSharedRename'=>'write',default=>'identity'}; }
+    public static function actionClass(string $kind): string { return match($kind){'nativeBackup','nativeProductionCheck'=>'export','nativeGlobalReveal','nativeReveal'=>'reveal','nativeGlobalResolve','nativeRestore','nativeSharedSave','nativeSharedDelete','nativeSharedRename'=>'write',default=>'identity'}; }
     public function uploads(): SecretsBackendNativeUploads { if($this->session==='')throw new RuntimeException('Administrator session required.');return new SecretsBackendNativeUploads($this->store,$this->session); }
     public static function machineTarget(array $state,string $scope): array
     {
@@ -89,6 +90,7 @@ final class SecretsBackendNativeOperations
             case 'nativePair':SecretsBackendNativePeer::exact($op,['kind','invitation','name']);$op=$this->peer->pairOperation($op['invitation'],$op['name']);if($op['pair']['scope']===SecretsBackendSharedGlobal::SCOPE)SecretsBackendSharedGlobal::enable($state);elseif(isset($state['native']['sharedGlobal']))throw new RuntimeException('Use a new shared Global invitation from the updated module.');$op['httpsReview']=SecretsBackendNativeLegacyHTTPS::proposal($op['pair']['a']['endpoint'],$state['pairing']['peers']);break;
             case 'nativeAcceptPair':SecretsBackendNativePeer::exact($op,['kind','peerId']);$p=$state['pairing']['peers'][$op['peerId']]??null;if(!is_array($p)||$p['state']!=='PENDING_APPROVAL')throw new RuntimeException('Select the exact pending pairing request.');$op['httpsReview']=SecretsBackendNativeLegacyHTTPS::proposal($p['descriptor']['endpoint'],$state['pairing']['peers']);$op['pairDigest']=SecretsBackendNativePeer::digest($p['pair']);$op['peerReview']=['sharingScope'=>$p['pair']['scope'],'peerURL'=>$p['descriptor']['endpoint'],'peerVault'=>$p['id'],'comparison'=>SecretsBackendNativePeer::comparison($p['pair'])];break;
             case 'nativeRevokePeer':SecretsBackendNativePeer::exact($op,['kind','peerId']);$p=$state['pairing']['peers'][$op['peerId']]??null;if(!is_array($p))throw new RuntimeException('Unknown peer.');$op['peerReview']=['sharingScope'=>$p['pair']['scope'],'peerURL'=>$p['descriptor']['endpoint'],'peerVault'=>$p['id'],'comparison'=>SecretsBackendNativePeer::comparison($p['pair'])];break;
+            case 'nativeProductionCheck':SecretsBackendNativePeer::exact($op,['kind']);break;
             case 'nativeRotateKey':SecretsBackendNativePeer::exact($op,['kind']);$op['keyId']=SecretsBackendCodec::uuid();break;
             case 'nativeBackup':SecretsBackendNativePeer::exact($op,['kind']);$op['recoveryKey']=SecretsBackendCodec::b64(random_bytes(32));break;
             case 'nativeRestore':
@@ -327,6 +329,7 @@ final class SecretsBackendNativeOperations
             'nativeAcceptPair'=>['nativeChanged'=>true,'pairingSetup'=>['kind'=>'accepted','peerId'=>$op['peerId'],'pairingId'=>$validated['state']['pairing']['peers'][$op['peerId']]['pairingId']]],
             'nativeMachineGrant'=>['machineId'=>$op['id'],'capabilityToken'=>$op['token'],'clearAfterSeconds'=>60],
             'nativeBackup'=>['backup'=>SecretsBackendNativeBackup::encrypt($this->store,$op['recoveryKey'],$validated),'recoveryKey'=>$op['recoveryKey'],'clearAfterSeconds'=>60],
+            'nativeProductionCheck'=>['productionChecks'=>SecretsBackendProductionChecks::run($this->store,$this->peer,$validated)],
             'nativeRestore'=>$this->restoreResult($op),
             'nativeCompact'=>$this->compactResult($op),
             'nativeHardwareProfile'=>$this->hardwareResult($validated['state']['policy']['management']),
