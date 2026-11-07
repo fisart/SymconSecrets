@@ -22,6 +22,12 @@ $context=['SENDER'=>'WebHook','INSTANCE'=>62000];$ok(SecretsFrontendTransport::n
 foreach([['HTTPS'=>'off'],['REQUEST_SCHEME'=>'http']]as$s)$ok(!SecretsFrontendTransport::nativeTLS($context,$s),'Contradictory plaintext evidence was accepted.');
 $core->properties['EnableSSL']=false;$ok(!SecretsFrontendTransport::nativeTLS($context,[]),'Plain engine caller was trusted.');$core->properties['EnableSSL']=true;
 $GLOBALS['changed'][62000]=true;$ok(!SecretsFrontendTransport::nativeTLS($context,[]),'Pending listener edits were used as applied state.');$GLOBALS['changed'][62000]=false;
+// Heartbeat: the applied bind is IPv4-any, but Linux stores its IPv4 socket in tcp6.
+$binding=new ReflectionMethod(SecretsFrontendTransport::class,'connectionTLS');
+$mappedConnection=['port'=>8443,'address'=>inet_pton('172.18.0.2'),'family'=>6];
+$ok($binding->invoke(null,$mappedConnection),'IPv4-any listener rejected an IPv4-mapped tcp6 connection.');
+$ok(!$binding->invoke(null,['port'=>8443,'address'=>inet_pton('2001:db8::2'),'family'=>6]),'IPv4 wildcard vouched for an unrelated native IPv6 bind.');
+$core->properties['Server']='::';$ok($binding->invoke(null,$mappedConnection),'IPv6 wildcard rejected mapped IPv4 on its dual-stack socket.');$core->properties['Server']='0.0.0.0';
 if(PHP_OS_FAMILY==='Linux'){
     $sockets=[];
     try{
@@ -55,6 +61,29 @@ if(PHP_OS_FAMILY==='Linux'){
         $observed=SecretsFrontendTransport::diagnostic($GLOBALS['_IPS'],$s);$ok($observed['reason']==='ssl-match-after-refusal','Diagnostic snapshot did not distinguish a successful later observation.');
         $core->properties['Server']='127.0.0.2';$ok(!SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$s),'An SSL listener bound to another local address vouched for this socket.');$observed=SecretsFrontendTransport::diagnostic($GLOBALS['_IPS'],$s);$ok($observed['reason']==='exact-connection-not-on-SSL-listener','Wrong bind diagnostic did not identify a nonmatching SSL listener.');$core->properties['Server']='127.0.0.1';
         $core->properties['Port']=$localPort===65535?65534:$localPort+1;$ok(!SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$s),'The existence of a different SSL listener vouched for this socket.');
+    }finally{foreach(array_reverse($sockets)as$socket)if(is_resource($socket))fclose($socket);}
+    // Exercise the actual Linux representation seen on Heartbeat, not only a parsed table.
+    $sockets=[];
+    try{
+        $dualContext=stream_context_create(['socket'=>['ipv6_v6only'=>false]]);
+        $listener=stream_socket_server('tcp://[::]:0',$errno,$error,STREAM_SERVER_BIND|STREAM_SERVER_LISTEN,$dualContext);
+        if($listener===false)throw new RuntimeException('Dual-stack loopback listener unavailable.');$sockets[]=$listener;
+        $address=stream_socket_get_name($listener,false);$localPort=(int)substr($address,strrpos($address,':')+1);
+        $core->properties['Port']=$localPort;$core->properties['Server']='0.0.0.0';$requests=[];
+        for($i=0;$i<5;$i++){
+            $client=stream_socket_client('tcp://127.0.0.1:'.$localPort,$errno,$error,2,STREAM_CLIENT_CONNECT,$clientContext);$sockets[]=$client;
+            $accepted=stream_socket_accept($listener,2);$sockets[]=$accepted;$peer=stream_socket_get_name($accepted,true);$source=(int)substr($peer,strrpos($peer,':')+1);
+            $requests[]=['REMOTE_ADDR'=>'127.0.0.2','REMOTE_PORT'=>$source];
+        }
+        foreach($requests as$request){
+            $observed=SecretsFrontendTransport::diagnostic($GLOBALS['_IPS'],$request);
+            $match=array_values(array_filter($observed['connections'],static fn($c)=>$c['sourcePortMatches']));
+            $ok(count($match)===1&&$match[0]['family']===6&&$match[0]['addressFamily']===4,'Fixture did not reproduce an IPv4-mapped tcp6 connection.');
+            $ok(SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$request),'Heartbeat-style mapped IPv4 socket was refused by an IPv4-any SSL listener.');
+        }
+        $ok($observed['peerConnections']===5,'Concurrent Heartbeat-style browser sockets were lost.');
+        $ok(SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],['REMOTE_ADDR'=>'127.0.0.2']),'Five mapped IPv4 SSL-only candidates were not recognized.');
+        $core->properties['EnableSSL']=false;$ok(!SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$requests[0]),'The mapped-address correction admitted a plain listener.');$core->properties['EnableSSL']=true;
     }finally{foreach(array_reverse($sockets)as$socket)if(is_resource($socket))fclose($socket);}
 }
 $observed=SecretsFrontendTransport::diagnostic([],['REMOTE_ADDR'=>'198.51.100.8','REMOTE_PORT'=>54321],static fn($name)=>$name==='tcp'?$line('172.18.0.2',8443,'198.51.100.9',54321):'');

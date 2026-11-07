@@ -40,7 +40,11 @@ final class SecretsFrontendTransport
             $id=(int)$id;
             if(!self::sslListener($id)||IPS_GetProperty($id,'Port')!==$connection['port'])continue;
             $bind=self::address((string)IPS_GetProperty($id,'Server'));
-            if($bind!==null&&($bind===$connection['address']||($bind===str_repeat("\0",strlen($bind))&&strlen($bind)===($connection['family']===6?16:4))))$matches[]=$id;
+            // Linux tcp6 also stores IPv4-mapped endpoints. Match IPv4-any to
+            // the normalized address, not the kernel table's storage family.
+            $wildcard=$bind!==null&&$bind===str_repeat("\0",strlen($bind));
+            $wildcardMatch=$wildcard&&(strlen($bind)===4?strlen($connection['address'])===4:$connection['family']===6);
+            if($bind!==null&&($bind===$connection['address']||$wildcardMatch))$matches[]=$id;
         }
         return count($matches)===1;
     }
@@ -70,7 +74,7 @@ final class SecretsFrontendTransport
             else{
                 $candidates=count($rows);$exact=0;$allSSL=(bool)$rows;$exactSSL=null;
                 foreach($rows as$c){$tls=self::connectionTLS($c);if(!$tls)$allSSL=false;
-                    if(count($ports)<8)$ports[]=['localPort'=>$c['port'],'family'=>$c['family'],'sourcePortMatches'=>$c['remotePort']===(int)$port,'sslListenerMatches'=>$tls];
+                    if(count($ports)<8)$ports[]=['localPort'=>$c['port'],'family'=>$c['family'],'addressFamily'=>strlen($c['address'])===4?4:6,'sourcePortMatches'=>$c['remotePort']===(int)$port,'sslListenerMatches'=>$tls];
                     if($c['remotePort']===(int)$port){$exact++;$exactSSL=$tls;}
                 }
                 $reason=!$rows?'no-kernel-connection-for-reported-peer':($exact>1?'multiple-exact-connections':($exact===1?($exactSSL?'ssl-match-after-refusal':'exact-connection-not-on-SSL-listener'):($allSSL?'SSL-only-peer-after-refusal':'peer-has-plain-or-unrecognized-connections')));
