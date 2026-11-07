@@ -22,6 +22,14 @@ $ok($mesh->route($state,$p,false)['problem']==='certificate'&&$mesh->route($stat
 $legacy=$peers[0]->meshReport($state,false);$ok(array_keys($legacy['links'][0]['primary'])===['state','age'],'Old clients received a changed indicator schema.');
 $viaMagic=$p;$viaMagic['descriptor']['endpoint']=$backup;$ok($mesh->route($state,$viaMagic,false)['state']==='error'&&$mesh->route($state,$viaMagic,true)['state']==='ok','Pairing through Magic reversed primary and backup labels.');
 $now+=1000;$ok($mesh->route($state,$p,true)['state']==='unknown','Stopped checks retained green route.');$now-=1000;$blockPrimary=false;
+// Ordinary slow route sweeps learn a bounded allowance; the first failure stays visible.
+$now+=395;for($i=0;$i<3;$i++)$mesh->tick();
+$ok($mesh->monitoringWindow($state)>=1185&&$mesh->monitoringWindow($state)<=1800,'Successful slow route sweep was not learned.');
+$ok($mesh->report($state)['ttl']===$mesh->monitoringWindow($state),'Remote report TTL disagrees with route freshness.');
+$now+=395;$ok($mesh->route($state,$p,true)['state']==='ok','Normal slow route check was marked stale.');
+$knownWindow=$mesh->monitoringWindow($state);$now+=$knownWindow;
+$ok($mesh->route($state,$p,true)['state']==='unknown','Missing route checks did not expire.');
+$ok($mesh->monitoringWindow($state)===$knownWindow,'Time alone widened the freshness allowance.');
 // Unsupported old modules are unknown; malformed signed exchanges and replay never refresh proof.
 $oldPeer=new SecretsBackendNativePeer($stores[0],$peers[0]->descriptor()['endpoint'],static function(){throw new SecretsBackendNativePeerDeliveryFailure('http',403);});$oldMesh=new SecretsBackendMeshStatus($stores[0],$oldPeer,$clock);$now+=70;for($i=0;$i<3;$i++)$oldMesh->tick();$ok($oldMesh->route($state,$p,true)['state']==='unknown','Old module appeared unhealthy rather than unknown.');
 $captured=[];$replay=false;$proxy=new SecretsBackendNativePeer($stores[0],$peers[0]->descriptor()['endpoint'],static function($d,$b,$policy)use($transport,&$captured,&$replay){return $replay?$captured[$d['endpoint']]:($captured[$d['endpoint']]=$transport($d,$b,$policy));});$replayMesh=new SecretsBackendMeshStatus($stores[0],$proxy,$clock);$now+=70;for($i=0;$i<3;$i++)$replayMesh->tick();$replay=true;$now+=70;for($i=0;$i<3;$i++)$replayMesh->tick();$ok($replayMesh->route($state,$p,true)['state']==='error','Replayed signed mesh report was accepted.');

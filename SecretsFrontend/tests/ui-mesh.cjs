@@ -24,6 +24,19 @@ const {fixture,tick}=require('./ui-native.cjs');
  n.automaticSetup.running=false;n.automaticSetup.completedAt=null;n.automaticSetup.report.state='incomplete';await update();
  assert.match($('readiness').textContent,/Mesh setup is incomplete/);
  n.automaticSetup.completedAt=1794013666;n.automaticSetup.report.state='complete';await update();
+ // Remote component age must include latency without reapplying a 90-second
+ // local watchdog to a healthy cached report. Actual source faults stay visible.
+ const oldReports=n.mesh.reports;
+ n.mesh.reports=ids.map((_,i)=>{const r=report(i);r.ttl=900;for(const l of r.links){l.ttl=900;l.age=395;l.primary.age=395;l.backup.age=395;}for(const h of Object.values(r.components))h.age=20;return {report:r,age:395,direct:true};});await update();
+ assert.equal($('meshMatrix').querySelectorAll('[data-state="unknown"]').length,0,'Normal remote sampling plus transit age raised yellow indicators.');
+ assert.equal($('readiness').textContent,'Mesh setup completed. Vault ready.');
+ assert.match($('meshMatrix').querySelector('.meshCell').title,/age warning after 15 min/);
+ n.mesh.reports[1].report.components.frontend.state='error';await update();assert.match($('readiness').textContent,/Needs attention/,'Generous age window hid a component failure.');
+ n.mesh.reports[1].report.components.frontend.state='unknown';await update();assert.match($('readiness').textContent,/unknown or stale/,'A source-reported local watchdog problem was turned green.');
+ n.mesh.reports[1].report.components.frontend.state='ok';n.mesh.reports[1].age=901;await update();assert.equal($('readiness').classList.contains('success'),false,'Stopped remote reporting never expired.');
+ for(const x of n.mesh.reports){x.report.ttl=1800;x.age=1300;for(const l of x.report.links){l.ttl=1800;l.age=10;l.primary.age=10;l.backup.age=10;}}await update();
+ assert.equal($('readiness').classList.contains('success'),true,'Browser ignored the learned generous limit.');
+ n.mesh.reports=oldReports;await update();
  assert.equal($('meshGraph').querySelectorAll('svg .meshNode').length,5);assert.equal($('meshGraph').querySelectorAll('.meshEdge').length,20);assert.equal($('meshMatrix').querySelectorAll('table').length,2);assert.equal($('meshMatrix').querySelectorAll('.meshCell').length,20);
  assert.match($('meshMatrixInfo').textContent,/5 known node/);assert.equal($('meshGraph').querySelectorAll('line[stroke-dasharray="7 5"]').length,20);
  const node=$('meshGraph').querySelector('.meshNode');

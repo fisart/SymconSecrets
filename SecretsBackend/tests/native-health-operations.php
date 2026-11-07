@@ -13,10 +13,16 @@ foreach($health->statuses($get())as$h)$ok($h['synchronization']==='verified'&&$h
 $ok($stores[0]->head()===$head&&count($get()['operations']['audit'])===$audits,'Read-only health probes changed the reviewed head or audit retention.');
 $health->tick();$ok(count($wire)===$beforeWire+3,'The worker ignored the one-minute cadence.');
 $public=json_encode($health->statuses($get()));$ok(!str_contains($public,'digest')&&!str_contains($public,'clock')&&!str_contains($public,'GLOBAL-CANARY'),'Health metadata exposed private comparison material.');
-$now+=181;$h=$health->statuses($get())[$id1];$ok($h['synchronization']==='unknown'&&$h['problem']==='check-overdue','A stopped worker retained a green status.');
+$now+=395;$h=$health->statuses($get())[$id1];$ok($h['synchronization']==='verified'&&$h['staleAfterSeconds']===900,'Normal high-latency cycle raised a stale warning.');
+$now+=505;$h=$health->statuses($get())[$id1];$ok($h['synchronization']==='unknown'&&$h['problem']==='check-overdue','A stopped worker retained green beyond the generous bound.');
 $blockPrimary=true;for($round=0;$round<3;$round++){$probe();$now+=60;}
 $h=$health->statuses($get())[$id1];$ok($h['connection']==='unreachable'&&$h['synchronization']==='unknown'&&$h['failedChecks']===3&&$h['lastVerifiedAt']!==null,'Failed checks did not expire old verification.');
 $blockPrimary=false;$probe();$ok($health->statuses($get())[$id1]['synchronization']==='verified','Recovery did not clear stale reachability.');
+$ok($health->statuses($get())[$id1]['staleAfterSeconds']===900,'Failures raised the learned freshness window.');
+$now+=400;$probe();$h=$health->statuses($get())[$id1];$ok($h['staleAfterSeconds']===1200,'Actual successful check cadence did not update the allowance.');
+$now+=1199;$ok($health->statuses($get())[$id1]['synchronization']==='verified','Learned allowance expired early.');
+$now++;$ok($health->statuses($get())[$id1]['problem']==='check-overdue','Learned allowance failed to expire.');$probe();
+$ok($health->statuses($get())[$id1]['staleAfterSeconds']===1200,'Late recovery inflated the learned allowance.');
 // Local-only edits do not change shared fingerprints; Global edits invalidate green immediately.
 $cur=$stores[0]->read();$stores[0]->change($cur['head'],SecretsBackendCodec::uuid(),hash('sha256','private-health-edit'),static function($s){SecretsBackendTree::edit($s['vault']['local'],['Health local'],SecretsBackendTree::parse('"PRIVATE-HEALTH-CANARY"'),'create');$s['vault']['revision']=SecretsBackendCodec::increment($s['vault']['revision']);return $s;});
 $ok($health->statuses($get())[$id1]['synchronization']==='verified','A private Local edit invalidated Global health.');

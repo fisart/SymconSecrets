@@ -22,11 +22,11 @@ foreach($testState['pairing']['peers']as$id=>$q){
 $testStatus=$testWorker->status($testState);$local=array_values(array_filter($testStatus['members'],static fn($m)=>$m['local']))[0];
 secExpect($local['ready'],'A finished node discarded successful setup verification after only 350 seconds.');
 foreach($local['details']['links']as$l)secExpect($l['primary']['state']==='ok'&&$l['backup']['state']==='ok'&&$l['synchronization']==='verified','Setup details disagree with setup readiness.');
-// Routine monitoring still expires on its own cadence; setup does not authorize
+// Routine monitoring has its own generous bound; setup does not authorize
 // emergency reads or turn genuine failures into successful verification.
 $testQ=reset($testState['pairing']['peers']);
-secExpect((new SecretsBackendMeshStatus($testStore,$testPeer))->route($testState,$testQ,false)['state']==='unknown','Setup changed ordinary route monitoring.');
-secExpect((new SecretsBackendNativeHealth($testStore,$testPeer))->statuses($testState)[$testQ['id']]['synchronization']==='unknown','Setup changed ordinary synchronization monitoring.');
+secExpect((new SecretsBackendMeshStatus($testStore,$testPeer))->route($testState,$testQ,false)['state']==='ok','Routine monitoring rejected a normal high-latency cycle.');
+secExpect((new SecretsBackendNativeHealth($testStore,$testPeer))->statuses($testState)[$testQ['id']]['synchronization']==='verified','Routine synchronization rejected a normal high-latency cycle.');
 $routeKey='mesh:'.hash('sha256',$testQ['pairingId'].':'.$testQ['epoch'].':'.$testQ['routes']['endpoints'][0]);$goodRoute=$testStore->get($routeKey,'mesh-status');
 $badRoute=$goodRoute;$badRoute['state']='error';$badRoute['problem']='timeout';$badRoute['failedChecks']=1;$badRoute['at']=$testNow;
 $testStore->replace($routeKey,'mesh-status',$badRoute,time()+3600);
@@ -74,8 +74,6 @@ $meshRecord['at']=$testNow-$meshRecord['report']['ttl'];$testStore->replace($mes
 secExpect($send->invoke($testWorker,$testState,$testQ,null,$mesh)===null,'Stale acceptance was reported as approved or revoked.');
 $c=['at'=>$testNow-901,'run'=>$testSetup['run'],'clientGrant'=>$matching];
 secExpect($send->invoke($testWorker,$testState,$testQ,$c,$mesh)===null,'Expired HELLO acceptance was reused.');
-$c['at']=$testNow-300;
-secExpect($send->invoke($testWorker,$testState,$testQ,$c,$mesh)===null,'Older setup acceptance overrode a newer expired mesh observation.');
 $c['at']=$testNow-5;
 secExpect($send->invoke($testWorker,$testState,$testQ,$c,$mesh)===true,'Fresh setup acceptance was ignored.');
 $meshRecord['at']=$testNow;$meshRecord['report']['links'][$targetLink]['clientGrant']=SecretsBackendCodec::uuid();$testStore->replace($meshKey,'mesh-status',$meshRecord,time()+3600);

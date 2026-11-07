@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/Mailbox.php';
+require_once __DIR__.'/MonitoringFreshness.php';
 
 /** Bounded diagnostic reports. Never authority, secret data, or transitive network discovery. */
 final class SecretsBackendMeshStatus
@@ -23,12 +24,18 @@ final class SecretsBackendMeshStatus
         $routes=0;foreach($s['pairing']['peers']as$p)if(self::eligible($p))$routes+=count($p['routes']['endpoints']??[$p['descriptor']['endpoint']]);
         return max(60,($routes+1)*10);
     }
+    /** One node-wide allowance covers a complete fair-worker route sweep. */
+    public function monitoringWindow(array $s):int {
+        $seconds=SecretsBackendMonitoringFreshness::MINIMUM;
+        foreach($s['pairing']['peers']as$p)if(self::eligible($p))foreach($p['routes']['endpoints']??[$p['descriptor']['endpoint']]as$url){$r=$this->record($p,$url);$seconds=max($seconds,SecretsBackendMonitoringFreshness::seconds($r['cadence']??[]));}
+        return $seconds;
+    }
     public function route(array $s,array $p,bool $backup,?int $verificationSeconds=null):array {
         $urls=$p['routes']['endpoints']??[$p['descriptor']['endpoint']];
         $url=null;foreach($urls as$candidate){$magic=preg_match('/^[a-z0-9]{32}\.ipmagic\.de$/D',(string)parse_url($candidate,PHP_URL_HOST))===1;if($magic===$backup){$url=$candidate;break;}}
         if($url===null)return ['state'=>'none','age'=>null];
         $r=$this->record($p,$url);$age=self::age($this->now(),$r['at']??null);
-        $freshness=$verificationSeconds??(($s['native']['automaticSetup']['requested']??false)?1800:self::interval($s)*3);
+        $freshness=$verificationSeconds??(($s['native']['automaticSetup']['requested']??false)?1800:$this->monitoringWindow($s));
         return ['state'=>$age===null||$age>=$freshness?'unknown':($r['state']??'unknown'),'age'=>$age]+array_intersect_key($r,array_flip(['problem','httpStatus','certificateReason','failedChecks']))+['lastSuccessAge'=>self::age($this->now(),$r['lastSuccessAt']??null)];
     }
     /** One exact approved route per worker tick; neither fallback nor a co-located shortcut proves that route. */
@@ -59,6 +66,7 @@ final class SecretsBackendMeshStatus
             while(strlen(SecretsBackendCodec::json($report))>$budget&&$report['links']){array_pop($report['links']);$report['truncated']=true;}
             $this->save($p,'report',['at'=>$now,'endpoint'=>$url,'report'=>$report]);
         }
+        $r['cadence']=SecretsBackendMonitoringFreshness::observe($previous['cadence']??[],$now,$r['state']==='ok');
         $this->save($p,$url,$r);return ['status'=>'MESH_CHECKED','peerId'=>$p['id']];
     }
     private static function indicator(array $v,bool $none=false,bool $diagnostic=false):void {
@@ -87,13 +95,13 @@ final class SecretsBackendMeshStatus
     /** A node reports only its own observations, never repeats another node's report. */
     public function report(array $s,array $runtime=[]):array {
         $unknown=['state'=>'unknown','age'=>null];$components=($runtime['components']??[])+['frontend'=>$unknown,'backend'=>$unknown,'vault'=>$unknown];
-        $health=(new SecretsBackendNativeHealth($this->store,$this->peer,$this->clock))->statuses($s);$links=[];
+        $health=(new SecretsBackendNativeHealth($this->store,$this->peer,$this->clock))->statuses($s);$links=[];$ttl=($s['native']['automaticSetup']['requested']??false)?1800:$this->monitoringWindow($s);
         foreach($s['pairing']['peers']as$p){if(($p['state']??'')==='REVOKED')continue;$id=$p['id'];$h=$health[$id]??[];$active=self::eligible($p);$client=$s['native']['emergencyClients'][$id]??null;$granted=false;$grantIds=[];
             foreach($s['native']['emergencyGrants']??[]as$g)if($active&&$g['active']&&$g['source']===$id&&$g['pairingId']===$p['pairingId']){$granted=true;$grantIds[]=$g['id'];}
             $links[]=['id'=>$id,'name'=>substr(SecretsBackendPeerName::display($p),0,160),'paired'=>$active,'connection'=>$h['connection']??'unknown','sync'=>$h['synchronization']??'unknown','age'=>self::age($this->now(),$h['lastAttemptAt']??null),'ttl'=>$h['staleAfterSeconds']??180,
-                'primary'=>$this->route($s,$p,false),'backup'=>$this->route($s,$p,true),'consumes'=>$active&&is_array($client)&&$client['pairingId']===$p['pairingId'],'grants'=>$granted,'clientGrant'=>$active&&is_array($client)&&$client['pairingId']===$p['pairingId']?$client['grantId']:null,'grantIds'=>$grantIds];
+                'primary'=>$this->route($s,$p,false,$ttl),'backup'=>$this->route($s,$p,true,$ttl),'consumes'=>$active&&is_array($client)&&$client['pairingId']===$p['pairingId'],'grants'=>$granted,'clientGrant'=>$active&&is_array($client)&&$client['pairingId']===$p['pairingId']?$client['grantId']:null,'grantIds'=>$grantIds];
         }
-        $r=['format'=>self::FORMAT,'id'=>$s['native']['vaultId'],'name'=>substr(SecretsBackendPeerName::address($this->store->identity()['binding']['origin']),0,160),'components'=>$components,'backupService'=>$runtime['backupService']??$unknown,'source'=>$runtime['source']??$unknown,'fallback'=>$runtime['fallback']??false,'activeSource'=>$runtime['activeSource']??null,'conflicts'=>isset($s['native']['sharedGlobal'])?SecretsBackendNativeHealth::stamp($s)['conflicts']:0,'storagePercent'=>($storage=$this->store->metadata())['capacityBytes']>0?min(100,(int)ceil(100*$storage['usedBytes']/$storage['capacityBytes'])):null,'links'=>$links,'ttl'=>self::interval($s)*3,'truncated'=>false];self::validate($r,$r['id']);return $r;
+        $r=['format'=>self::FORMAT,'id'=>$s['native']['vaultId'],'name'=>substr(SecretsBackendPeerName::address($this->store->identity()['binding']['origin']),0,160),'components'=>$components,'backupService'=>$runtime['backupService']??$unknown,'source'=>$runtime['source']??$unknown,'fallback'=>$runtime['fallback']??false,'activeSource'=>$runtime['activeSource']??null,'conflicts'=>isset($s['native']['sharedGlobal'])?SecretsBackendNativeHealth::stamp($s)['conflicts']:0,'storagePercent'=>($storage=$this->store->metadata())['capacityBytes']>0?min(100,(int)ceil(100*$storage['usedBytes']/$storage['capacityBytes'])):null,'links'=>$links,'ttl'=>$ttl,'truncated'=>false];self::validate($r,$r['id']);return $r;
     }
     /** Cached authenticated observation for this exact active pairing; never authority. */
     public function peerReport(array $p):?array {
