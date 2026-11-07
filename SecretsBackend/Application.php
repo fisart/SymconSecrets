@@ -392,6 +392,7 @@ final class SecretsBackendApplication
     {
         if (!is_callable($this->settings['candidateProfile'] ?? null) || !is_array($state['policy']['management'])) throw new RuntimeException('Security configuration changes are unavailable.');
         $candidate = ($this->settings['candidateProfile'])(); $old = $state['policy']['management'];
+        if(in_array(true,$state['policy']['hardware'],true)&&SecretsBackendSecurityConfiguration::digest($old)!==SecretsBackendSecurityConfiguration::digest($candidate))throw new RuntimeException('Hardware enforcement is active; trust profile replacement is blocked.');
         if (!SecretsBackendSecurityConfiguration::sameFoundation($old['settings'], $candidate['settings'])
             || SecretsBackendSecurityConfiguration::digest($old['frontendSecurity']) !== SecretsBackendSecurityConfiguration::digest($candidate['frontendSecurity'])) throw new RuntimeException('Foundation changes require independent reprovisioning, not ordinary configuration import/apply.');
         if (SecretsBackendSecurityConfiguration::digest($old) !== SecretsBackendSecurityConfiguration::digest($candidate)
@@ -427,6 +428,7 @@ final class SecretsBackendApplication
             if (!$active || (in_array(true, $state['policy']['hardware'], true) && !array_filter($active, fn($credential) => $credential['hardware'] && $credential['trustVersion']===($this->settings['hardwareTrustVersion']??'none')))) throw new RuntimeException('Cannot revoke the last eligible administrator.');
             $state['identity']['revocation'] = SecretsBackendCodec::increment($state['identity']['revocation']);
         } elseif ($operation['kind'] === 'configuration') {
+            if(in_array(true,$state['policy']['hardware'],true)&&SecretsBackendSecurityConfiguration::digest($state['policy']['management'])!==SecretsBackendSecurityConfiguration::digest($operation['profile']))throw new RuntimeException('Hardware enforcement is active; trust profile replacement is blocked.');
             $state['policy']['management'] = $operation['profile'];
             $state['policy']['version'] = SecretsBackendCodec::increment($state['policy']['version']);
         } elseif ($operation['kind'] === 'policy') {

@@ -7,6 +7,27 @@ require_once __DIR__ . '/../SecretsFrontend/Configuration.php';
 
 final class SecretsBackendNativeBackup
 {
+    /** Recover all values and conflict variants locally without selecting a Global winner. */
+    public static function localRecoveryNode(array $backup):array
+    {
+        $state=$backup['state'];$conflicts=isset($state['native']['sharedGlobal'])?SecretsBackendSharedGlobal::view($state['native']['sharedGlobal'])['conflicts']:[];
+        $entries=[['key'=>$conflicts?'globalProjection':'global','node'=>$state['vault']['global']],['key'=>'local','node'=>$state['vault']['local']]];
+        if($conflicts){
+            $groups=[];
+            foreach(array_chunk($conflicts,100)as$i=>$batch){$records=[];
+                foreach($batch as$c){$versions=[];foreach($c['versions']as$v)$versions[]=['key'=>$v['id'],'node'=>['type'=>'object','entries'=>[
+                    ['key'=>'platforms','node'=>['type'=>'string','value'=>implode(', ',$v['platforms'])]],
+                    ['key'=>'deleted','node'=>['type'=>'boolean','value'=>$v['node']===null]],
+                    ['key'=>'value JSON','node'=>['type'=>'string','value'=>SecretsBackendCodec::json($v['node']===null?null:SecretsBackendTree::value($v['node']))]]
+                ]]];
+                $records[]=['key'=>$c['digest'],'node'=>['type'=>'object','entries'=>[['key'=>'path','node'=>['type'=>'string','value'=>SecretsBackendCodec::json($c['path'])]],['key'=>'versions','node'=>['type'=>'object','entries'=>$versions]]]]];}
+                $groups[]=['key'=>'Group '.($i+1),'node'=>['type'=>'object','entries'=>$records]];
+            }
+            $entries[]=['key'=>'Global conflict variants','node'=>['type'=>'object','entries'=>$groups]];
+            $entries[]=['key'=>'Global causal history','node'=>['type'=>'string','value'=>SecretsBackendNativeStore::canonical($state['native']['sharedGlobal'])]];
+        }
+        return ['type'=>'object','entries'=>$entries];
+    }
     public static function encrypt(SecretsBackendNativeStore $store,string $recoveryKey,?array $validated=null): string
     {
         $key=SecretsBackendCodec::unb64($recoveryKey,32);$material=$store->backupMaterial($validated);

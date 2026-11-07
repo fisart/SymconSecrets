@@ -39,9 +39,12 @@ try {
     // Exercise the same HTTP allowlist, envelope and JSON response used by the real browser.
     $httpSettings=array_replace(SecretsFrontendConfiguration::DEFAULTS,['Enabled'=>true,'AdminOrigin'=>$request['origin']]);
     $httpPath='/hook/secrets_frontend_'.$front->InstanceID;
-    $httpServer=['REQUEST_METHOD'=>'POST','REQUEST_URI'=>$httpPath,'HTTP_HOST'=>'secrets.example.test','HTTP_ORIGIN'=>$request['origin'],'CONTENT_TYPE'=>'application/json','HTTP_COOKIE'=>$request['cookie'],'HTTP_X_CSRF_TOKEN'=>$request['csrf'],'REMOTE_ADDR'=>'test'];
+    $httpServer=['HTTPS'=>'on','REQUEST_METHOD'=>'POST','REQUEST_URI'=>$httpPath,'HTTP_HOST'=>'secrets.example.test','HTTP_ORIGIN'=>$request['origin'],'CONTENT_TYPE'=>'application/json','HTTP_COOKIE'=>$request['cookie'],'HTTP_X_CSRF_TOKEN'=>$request['csrf'],'REMOTE_ADDR'=>'test'];
     $httpGateway=static fn(array $r):array=>(new ReflectionMethod(SecretsFrontend::class,'gateway'))->invoke($front,$r);
     $callHTTP=static fn(string $action,array $data,array $server):array=>SecretsFrontendHttp::response($httpSettings,$front->InstanceID,$server,$httpPath,'','',json_encode(['action'=>$action,'data'=>$data],JSON_THROW_ON_ERROR),$httpGateway);
+    $plaintext=$httpServer;unset($plaintext['HTTPS']);$plaintext['HTTP_X_FORWARDED_PROTO']='https';
+    $refusedHTTP=$callHTTP('sessionReveal',['operation'=>$sessionRead],$plaintext);
+    secExpect($refusedHTTP['status']===403&&!str_contains($refusedHTTP['body'],'NATIVE-SECRET-CANARY'),'A valid administrator cookie and forged TLS header exposed plaintext values.');
     $httpReveal=$callHTTP('sessionReveal',['operation'=>$sessionRead],$httpServer);
     secExpect($httpReveal['status']===200&&str_starts_with($httpReveal['headers']['Content-Type'],'application/json')&&str_contains($httpReveal['body'],'NATIVE-SECRET-CANARY'),'HTTP session reveal failed before reaching the backend.');
     $httpTimeout=$callHTTP('sessionTimeout',['seconds'=>300],$httpServer);

@@ -27,11 +27,7 @@ final class SecretsFrontendHttp
         $origin = SecretsFrontendConfiguration::origin($settings['AdminOrigin']);
         if ($origin === '') return $reply(503, 'Configure the administrator HTTPS origin in the instance.');
         $proxy = in_array($server['REMOTE_ADDR'] ?? '', $settings['TrustedHTTPSProxyIPs'], true);
-        // Match the existing Symcon modules: TLS terminates at the configured HTTPS
-        // endpoint, which may be a native listener, NAT or relay. PHP transport flags
-        // and a core WebServer caller are not guaranteed. Never infer TLS from headers.
-        // The browser checks the pinned HTTPS origin before any credential/API use;
-        // the server independently checks host, Origin, JSON and backend authorization.
+        // Host/Origin and browser secure-context checks do not prove TLS.
         $headers['Content-Security-Policy'] = str_replace("connect-src 'self'", 'connect-src ' . $origin, $headers['Content-Security-Policy']);
         $host = $proxy && isset($server['HTTP_X_FORWARDED_HOST']) ? $server['HTTP_X_FORWARDED_HOST'] : ($server['HTTP_HOST'] ?? '');
         try { $requestOrigin = SecretsFrontendConfiguration::origin('https://' . $host); }
@@ -59,6 +55,9 @@ final class SecretsFrontendHttp
             }
             $origin=$requestOrigin;
             $headers['Content-Security-Policy']=str_replace('connect-src '.$primaryOrigin,'connect-src '.$origin,$headers['Content-Security-Policy']);
+        }
+        if($method==='POST'&&$requestOrigin===$primaryOrigin&&!SecretsFrontendConnectDiscovery::secureRoute($server,$primaryOrigin,$settings['TrustedHTTPSProxyIPs'],$ui['connectDiscovery']??[])){
+            return $reply(403,json_encode(['error'=>'HTTPS transport is not verified by Symcon. Use the approved Magic address or configure the exact trusted HTTPS proxy with forwarded-proto evidence. Host and Origin headers alone cannot authorize a sensitive request.','code'=>'HTTPS_TRANSPORT_UNVERIFIED','transport'=>['httpsFlag'=>in_array($server['HTTPS']??'', ['on','off','1','0',''],true)?($server['HTTPS']??'missing'):'other','trustedProxy'=>$proxy,'forwardedProto'=>in_array($server['HTTP_X_FORWARDED_PROTO']??'', ['http','https',''],true)?($server['HTTP_X_FORWARDED_PROTO']??'missing'):'other']],JSON_THROW_ON_ERROR),['Content-Type'=>'application/json; charset=utf-8']);
         }
         if ($requestOrigin !== $origin) {
             if ($method === 'POST') return $reply(403, 'Wrong administrator origin.');

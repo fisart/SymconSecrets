@@ -75,10 +75,7 @@ $settings = ['origin' => 'https://secrets.example.test', 'frontend' => 123, 'bac
     'hardwareAAGUIDs' => [str_repeat('42', 16)], 'hardwareTrustVersion' => 'synthetic-test-v1', 'managementProfile' => $profile, 'candidateProfile' => static fn() => $candidate];
 $protectedApp = new SecretsBackendApplication($store, $settings);
 $operation = ['kind' => 'configuration', 'profile' => $candidate];
-$begin = secOptions($protectedApp->handle('prepare', ['operation' => $operation], $request));
-secExpect($begin['requiresHardware'] === true, 'Mixed write-only policy let ordinary passkey change hardware trust.');
-secRejectReason(static fn() => $protectedApp->handle('approve', ['challengeId' => $begin['challengeId'], 'credential' => secAssertion($ordinary, $begin['options']['challenge'], 2)], $request), 'Wrong approval credential');
-$begin = secOptions($protectedApp->handle('prepare', ['operation' => $operation], $request));
-$protectedApp->handle('approve', ['challengeId' => $begin['challengeId'], 'credential' => secAssertion($first, $begin['options']['challenge'], 4)], $request);
-secRejectReason(static fn() => $protectedApp->handle('list', [], $request), 'Security profile changed');
-echo "PASS A05 mixed-policy trust-profile change requires an existing eligible hardware approver; stale profile worker rejected\n";
+$head=$store->head();
+secRejectReason(static fn()=>$protectedApp->handle('prepare',['operation'=>$operation],$request),'enforcement');
+secExpect($store->head()===$head,'Rejected enforced hardware-profile replacement changed the reviewed head.');
+echo "PASS SA-01 enforced trust-profile changes refused before approval, including mixed hardware policy; authority retained\n";

@@ -14,6 +14,7 @@ final class SecretsBackendNativeEffects
         if(!is_array($p)||($p['scheme']??'')!=='https'||!isset($p['host'])||isset($p['user'])||isset($p['pass'])||isset($p['fragment'])||isset($p['query'])||strlen($op['endpoint'])>1024)throw new RuntimeException('Use the exact HTTPS token endpoint without credentials, query or fragment.');
         if(!is_string($op['clientId'])||$op['clientId']===''||strlen($op['clientId'])>512||preg_match('/[\x00-\x1f]/',$op['clientId'])||!in_array($op['authentication'],['basic','body','none'],true))throw new RuntimeException('Choose the OAuth client and authentication method.');
         foreach(['secret','refresh','result']as$kind){if(!in_array($op[$kind.'Scope'],['global','local'],true)||!is_array($op[$kind.'Path']))throw new RuntimeException('Select exact local/global token references.');SecretsBackendTree::path($op[$kind.'Path']);}
+        if($op['refreshScope']!=='local')throw new RuntimeException('Keep rotating refresh tokens Local on one executor installation. Shared Global refresh tokens cannot be coordinated safely during a partition.');
         self::token($state,$op['refreshScope'],$op['refreshPath']);if($op['authentication']!=='none')self::token($state,$op['secretScope'],$op['secretPath']);
         if(SecretsBackendTree::at($state['vault'][$op['resultScope']],$op['resultPath'])['type']!=='object')throw new RuntimeException('Select an object record for the refreshed token.');
         if(!is_string($op['accessField'])||$op['accessField']===''||strlen($op['accessField'])>64||preg_match('/[\x00-\x1f]/',$op['accessField']))throw new RuntimeException('Choose an access-token field name.');
@@ -26,6 +27,7 @@ final class SecretsBackendNativeEffects
     }
     public static function targetWritable(array $state,array $provider): bool
     {
+        if(($provider['refreshScope']??'')!=='local')return false;
         if(!in_array('global',[$provider['resultScope'],$provider['refreshScope']],true))return true;
         return $state['native']['globalWritable']&&($provider['targetGlobalTreeId']??'')===$state['native']['globalTreeId'];
     }
