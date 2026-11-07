@@ -17,11 +17,7 @@ final class SecretsFrontendTransport
             // Module hooks may omit the caller and PHP HTTPS flag. Match the actual
             // accepted TCP connection in this Linux/container network namespace instead.
             if(PHP_OS_FAMILY!=='Linux')return false;
-            $connections=self::connections($server,static function(string $name):?string{
-                $p='/proc/net/'.$name;if($name==='tcp6'&&!file_exists($p))return '';if(!is_readable($p))return null;
-                $text=@file_get_contents($p,false,null,0,self::TABLE_LIMIT+1);
-                return is_string($text)&&strlen($text)<=self::TABLE_LIMIT?$text:null;
-            });
+            $connections=self::connections($server,static fn(string $name)=>self::readKernel($name));
             if(!$connections)return false;
             $remote=$server['REMOTE_PORT']??null;
             if($remote!==null&&$remote!==0&&$remote!=='0'){
@@ -49,18 +45,53 @@ final class SecretsFrontendTransport
         return count($matches)===1;
     }
 
-    public static function diagnostic(array $context,array $server):array
+    private static function readKernel(string $name):?string
+    {
+        $p='/proc/net/'.$name;if($name==='tcp6'&&!file_exists($p))return '';if(!is_readable($p))return null;
+        $text=@file_get_contents($p,false,null,0,self::TABLE_LIMIT+1);
+        return is_string($text)&&strlen($text)<=self::TABLE_LIMIT?$text:null;
+    }
+
+    public static function diagnostic(array $context,array $server,?callable $reader=null):array
     {
         $port=$server['REMOTE_PORT']??null;
-        $ssl=null;$pending=null;
-        try{$ssl=0;$pending=0;foreach(IPS_GetInstanceListByModuleID(self::WEB_SERVER)as$id){if(IPS_HasChanges((int)$id))$pending++;if(self::sslListener((int)$id))$ssl++;}}catch(Throwable $ignored){$ssl=null;$pending=null;}
+        $ssl=null;$pending=null;$listeners=[];$candidates=null;$exact=null;$reason='inspection-unavailable';$ports=[];$otherAddresses=null;
+        try{
+            $ssl=0;$pending=0;
+            foreach(IPS_GetInstanceListByModuleID(self::WEB_SERVER)as$id){
+                $id=(int)$id;if(IPS_HasChanges($id))$pending++;
+                if(!self::sslListener($id))continue;$ssl++;
+                $bind=self::address((string)IPS_GetProperty($id,'Server'));$p=IPS_GetProperty($id,'Port');
+                if(count($listeners)<8)$listeners[]=['id'=>$id,'port'=>is_int($p)?$p:null,'portType'=>gettype($p),'bind'=>$bind===null?'not-an-IP':($bind===str_repeat("\0",strlen($bind))?(strlen($bind)===4?'IPv4-any':'IPv6-any'):'specific-IP')];
+            }
+            $reader??=static fn(string $name)=>self::readKernel($name);
+            $rows=self::connections($server,$reader);
+            if($rows===null)$reason='kernel-or-peer-metadata-unavailable';
+            else{
+                $candidates=count($rows);$exact=0;$allSSL=(bool)$rows;$exactSSL=null;
+                foreach($rows as$c){$tls=self::connectionTLS($c);if(!$tls)$allSSL=false;
+                    if(count($ports)<8)$ports[]=['localPort'=>$c['port'],'family'=>$c['family'],'sourcePortMatches'=>$c['remotePort']===(int)$port,'sslListenerMatches'=>$tls];
+                    if($c['remotePort']===(int)$port){$exact++;$exactSSL=$tls;}
+                }
+                $reason=!$rows?'no-kernel-connection-for-reported-peer':($exact>1?'multiple-exact-connections':($exact===1?($exactSSL?'ssl-match-after-refusal':'exact-connection-not-on-SSL-listener'):($allSSL?'SSL-only-peer-after-refusal':'peer-has-plain-or-unrecognized-connections')));
+            }
+            // Count only: reveal no other clients' addresses or connection records.
+            $otherAddresses=0;$address=self::address((string)($server['REMOTE_ADDR']??''));
+            foreach(['tcp','tcp6']as$name){$table=$reader($name);if(!is_string($table)||strlen($table)>self::TABLE_LIMIT){$otherAddresses=null;break;}
+                foreach(explode("\n",$table)as$line){$f=preg_split('/\s+/',trim($line));if(count($f)<4||!in_array($f[3],['01','08'],true))continue;
+                    $r=explode(':',$f[2]);if(count($r)===2&&preg_match('/^[A-Fa-f0-9]{4}$/D',$r[1])&&hexdec($r[1])===(int)$port&&self::kernelAddress($r[0])!==$address)$otherAddresses++;
+                }
+            }
+        }catch(Throwable $ignored){$reason='local-inspection-failed';}
         return ['caller'=>is_int($context['INSTANCE']??null)?$context['INSTANCE']:null,'remoteAddressSupplied'=>self::address((string)($server['REMOTE_ADDR']??''))!==null,
             'remoteLoopback'=>in_array($server['REMOTE_ADDR']??'', ['127.0.0.1','::1'],true),
             'remotePort'=>is_scalar($port)&&preg_match('/^[0-9]{1,5}$/D',(string)$port)?(int)$port:null,
             'httpsFlag'=>in_array($server['HTTPS']??'', ['on','off','1','0',''],true)?($server['HTTPS']??'missing'):'other',
             'scheme'=>in_array($server['REQUEST_SCHEME']??'', ['http','https',''],true)?($server['REQUEST_SCHEME']??'missing'):'other',
             'activeSSLListeners'=>$ssl,'listenersWithPendingChanges'=>$pending,
-            'tcpTableReadable'=>PHP_OS_FAMILY==='Linux'&&is_readable('/proc/net/tcp'),'tcp6TableReadable'=>PHP_OS_FAMILY==='Linux'&&is_readable('/proc/net/tcp6')];
+            'tcpTableReadable'=>PHP_OS_FAMILY==='Linux'&&is_readable('/proc/net/tcp'),'tcp6TableReadable'=>PHP_OS_FAMILY==='Linux'&&is_readable('/proc/net/tcp6'),
+            'reason'=>$reason,'serverAddressSupplied'=>isset($server['SERVER_ADDR']),'peerConnections'=>$candidates,'exactConnections'=>$exact,
+            'sameSourcePortOtherAddress'=>$otherAddresses,'listeners'=>$listeners,'connections'=>$ports];
     }
 
     private static function sslListener(int $id):bool
@@ -84,8 +115,8 @@ final class SecretsFrontendTransport
     private static function connections(array $server,callable $read):?array
     {
         $address=self::address((string)($server['REMOTE_ADDR']??''));if($address===null)return null;
-        $local=isset($server['SERVER_ADDR'])?self::address((string)$server['SERVER_ADDR']):null;
-        if(isset($server['SERVER_ADDR'])&&$local===null)return null;
+        // SERVER_ADDR can describe the external/NAT address rather than this
+        // namespace. Use the actual kernel address when matching the SSL bind.
         $matches=[];
         foreach(['tcp','tcp6']as$name){
             $table=$read($name);
@@ -99,7 +130,7 @@ final class SecretsFrontendTransport
                 if(count($fields)<4||!in_array($fields[3],['01','08'],true))continue;
                 $a=explode(':',$fields[1]);$b=explode(':',$fields[2]);
                 if(count($a)!==2||count($b)!==2||!preg_match('/^[A-Fa-f0-9]{4}$/D',$a[1])||!preg_match('/^[A-Fa-f0-9]{4}$/D',$b[1]))continue;
-                if(self::kernelAddress($b[0])!==$address||($local!==null&&self::kernelAddress($a[0])!==$local))continue;
+                if(self::kernelAddress($b[0])!==$address)continue;
                 $port=(int)hexdec($a[1]);$addressLocal=self::kernelAddress($a[0]);if($port===0||$addressLocal===null)return null;$matches[]=['port'=>$port,'address'=>$addressLocal,'family'=>strlen($a[0])===32?6:4,'remotePort'=>(int)hexdec($b[1])];
             }
         }

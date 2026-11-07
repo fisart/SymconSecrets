@@ -9,7 +9,8 @@ $server=['REMOTE_ADDR'=>'198.51.100.8','REMOTE_PORT'=>'54321'];
 $table=$line('172.18.0.2',8443,'198.51.100.8',54321);
 $read=static fn($name)=>$name==='tcp'?$table:'';
 $c=SecretsFrontendTransport::connection($server,$read);$ok($c!==null&&$c['port']===8443&&$c['address']===inet_pton('172.18.0.2'),'NAT listener tuple was not identified.');
-foreach([['REMOTE_ADDR'=>'198.51.100.9'],['REMOTE_PORT'=>54322],['REMOTE_PORT'=>'bad'],['SERVER_ADDR'=>'172.18.0.3']]as$override)$ok(SecretsFrontendTransport::connection(array_replace($server,$override),$read)===null,'Different peer/local tuple was accepted.');
+foreach([['REMOTE_ADDR'=>'198.51.100.9'],['REMOTE_PORT'=>54322],['REMOTE_PORT'=>'bad']]as$override)$ok(SecretsFrontendTransport::connection(array_replace($server,$override),$read)===null,'Different peer/local tuple was accepted.');
+$ok(SecretsFrontendTransport::connection($server+['SERVER_ADDR'=>'203.0.113.5'],$read)!==null,'External NAT SERVER_ADDR masked an exact kernel connection.');
 $ok(SecretsFrontendTransport::connection(['HTTP_REMOTE_ADDR'=>'198.51.100.8','HTTP_REMOTE_PORT'=>'54321'],$read)===null,'HTTP mirrors supplied a trusted connection tuple.');
 $ok(SecretsFrontendTransport::connection($server,static fn($name)=>$name==='tcp'?$table."\n".$line('172.18.0.3',3777,'198.51.100.8',54321):'')===null,'Ambiguous kernel connections were trusted.');
 $ok(SecretsFrontendTransport::connection($server,static fn($name)=>null)===null,'Missing kernel table was trusted.');
@@ -30,6 +31,8 @@ if(PHP_OS_FAMILY==='Linux'){
         $core->properties['Port']=$localPort;$core->properties['Server']='127.0.0.1';
         $s=['REQUEST_METHOD'=>'POST','REQUEST_URI'=>'/hook/secrets_frontend_50365','REMOTE_ADDR'=>'127.0.0.2','REMOTE_PORT'=>$remotePort,'HTTP_HOST'=>'heartbeat.ap-fischer.de:46901','HTTP_ORIGIN'=>'https://heartbeat.ap-fischer.de:46901','CONTENT_TYPE'=>'application/json'];
         $GLOBALS['_IPS']=['SENDER'=>'WebHook','INSTANCE'=>0];$ok(SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$s),'Actual kernel connection did not match the configured SSL listener.');
+        $nat=$s;$nat['SERVER_ADDR']='203.0.113.5';$ok(SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$nat),'NAT/external server address rejected the actual SSL socket.');
+        $observed=SecretsFrontendTransport::diagnostic($GLOBALS['_IPS'],$s);$ok($observed['exactConnections']===1&&$observed['connections'][0]['sslListenerMatches']&&$observed['listeners'][0]['port']===$localPort,'Diagnostics did not explain exact SSL socket matching.');
         $noSource=$s;unset($noSource['REMOTE_PORT']);$ok(SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$noSource),'Missing source port rejected an unambiguously SSL-only peer.');
         $destination=$s;$destination['REMOTE_PORT']=$localPort;$ok(SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$destination),'Symcon destination-port metadata was treated as an unavailable client source port.');
         $internalHTTP=$noSource;$internalHTTP['HTTPS']='off';$internalHTTP['REQUEST_SCHEME']='http';$ok(SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$internalHTTP),'Generic PHP flags overrode the kernel-bound SSL listener.');
@@ -37,6 +40,7 @@ if(PHP_OS_FAMILY==='Linux'){
         $plainListener=stream_socket_server('tcp://127.0.0.1:0',$errno,$error);$sockets[]=$plainListener;
         $plainAddress=stream_socket_get_name($plainListener,false);$plainClient=stream_socket_client('tcp://'.$plainAddress,$errno,$error,2,STREAM_CLIENT_CONNECT,$clientContext);$sockets[]=$plainClient;$plainAccepted=stream_socket_accept($plainListener,2);$sockets[]=$plainAccepted;
         $ok(!SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$noSource),'A concurrent plain socket borrowed another connection’s TLS proof.');
+        $natNoSource=$noSource;$natNoSource['SERVER_ADDR']='203.0.113.5';$ok(!SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$natNoSource),'NAT server metadata hid a plaintext candidate.');
         $ok(SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$s),'An exact SSL tuple was blocked by an unrelated plain connection.');
         stream_socket_shutdown($plainClient,STREAM_SHUT_WR);
         for($i=0;$i<10&&!feof($plainAccepted);$i++)fread($plainAccepted,1);
@@ -48,8 +52,12 @@ if(PHP_OS_FAMILY==='Linux'){
         $ok($r['status']===401&&$calls===1,'Bound SSL transport did not reach the existing authentication boundary.');
         $core->properties['EnableSSL']=false;$s['HTTP_X_FORWARDED_PROTO']='https';$r=SecretsFrontendHttp::response($settings,50365,$s,$s['REQUEST_URI'],'','','{"action":"session","data":{}}',$gateway);
         $ok($r['status']===403&&$calls===1,'Forged HTTPS headers on a plain local listener reached authentication.');$core->properties['EnableSSL']=true;
-        $core->properties['Server']='127.0.0.2';$ok(!SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$s),'An SSL listener bound to another local address vouched for this socket.');$core->properties['Server']='127.0.0.1';
+        $observed=SecretsFrontendTransport::diagnostic($GLOBALS['_IPS'],$s);$ok($observed['reason']==='ssl-match-after-refusal','Diagnostic snapshot did not distinguish a successful later observation.');
+        $core->properties['Server']='127.0.0.2';$ok(!SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$s),'An SSL listener bound to another local address vouched for this socket.');$observed=SecretsFrontendTransport::diagnostic($GLOBALS['_IPS'],$s);$ok($observed['reason']==='exact-connection-not-on-SSL-listener','Wrong bind diagnostic did not identify a nonmatching SSL listener.');$core->properties['Server']='127.0.0.1';
         $core->properties['Port']=$localPort===65535?65534:$localPort+1;$ok(!SecretsFrontendTransport::nativeTLS($GLOBALS['_IPS'],$s),'The existence of a different SSL listener vouched for this socket.');
     }finally{foreach(array_reverse($sockets)as$socket)if(is_resource($socket))fclose($socket);}
 }
+$observed=SecretsFrontendTransport::diagnostic([],['REMOTE_ADDR'=>'198.51.100.8','REMOTE_PORT'=>54321],static fn($name)=>$name==='tcp'?$line('172.18.0.2',8443,'198.51.100.9',54321):'');
+$ok($observed['reason']==='no-kernel-connection-for-reported-peer'&&$observed['sameSourcePortOtherAddress']===1,'Address translation could not be distinguished from a missing socket.');
+$ok(!str_contains(json_encode($observed),'198.51.100.')&&!str_contains(json_encode($observed),'172.18.'),'Diagnostic exposed client or local addresses.');
 echo "PASS $checks native transport checks: engine caller, kernel socket binding, NAT, IPv4/IPv6, plaintext/header spoof rejection, applied listener settings and unchanged authentication\n";
