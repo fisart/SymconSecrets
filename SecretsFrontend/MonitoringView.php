@@ -76,14 +76,26 @@ final class SecretsFrontendMonitoringView
         $queued=array_values(array_filter($n['outbox']??[],static fn($j)=>$j['receiverId']===$p['id']&&in_array($j['kind'],['GLOBAL_ENABLE','PAIR_REQUEST','PAIR_ACCEPT','SYNC','RESYNC'],true)));
         $blocked=!empty($p['delivery']['problem'])&&$p['delivery']['problem']!=='not-attempted';$expired=in_array($p['state'],['PENDING_REMOTE','PENDING_APPROVAL'],true)&&($p['expires']??0)>0&&$p['expires']<($n['serverTime']??time());
         $shared=($p['globalMode']??$p['pair']['scope']??null)==='shared-global-v1';$h=$p['health']??null;
-        $ready=$shared&&($p['active']??false)&&$p['state']==='ACTIVE'&&$received&&$sent&&!$queued&&($n['globalWritable']??false)&&!$blocked&&(!$h||$h['synchronization']==='verified');
+        // HEALTH compares the complete current Global history for this pairing.
+        // A matching comparison supersedes absent/older per-message receipts;
+        // retain those receipts as historical facts, never invent an ACK.
+        $verified=$h&&($h['synchronization']??null)==='verified'&&($h['connection']??null)==='reachable'&&empty($h['problem'])&&empty($h['failedChecks']);
+        $ready=$shared&&($p['active']??false)&&$p['state']==='ACTIVE'&&!$queued&&($n['globalWritable']??false)&&!$blocked&&($verified||(!$h&&$received&&$sent));
+        $incomingText=$verified?'✓ Background verification confirmed matching Global state on both platforms.':($received?'✓ Received the other platform’s Global section for this connection.':'Waiting to receive the other platform’s Global section.');
+        $outgoingText=$verified?'✓ Current Global state verified; a separate delivery acknowledgement is not required.':($sent&&!$queued?'✓ The other platform acknowledged this platform’s current Global section.':'Waiting for acknowledgement of this platform’s current Global section.');
+        if($blocked){$heading='Data exchange blocked';$help='Pairing is approved, but delivery is failing. Use Connection check below; the saved pairing does not need another approval.';}
+        elseif(!($n['globalWritable']??false)){$heading='Global changes paused';$help='Sharing cannot be marked ready while Global changes are paused on this installation. Resolve ownership before continuing.';}
+        elseif($queued){$heading='Waiting for pending sharing messages';$help='Sharing messages are still waiting for delivery. Background delivery will retry automatically.';}
+        elseif($h&&!$verified){$heading=($h['synchronization']??'')==='mismatch'?'Global synchronization needs attention':'Waiting for synchronization verification';$help='A fresh successful comparison of the complete Global state is required. Background verification continues automatically.';}
+        else{$heading='Waiting for data exchange';$help='Waiting for a verified comparison of the complete Global state or completion of the initial exchange.';}
+
         $healthProblem=$h&&(!empty($h['problem'])||in_array($h['connection'],['unreachable','retrying'],true)||$h['synchronization']==='mismatch');
         $label=['PENDING_REMOTE'=>'Waiting for the first platform','PENDING_APPROVAL'=>'Waiting for your approval','ACTIVE'=>'Pairing approved','REVOKED'=>'Removed'][$p['state']]??'Check connection';
         if($expired)$label='Approval window expired';elseif($p['state']==='ACTIVE'){
             if($h)$label=(['verified'=>'Verified in sync','synchronizing'=>'Synchronizing','mismatch'=>'Not synchronized','unknown'=>'Status unknown'][$h['synchronization']]??'Status unknown').($h['connection']==='unreachable'?' · unreachable':($h['connection']==='retrying'?' · check retry pending':'')).(!empty($n['globalConflictCount'])?' · resolve conflicts':'');
             elseif($blocked)$label='Pairing approved · delivery blocked';else $label=$ready?(!empty($n['globalConflictCount'])?'Shared · resolve conflicts':($shared?'Ready · Global synchronized':'Legacy connection · separate copies')):'Pairing approved · waiting for data exchange';
         }
-        return ['expired'=>$expired,'blocked'=>$blocked,'healthProblem'=>(bool)$healthProblem,'warning'=>$blocked||$expired||$healthProblem,'label'=>$label,'state'=>$h['synchronization']??'unknown','sharing'=>['received'=>$received,'sent'=>$sent,'queued'=>$queued,'ready'=>$ready]];
+        return ['expired'=>$expired,'blocked'=>$blocked,'healthProblem'=>(bool)$healthProblem,'warning'=>$blocked||$expired||$healthProblem,'label'=>$label,'state'=>$h['synchronization']??'unknown','sharing'=>['received'=>$received,'sent'=>$sent,'queued'=>$queued,'ready'=>$ready,'verified'=>(bool)$verified,'incomingText'=>$incomingText,'outgoingText'=>$outgoingText,'heading'=>$heading,'help'=>$help]];
     }
     private static function setup(array $a):array {
         $members=$a['members']??[];$ready=count(array_filter($members,static fn($m)=>!empty($m['ready'])&&(!empty($m['local'])||!empty($m['fresh']))));$completed=!empty($a['completedAt'])&&empty($a['running']);
@@ -100,7 +112,7 @@ final class SecretsFrontendMonitoringView
     }
     private static function overview(array $n,string $path):array {
         $o=$n['overview'];$peers=array_values(array_filter($n['peers']??[],static fn($p)=>$p['state']!=='REVOKED'));$active=array_filter($peers,static fn($p)=>($p['active']??false)&&$p['state']==='ACTIVE');$pending=count($peers)-count($active);
-        $blocked=count(array_filter($peers,static fn($p)=>$p['display']['blocked']));$expired=count(array_filter($peers,static fn($p)=>$p['display']['expired']));$ready=count(array_filter($active,static fn($p)=>isset($p['health'])?$p['health']['synchronization']==='verified':$p['display']['sharing']['ready']));$unready=count($active)-$ready;$conflicts=$n['globalConflictCount']??count($n['sharedGlobal']['conflicts']??[]);
+        $blocked=count(array_filter($peers,static fn($p)=>$p['display']['blocked']));$expired=count(array_filter($peers,static fn($p)=>$p['display']['expired']));$ready=count(array_filter($active,static fn($p)=>isset($p['health'])?$p['display']['sharing']['verified']:$p['display']['sharing']['ready']));$unready=count($active)-$ready;$conflicts=$n['globalConflictCount']??count($n['sharedGlobal']['conflicts']??[]);
         $connectionDetail=[$ready.' synchronized'];if($unready)$connectionDetail[]=$unready.' awaiting data or delivery';if($pending)$connectionDetail[]=$pending.' awaiting approval';if($blocked)$connectionDetail[]=$blocked.' delivery blocked';if($expired)$connectionDetail[]=$expired.' expired';
         $p=$n['backupOrigin']??[];$magicActive=($p['status']??'')==='active';$magicMissing=$magicActive&&($o['magicCredentials']??null)===0;$c=$n['connectDiscovery']??null;
         $relayProblem=$magicActive&&preg_match('~^https://[a-z0-9]{32}\.ipmagic\.de$~D',$p['origin'])&&$c!==null&&(($c['available']??false)!==true||($c['origin']??null)!==$p['origin']);

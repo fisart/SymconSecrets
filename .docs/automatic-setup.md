@@ -106,3 +106,12 @@ The browser only renders the returned states, descriptions, counts and snapshot 
 A failed browser refresh produces a separate **Browser connection** notice. It preserves the last Symcon verdict and its evaluation time instead of turning healthy nodes yellow, declaring authorization unknown or suggesting setup restarted. This is explicitly a historical snapshot until another response arrives. Refresh errors can still disable approval actions until refreshed; that interaction protection is not a change to reported mesh health. Browser scheduling, session security and secret masking remain browser responsibilities where needed.
 
 Tests execute the production PHP projector for browser fixtures and exercise its real authenticated gateway. They cover normal latency, exact server-side expiry, faults, partial reports and grant mismatches, plus forward/backward browser clock changes, an artificially delayed response, failed refresh and recovery. Those browser conditions cannot alter the server verdict. No setup restart is required after updating.
+
+
+## Connection wizard after verified synchronization (build 8)
+
+The connection wizard could remain at Step 5 with “Verified in sync”, zero queued messages and a missing or older outgoing delivery receipt. It required an exact local stream-revision ACK in addition to current whole-state verification. A stream receipt is message history; its absence or old revision does not contradict a successful signed HEALTH comparison of the complete Global history.
+
+Symcon now accepts that current comparison for Step 6, without fabricating or updating a delivery receipt. The peer must still be active, approved for shared Global, reachable, verified by the backend, free of health/delivery problems and pending sharing messages, with local Global writes enabled. A stale/unknown/mismatched comparison cannot be rescued by old receipts. Existing initial-exchange behavior for installations without health metadata remains unchanged. Overview counts synchronized connections from the same server-computed verification result; paused writes and pending delivery remain separate concerns. The wizard displays whether full-state verification satisfied the check instead of claiming that a missing ACK arrived.
+
+This only changes status presentation. It does not change synchronization, grant approval, emergency reads, pairing authentication or the configuration-backup schema. No reconnect or setup restart is required.

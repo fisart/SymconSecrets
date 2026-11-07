@@ -73,9 +73,9 @@ function renderPeerWizard(){const n=snapshot?.native;if(!n){peerWizardPause();re
   if(!peerWizardState.peerId){peerWizardState.peerId=p.id;peerWizardState.pairingId=p.pairingId;$('peerCompared').checked=false;}
   if(p.state==='REVOKED'){peerWizardPause();peerWizardSetStep(1);$('peerProgressMessage').textContent='';$('peerWizardStatus').textContent='This connection was removed. Start a new setup or select another connection.';return;}
   if(p.active&&p.state==='ACTIVE'){
-   const {received,sent,queued,ready}=peerSharingProgress(p);
-   $('peerIncomingCheck').textContent=received?'✓ Received the other platform’s Global section for this connection.':'Waiting to receive the other platform’s Global section.';
-   $('peerOutgoingCheck').textContent=sent&&!queued.length?'✓ The other platform acknowledged this platform’s current Global section.':'Waiting for acknowledgement of this platform’s current Global section.';
+   const sharing=peerSharingProgress(p),ready=sharing.ready;
+   $('peerIncomingCheck').textContent=sharing.incomingText||'Status not supplied by Symcon.';
+   $('peerOutgoingCheck').textContent=sharing.outgoingText||'Status not supplied by Symcon.';
    step=ready?6:5;
    $('peerReadySummary').textContent=peerShared(p)?'Global is shared with '+new URL(p.descriptor.endpoint).origin+'. '+(n.globalConflictCount?n.globalConflictCount+' conflict(s) need a choice in Secrets.':'Both platforms can edit it. Local remains private.'):'Global synchronization starts automatically when both platforms are updated.';
   }else if(p.state==='PENDING_APPROVAL')step=4;
@@ -87,7 +87,7 @@ function renderPeerWizard(){const n=snapshot?.native;if(!n){peerWizardPause();re
  const expired=step>=3&&step<=4&&(p?peerExpired(p):Number(peerWizardState.expires)>0&&Number(peerWizardState.expires)<peerWizardNow());
  $('peerWizardStatus').textContent='Step '+step+' of 6 · '+(first?'First platform':'Second platform')+(p?' · '+peerConnectionLabel(p):expired?' · Invitation expired':'')+(n.globalWritable?'':' · This platform’s Global section is frozen; resolve ownership before starting a new connection.')+(n.remoteHttpsAvailable===false?' · This Symcon PHP runtime has no PHP-stream HTTPS transport. Remote platform sharing is unavailable; check your Symcon PHP configuration.':'');
  $('nativeJoin').disabled=!!p||!n.globalWritable;$('nativeJoin').hidden=!!p;$('peerSendHelp').hidden=!!p;$('peerRequestTitle').textContent=p?(expired?'Request expired':'Request sent · waiting for the first platform'):'Second platform: send your request';$('peerRequestNote').textContent=p?(expired?'The approval window has closed. Follow Start again after an expired request below.':'Your request is saved. Use Connection check below to see delivery progress. You do not need to submit it again.'):'The next popup asks for this platform’s existing passkey.';
- if(step===5){$('peerExchangeTitle').textContent=p?.health?.synchronization==='mismatch'?'Global synchronization needs attention':p?.health&&p.health.synchronization!=='verified'?'Waiting for synchronization verification':peerDeliveryBlocked(p)?'Data exchange blocked':'Waiting for data exchange';$('peerExchangeHelp').textContent=peerDeliveryBlocked(p)?'Pairing is approved, but delivery is failing. The connection is not ready. Use Connection check below; the saved pairing does not need another approval.':'Pairing is approved. Waiting for both data-exchange checks and a fresh background verification. '+peerHealthDetail(p);}
+ if(step===5){const sharing=peerSharingProgress(p);$('peerExchangeTitle').textContent=sharing.heading||'Waiting for synchronization verification';$('peerExchangeHelp').textContent=(sharing.help||'Refresh status for the latest Symcon evaluation.')+' '+peerHealthDetail(p);}
  renderPeerDelivery(p,step);renderPeerBlocked(p,step);$('peerExpired').hidden=!expired;$('peerRemoveExpired').hidden=!p;$('peerResend').hidden=true;if(typeof pairCoordinatorHideManual==='function')pairCoordinatorHideManual();
  if(step===4&&p){
   if(first&&peerWizardState.invitationId&&p.invitationId===peerWizardState.invitationId&&$('nativeSensitiveDialog').open&&$('nativeSensitiveTitle').textContent==='Step 2 of 6 · Copy the invitation')nativeClearSecrets();

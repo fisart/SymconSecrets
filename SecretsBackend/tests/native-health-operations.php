@@ -12,9 +12,22 @@ $head=$stores[0]->head();$audits=count($get()['operations']['audit']);$beforeWir
 foreach($health->statuses($get())as$h)$ok($h['synchronization']==='verified'&&$h['connection']==='reachable'&&$h['lastVerifiedAt']===$now,'Matching Global state was not freshly verified.');
 $ok($stores[0]->head()===$head&&count($get()['operations']['audit'])===$audits,'Read-only health probes changed the reviewed head or audit retention.');
 $health->tick();$ok(count($wire)===$beforeWire+3,'The worker ignored the one-minute cadence.');
+// The wizard must accept real whole-history verification without obsolete ACKs.
+require_once __DIR__.'/../../SecretsFrontend/MonitoringView.php';
+$sharingView=static function(array $state)use($ops,$health):array{
+    $n=(new ReflectionMethod(SecretsBackendNativeOperations::class,'pairingStatus'))->invoke($ops[0],$state);$statuses=$health->statuses($state);
+    foreach($n['peers']as&$p){unset($p['health']);if(isset($statuses[$p['id']]))$p['health']=$statuses[$p['id']];}unset($p);
+    $n['pairingSent']=[];$n['pairingReceived']=[];
+    return SecretsFrontendMonitoringView::decorate($n);
+};
+$view=$sharingView($get());
+foreach($view['peers']as$p){$sharing=$p['display']['sharing'];$ok($sharing['ready']&&$sharing['verified']&&!$sharing['sent']&&!$sharing['received'],'Current verified Global history was blocked by missing historical receipts or invented an ACK.');}
+$ok($stores[0]->head()===$head,'Wizard readiness changed durable state.');
+
 $public=json_encode($health->statuses($get()));$ok(!str_contains($public,'digest')&&!str_contains($public,'clock')&&!str_contains($public,'GLOBAL-CANARY'),'Health metadata exposed private comparison material.');
 $now+=395;$h=$health->statuses($get())[$id1];$ok($h['synchronization']==='verified'&&$h['staleAfterSeconds']===900,'Normal high-latency cycle raised a stale warning.');
 $now+=505;$h=$health->statuses($get())[$id1];$ok($h['synchronization']==='unknown'&&$h['problem']==='check-overdue','A stopped worker retained green beyond the generous bound.');
+foreach($sharingView($get())['peers']as$p)$ok(!$p['display']['sharing']['ready'],'Expired verification left the wizard ready.');
 $blockPrimary=true;for($round=0;$round<3;$round++){$probe();$now+=60;}
 $h=$health->statuses($get())[$id1];$ok($h['connection']==='unreachable'&&$h['synchronization']==='unknown'&&$h['failedChecks']===3&&$h['lastVerifiedAt']!==null,'Failed checks did not expire old verification.');
 $blockPrimary=false;$probe();$ok($health->statuses($get())[$id1]['synchronization']==='verified','Recovery did not clear stale reachability.');
