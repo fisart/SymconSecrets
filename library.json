@@ -4,8 +4,8 @@
   "name": "Secrets Manager",
   "url": "https://github.com/fisart/SymconSecrets",
   "version": "5.4.6",
-  "build": 10,
-  "date": 1794052280,
+  "build": 11,
+  "date": 1794055229,
   "compatibility": {
     "version": "5.0"
   }

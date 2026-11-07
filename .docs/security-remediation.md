@@ -22,6 +22,8 @@ Keep the current migration branch until these conditions are established. Instal
 
 The vault's normal administrator writes and shared Global history are separate from the old SEC compatibility-write freeze. In **Automation access → Production application access**, **Enable production writes** prepares an exact `nativeLegacyAccess` approval for this installation's detected backend. Confirm with the administrator passkey (or hardware key if required by policy). It enables ordinary application writes and clears the compatibility freeze, while retaining current read, bulk-replacement and protected-page permissions. Repeat on each installation that needs application writes. Review explicitly disabled grants before enabling them.
 
+The same **Enable production writes** approval is also available in **Mailbox → this server → Production application writes**. Both locations use the existing exact passkey approval and the same saved grant. The Mailbox entry becomes Completed after approval and is hidden by its default outstanding filter; it returns if writes are subsequently disabled or frozen. Each installation offers its own local approval; remote approval authority is not extended. The local administration entry is not added to signed mesh summaries, keeping those reports compatible with older peers.
+
 The header displays **Production system** only when the saved local grant enables unfrozen application writes. Otherwise it says **Secrets system**. Installation of code alone does not change an existing permission or grant itself authority. No ownership-transfer freeze, disabled grant on another installation, pending synchronization or hardware enforcement is overridden.
 
 ## Backups and acceptance

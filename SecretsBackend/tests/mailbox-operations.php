@@ -19,4 +19,22 @@ $sample['native']['effects'][str_repeat('a',64)]=['id'=>str_repeat('a',64),'stat
 $sample['policy']['backupOrigin']=['status'=>'pending'];$waiting=SecretsBackendMailbox::local($sample)['rows'];$ok(count(array_filter($waiting,static fn($r)=>$r['type']==='backup-access'&&$r['state']==='CONFIRMATION_PENDING'))===1,'Untested backup setup claimed approval was ready.');
 $report=$peers[1]->meshReport($stores[1]->read()['state'],true,true);SecretsBackendMeshStatus::validate($report,$b);
 $report['mailbox']['rows'][0]['state']='PRIVATE-CANARY';$no(fn()=>SecretsBackendMeshStatus::validate($report,$b),'Signed mesh accepted arbitrary mailbox data.');
+// Production approval is local-only and uses the existing reviewed access operation.
+$sample=$stores[0]->read()['state'];$productionId='production:'.$a;$metadata=new ReflectionMethod(SecretsBackendNativeOperations::class,'mailboxMetadata');
+$productionRow=static function(array $m)use($productionId):array{foreach($m['nodes']as$n)if($n['local'])foreach($n['rows']as$r)if($r['id']===$productionId)return $r;throw new RuntimeException('Missing production approval.');};
+$m=$metadata->invoke($ops[0],$sample,[]);$ok($productionRow($m)['state']==='APPROVAL_REQUIRED'&&$m['approvals']===[],'Anonymous metadata provided an approval capability or hid the freeze.');
+$session=hash('sha256','mailbox-production-fixture');$stores[0]->put($session,'session',['credential'=>'mailbox-admin','administrator'=>'mailbox-admin'],time()+60);$ops[0]->bindSession($session);
+$sample['identity']['credentials']['mailbox-admin']=['active'=>true];$head=$stores[0]->head();
+$m=$metadata->invoke($ops[0],$sample,[]);$approval=$m['approvals'][$productionId][0];$raw=$approval['operation'];
+$ok($raw===['kind'=>'nativeLegacyAccess','instance'=>8000,'mode'=>2,'enabled'=>true,'read'=>true,'write'=>true,'portal'=>false,'frozen'=>false,'bulk'=>false],'Mailbox default approval changed unrelated permissions.');
+$ok(str_contains($approval['summary'],'global.example.test')&&str_contains($approval['summary'],'backend 8000'),'Production approval omitted exact installation scope.');
+$sample['native']['legacyAccess']['8000']=$raw+['treeId'=>$sample['native']['globalTreeId']];$sample['native']['legacyAccess']['8000']=array_replace($sample['native']['legacyAccess']['8000'],['mode'=>1,'enabled'=>false,'read'=>false,'portal'=>true,'bulk'=>true,'frozen'=>true]);
+$m=$metadata->invoke($ops[0],$sample,[]);$raw=$m['approvals'][$productionId][0]['operation'];
+$ok($raw['mode']===1&&!$raw['read']&&$raw['portal']&&$raw['bulk']&&$raw['enabled']&&$raw['write']&&!$raw['frozen'],'Mailbox failed to preserve explicit access settings.');
+$approved=$ops[0]->apply($ops[0]->normalize($raw,$sample,false),$sample);$m=$metadata->invoke($ops[0],$approved,[]);
+$ok($productionRow($m)['state']==='COMPLETED'&&!isset($m['approvals'][$productionId]),'Approved production writes remained actionable.');
+$approved['native']['legacyAccess']['8000']['frozen']=true;$m=$metadata->invoke($ops[0],$approved,[]);$ok($productionRow($m)['state']==='APPROVAL_REQUIRED','Reinstated freeze did not return to Mailbox.');
+$sample['identity']['credentials']['mailbox-admin']['active']=false;$m=$metadata->invoke($ops[0],$sample,[]);$ok($m['approvals']===[],'Inactive administrator received mailbox approval inputs.');
+$ok($stores[0]->head()===$head&&!isset($stores[0]->read()['state']['native']['legacyAccess']['8000']),'Viewing Mailbox silently enabled production writes.');
+$ok(!str_contains(json_encode($peers[0]->meshReport($stores[0]->read()['state'],true,true)),'production-writes'),'Local production approval changed the signed mesh schema.');$ops[0]->bindSession('');
 echo "PASS mailbox: delivery vs approval, bilateral identity, stale/missing peers, secret exclusion and read-only projection\n";

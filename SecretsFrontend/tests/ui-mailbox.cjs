@@ -18,6 +18,14 @@ const {fixture,tick}=require('./ui-native.cjs');
  $('supportUpload').click();await tick();$('supportUpload').click();assert.equal(uploads,1);assert.equal(statusCalls,1);assert.equal(preflight,0);
  resolve({ok:true,json:async()=>({ok:true,repository:targets[0].repository,branch:'main',commit:'a'.repeat(40)})});await tick();await tick();assert.match($('supportResult').textContent,/Saved to.*commit a{40}/);assert.equal($('supportUpload').disabled,false);
  assert.equal(preflight,0,'Mailbox still performs an advance Configuration Backup lookup.');
+ // Production approval stays in Mailbox and uses the same exact legacy access grant.
+ const production={kind:'nativeLegacyAccess',instance:456,mode:2,enabled:true,read:true,write:true,portal:true,frozen:false,bulk:false};
+ n.mailbox={approvals:{'production:local':[{label:'Enable production writes',operation:production,summary:'Enable ordinary SEC application writes on Test (backend 456). This approval changes only this installation.'}]},nodes:[{id:'local',name:'Test',local:true,fresh:true,available:true,checkedAt:1,rows:[{id:'production:local',type:'production-writes',state:'APPROVAL_REQUIRED',peerId:null,direction:'local',action:'nativeMachines'}]}]};
+ $('mailboxRefresh').click();await tick();await tick();assert.match($('nativeMailboxNav').textContent,/1 to approve/);assert.match($('mailboxRows').textContent,/Production application writes.*backend 456/s);
+ assert.equal($('productionWrites').hidden,false,'Automation access shortcut was removed.');
+ const before=f.calls.filter(c=>c.action==='approve').length;$('mailboxRows').querySelector('button').click();await tick();await tick();assert.deepEqual(f.calls.filter(c=>c.action==='prepare').at(-1).data.operation,production);assert.equal(f.calls.filter(c=>c.action==='approve').length,before+1);assert.equal($('nativeMailbox').hidden,false);assert.equal($('review').open,false);
+ n.mailbox.approvals={};n.mailbox.nodes[0].rows[0].state='COMPLETED';$('mailboxRefresh').click();await tick();await tick();assert.match($('mailboxRows').textContent,/Completed/);assert.doesNotMatch($('nativeMailboxNav').textContent,/to approve/);
+ $('mailboxState').value='outstanding';$('mailboxState').dispatchEvent(new f.dom.window.Event('change'));assert.match($('mailboxRows').textContent,/No matching/);
  assert.equal(f.errors.length,0,f.errors.map(e=>e.message).join('\n'));f.dom.window.close();
  // A cancelled passkey must never submit approval or leave the Mailbox.
  const cancelled=await fixture(),c=cancelled.$;
