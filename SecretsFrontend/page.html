@@ -72,6 +72,13 @@ small {font-size:12px;line-height:1.6}
 input,textarea,select {width:100%;min-width:0;background:var(--card);color:var(--ink);border:1px solid #bdc9be;border-radius:9px;padding:11px 13px;min-height:46px;line-height:1.5}
 input::placeholder,textarea::placeholder {color:var(--muted);opacity:.85}
 input[type=checkbox] {width:18px;height:18px;min-height:0;accent-color:var(--accent);vertical-align:middle;margin:0 7px 0 0;flex-shrink:0}
+.accessOptions {display:grid;gap:12px;margin:20px 0}
+.accessOptions label {display:flex;align-items:flex-start;gap:10px;min-width:0;cursor:pointer}
+.accessOptions input[type=checkbox] {flex:0 0 18px;margin:3px 0 0}
+.accessOptions label>span {min-width:0;overflow-wrap:anywhere}
+.accessApproval {display:block;clear:both;border:2px solid var(--accent);border-radius:11px;background:var(--soft);padding:18px;margin:24px 0 20px}
+.accessApproval button {max-width:100%;white-space:normal}
+.accessApproval p {margin:10px 0 0;font-size:13px}
 textarea {resize:vertical;min-height:145px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px}
 input[spellcheck=false] {font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px}
 .step {font-size:10px;text-transform:uppercase;letter-spacing:.14em;color:var(--accent);font-weight:750;margin-bottom:12px}
