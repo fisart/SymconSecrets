@@ -72,3 +72,21 @@ jobs:
           name: native-acceptance-${{ github.sha }}
           path: acceptance-evidence/
           retention-days: 30
+
+  windows-load-probe:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: openssl, sodium
+          coverage: none
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify database-free crypto loading and receiver load budget
+        run: python SecretsBackend/tests/peer-status-load.py
