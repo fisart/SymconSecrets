@@ -322,8 +322,16 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
             if ($old !== null) { if ($old['requestDigest'] !== $requestDigest) throw new RuntimeException('Operation ID reused with different data.'); return $this->frame['outcomeHeads'][$operationId]; }
             if (!SecretsBackendCodec::same($this->frame['head'], $expectedHead)) throw new RuntimeException('Revision conflict; reload and approve the current change.');
             $maintenance = in_array($audit['action'] ?? '', ['nativeConnectRevoke','login','reveal','nativeReveal','nativeBackup','nativeCompact','revoke','nativeMachineRevoke','nativeRevokePeer','nativeRotateKey','enroll-recovery','policy'], true);
-            if (count($this->frame['state']['operations']['outcomes']) >= ($maintenance ? 4112 : 3500)) throw new RuntimeException('Operation retention is full; create and verify a backup, then compact explicitly.');
+            $recovery=in_array($audit['action']??'',['login','nativeBackup','nativeCompact'],true)&&count($this->frame['state']['operations']['outcomes'])>=4112;
+            if (!$recovery && count($this->frame['state']['operations']['outcomes']) >= ($maintenance ? 4112 : 3500)) throw new RuntimeException('Operation retention is full; create and verify a backup, then compact explicitly.');
             $state = $mutate($this->frame['state']);
+            if($recovery&&($audit['action']??'')!=='nativeCompact'){
+                $ids=array_values(array_filter($state['operations']['recoveryIds']??[],static fn($id)=>isset($state['operations']['outcomes'][$id])));
+                while(count($ids)>=32){$retired=array_shift($ids);unset($state['operations']['outcomes'][$retired]);$state['operations']['audit']=array_values(array_filter($state['operations']['audit'],static fn($event)=>$event['operationId']!==$retired));}
+                $ids[]=$operationId;$state['operations']['recoveryIds']=$ids;
+            }
+            $this->frame['outcomeHeads']=array_intersect_key($this->frame['outcomeHeads'],$state['operations']['outcomes']);
+
             if(isset($state['native']['sharedGlobal'])&&self::canonical($state['native']['sharedGlobal'])===self::canonical($this->frame['state']['native']['sharedGlobal']??null)&&self::canonical($state['vault']['global'])!==self::canonical($this->frame['state']['vault']['global'])){
                 $state=SecretsBackendSharedGlobal::capture($state);
                 if(class_exists(SecretsBackendNativePeer::class))$state=SecretsBackendNativePeer::queueGlobal($state);
@@ -426,14 +434,21 @@ final class SecretsBackendNativeStore implements SecretsBackendStorage
     }
     public function auditRejected(array $context = []): void
     {
-        $this->locked(function () use ($context): void { $this->active(); $this->frame['telemetry'][] = $this->event($context, SecretsBackendCodec::uuid(), 'rejected'); $this->frame['telemetry'] = array_slice($this->frame['telemetry'], -128); $this->dirty = true; });
+        $this->locked(function () use ($context): void { $this->active();
+            // One durable rejection sample per installation/minute. Repeated
+            // rejected or rate-limited traffic cannot evict successful telemetry
+            // or keep forcing encrypted journal publications.
+            $window=intdiv(time(),60);
+            if(($this->frame['rejectionWindow']??null)===$window)return;
+            $this->frame['rejectionWindow']=$window;
+            $this->frame['telemetry'][] = $this->event($context, SecretsBackendCodec::uuid(), 'rejected'); $this->frame['telemetry'] = array_slice($this->frame['telemetry'], -128); $this->dirty = true; });
     }
     public function metadata(): array
     {
         return $this->locked(function (): array { $this->active(); return ['vaultId' => $this->identity['deploymentId'], 'head' => $this->frame['head'],
             'usedBytes' => strlen(SecretsBackendCodec::json($this->frame)), 'capacityBytes' => $this->effectiveLimit,
             'directorySync' => $this->identity['directorySync'], 'independentRollbackDetection' => false,
-            'outcomes' => count($this->frame['state']['operations']['outcomes'])]; });
+            'outcomes' => count($this->frame['state']['operations']['outcomes']), 'ordinaryOutcomesLimit'=>3500, 'maintenanceOutcomesLimit'=>4112, 'recoveryOutcomesLimit'=>32, 'retentionWarning'=>count($this->frame['state']['operations']['outcomes'])>=3400]; });
     }
     public function operationStatus(string $id): array { return $this->locked(function()use($id):array{$this->active();$o=$this->frame['state']['operations']['outcomes'][$id]??null;return $o===null?['operationId'=>$id,'result'=>'UNKNOWN']:['operationId'=>$id,'result'=>'COMMITTED','head'=>$this->frame['outcomeHeads'][$id]];}); }
     public function captureEffect(string $id,string $requestDigest,array $result): void

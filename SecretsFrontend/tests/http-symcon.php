@@ -21,6 +21,11 @@ if ($savedContext === null) unset($GLOBALS['_IPS']); else $GLOBALS['_IPS'] = $sa
 $relaySettings = SecretsFrontendConfiguration::validate(array_replace(SecretsFrontendConfiguration::DEFAULTS, ['Enabled' => true, 'AdminOrigin' => $origin]));
 $reply = SecretsFrontendHttp::response($relaySettings, 50365, $relayServer, $path, '', '');
 secExpect($reply['status'] === 200 && str_contains($reply['headers']['Content-Security-Policy'], 'connect-src ' . $origin . ';') && !str_contains($reply['headers']['Content-Security-Policy'], "connect-src 'self'") && isset($reply['headers']['Strict-Transport-Security']), 'CSP did not pin browser connections to the exact HTTPS origin and port.');
+// A browser page is public, but sensitive POSTs need independent transport evidence.
+$insecure=array_replace($relayServer,['REQUEST_METHOD'=>'POST','HTTP_ORIGIN'=>$origin,'CONTENT_TYPE'=>'application/json','HTTP_X_FORWARDED_PROTO'=>'https']);$calls=0;
+$denied=SecretsFrontendHttp::response($relaySettings,50365,$insecure,$path,'','','{"action":"session","data":{}}',static function($r)use(&$calls){$calls++;return ['status'=>200,'data'=>[]];});
+secExpect($denied['status']===403&&$calls===0&&str_contains($denied['body'],'HTTPS_TRANSPORT_UNVERIFIED'),'Untrusted Host/Origin/proto evidence reached a sensitive API.');
+$relayServer['HTTPS']='on';
 $relayServer['REQUEST_METHOD'] = 'HEAD';
 $reply = SecretsFrontendHttp::response($relaySettings, 50365, $relayServer, $path, '', '');
 secExpect($reply['status'] === 200 && $reply['body'] === '', 'Symcon HEAD response was not empty.');
@@ -57,11 +62,11 @@ $wrongHost['REQUEST_METHOD'] = 'GET'; $wrongHost['QUERY_STRING'] = '';
 $reply = SecretsFrontendHttp::response($relaySettings, 50365, $wrongHost, $path, '', '');
 secExpect($reply['status'] === 303 && $reply['headers']['Location'] === $origin . $path, 'Wrong-host navigation did not target the fixed configured wizard URL.');
 $trustedSettings = array_replace($relaySettings, ['TrustedHTTPSProxyIPs' => ['198.51.100.24']]);
-$wrongHost['REQUEST_METHOD'] = 'POST';
+$wrongHost['REQUEST_METHOD'] = 'POST';unset($wrongHost['HTTPS']);
 $reply = SecretsFrontendHttp::response($trustedSettings, 50365, $wrongHost, $path, '', '', $input, $gateway);
 secExpect($reply['status'] === 200 && $apiCalls === 5, 'Explicitly trusted proxy host support broke.');
 $reply = SecretsFrontendHttp::response($relaySettings, 50365, $relayServer, $path, '', '', $input, static fn() => ['status' => 401, 'data' => ['error' => 'Session required.']]);
 secExpect($reply['status'] === 401, 'Transport compatibility bypassed backend authentication.');
 $reply = SecretsFrontendHttp::response($relaySettings, 50365, $relayServer, $path, '', '', $input, static fn() => ['status' => 200, 'data' => [], 'cookie' => 'session=insecure']);
 secExpect($reply['status'] === 503 && !isset($reply['headers']['Set-Cookie']), 'An insecure backend cookie reached the browser.');
-echo "PASS Symcon native/NAT/relay compatibility without PHP TLS/caller metadata; exact HTTPS CSP, JSON header variants, host/Origin/proxy and backend-authentication checks\n";
+echo "PASS public wizard compatibility and independently verified HTTPS for sensitive APIs; exact HTTPS CSP, JSON header variants, host/Origin/proxy and backend-authentication checks\n";
