@@ -45,7 +45,7 @@ try{
  foreach($stores as$i=>$s){$v=$s->read()['state'];secExpect(($v['policy']['backupOrigin']['status']??'none')!=='active','Coordinator activated an untested Magic credential.');$origin='https://'.str_repeat(dechex($i+1),32).'.ipmagic.de';$routes[$origin.'/hook/secrets_peer_'.(9000+$i)]=$peers[$i];$commit($i,static function($v)use($origin){$generation=bin2hex(random_bytes(32));$v['policy']['backupOrigin']=['version'=>2,'status'=>'active','origin'=>$origin,'generation'=>$generation,'rights'=>SecretsBackendBackupOriginPolicy::FULL_RIGHTS];$c=reset($v['identity']['credentials']);$c['id']=SecretsBackendCodec::b64(random_bytes(24));$c['origin']=$origin;$c['originGeneration']=$generation;$c['rights']=SecretsBackendBackupOriginPolicy::FULL_RIGHTS;$c['tested']=true;$v['identity']['credentials'][$c['id']]=$c;$v['native']['routeRevision']='1';return $v;});}
  for($turn=0;$turn<36;$turn++){
   if(true){$now+=95;foreach($stores as$s)foreach($peers as$p)$s->delete('rate:'.hash('sha256','automatic-setup:'.$p->descriptor()['vaultId'].':'.intdiv(time(),60)));}
-  foreach($peers as$i=>$p){(new SecretsBackendNativeHealth($stores[$i],$p))->tick();$workers[$i]->tick();}$pump();
+  foreach($peers as$i=>$p){(new SecretsBackendNativeHealth($stores[$i],$p,$clock))->tick();$workers[$i]->tick();}$pump();
  }
  foreach($stores as$i=>$s){$a=$s->read()['state']['native']['automaticSetup'];secExpect($a['completedAt']!==null,'Setup did not complete after explicit device steps on server '.$i);secExpect(!$a['requested'],'Setup did not stop its own work after all servers completed.');}
  // Capabilities cannot run arbitrary actions, survive revocation, or alter Global values.

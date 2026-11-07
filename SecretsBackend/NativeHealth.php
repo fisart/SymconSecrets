@@ -95,10 +95,10 @@ final class SecretsBackendNativeHealth
         $this->save($p,$r);return ['status'=>'HEALTH_CHECKED','peerId'=>$p['id']];
     }
     /** Local-only metadata; never contacts a peer or changes a session. */
-    public function statuses(array $s):array
+    public function statuses(array $s,?int $verificationSeconds=null):array
     {
         $now=$this->now();$interval=self::interval($s);$local=null;try{$local=self::stamp($s);}catch(Throwable $e){}$out=[];
-        foreach($s['pairing']['peers']as$p){if(!self::eligible($p))continue;$r=$this->record($p);$last=$r['lastSuccessAt']??null;$freshness=($s['native']['automaticSetup']['requested']??false)?1800:$interval*3;$fresh=$last!==null&&$now>=$last&&$now-$last<$freshness;$attempt=$r['lastAttemptAt']??null;
+        foreach($s['pairing']['peers']as$p){if(!self::eligible($p))continue;$r=$this->record($p);$last=$r['lastSuccessAt']??null;$freshness=$verificationSeconds??(($s['native']['automaticSetup']['requested']??false)?1800:$interval*3);$fresh=$last!==null&&$now>=$last&&$now-$last<$freshness;$attempt=$r['lastAttemptAt']??null;
             $connection=$fresh?(($r['failures']??0)?'retrying':'reachable'):(($r['failures']??0)?'unreachable':'unknown');$sync=$fresh?($r['synchronization']??'unknown'):'unknown';$problem=$r['problem']??null;if(!$fresh&&$problem===null&&(($last!==null)||(!$r&&$p['lastSync']!==null&&$now-(strtotime($p['lastSync'])?:$now)>=$interval*3)))$problem='check-overdue';
             if(!$local){$sync='mismatch';$problem='local-state-invalid';}
             elseif(in_array($problem,['inconsistent-state','local-state-invalid'],true))$sync='mismatch';

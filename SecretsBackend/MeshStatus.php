@@ -23,12 +23,13 @@ final class SecretsBackendMeshStatus
         $routes=0;foreach($s['pairing']['peers']as$p)if(self::eligible($p))$routes+=count($p['routes']['endpoints']??[$p['descriptor']['endpoint']]);
         return max(60,($routes+1)*10);
     }
-    public function route(array $s,array $p,bool $backup):array {
+    public function route(array $s,array $p,bool $backup,?int $verificationSeconds=null):array {
         $urls=$p['routes']['endpoints']??[$p['descriptor']['endpoint']];
         $url=null;foreach($urls as$candidate){$magic=preg_match('/^[a-z0-9]{32}\.ipmagic\.de$/D',(string)parse_url($candidate,PHP_URL_HOST))===1;if($magic===$backup){$url=$candidate;break;}}
         if($url===null)return ['state'=>'none','age'=>null];
         $r=$this->record($p,$url);$age=self::age($this->now(),$r['at']??null);
-        return ['state'=>$age===null||$age>=(($s['native']['automaticSetup']['requested']??false)?1800:self::interval($s)*3)?'unknown':($r['state']??'unknown'),'age'=>$age]+array_intersect_key($r,array_flip(['problem','httpStatus','certificateReason','failedChecks']))+['lastSuccessAge'=>self::age($this->now(),$r['lastSuccessAt']??null)];
+        $freshness=$verificationSeconds??(($s['native']['automaticSetup']['requested']??false)?1800:self::interval($s)*3);
+        return ['state'=>$age===null||$age>=$freshness?'unknown':($r['state']??'unknown'),'age'=>$age]+array_intersect_key($r,array_flip(['problem','httpStatus','certificateReason','failedChecks']))+['lastSuccessAge'=>self::age($this->now(),$r['lastSuccessAt']??null)];
     }
     /** One exact approved route per worker tick; neither fallback nor a co-located shortcut proves that route. */
     public function tick():array {

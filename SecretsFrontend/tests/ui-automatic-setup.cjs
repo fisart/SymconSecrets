@@ -4,7 +4,7 @@ const {fixture,tick}=require('./ui-native.cjs');
 (async()=>{
  const f=await fixture(),$=f.$,n=f.state.native,base=f.dom.window.fetch;
  const policy={id:'plan-one',members:[0,1,2,3].map(i=>({descriptor:{vaultId:'node-'+i,endpoint:'https://server-'+i+'.example/hook/secrets_peer_'+(100+i)},routes:['https://server-'+i+'.example/hook/secrets_peer_'+(100+i)],frontend:200+i}))};
- const status=(ready=false)=>({authorized:true,running:!ready,policy,completedAt:ready?1793790000:null,members:policy.members.map((m,i)=>({id:m.descriptor.vaultId,name:'server-'+i+'.example',local:i===0,authorized:true,fresh:true,backupReady:false,ready,details:{links:[],queuedMessages:0,conflicts:0,errors:[]}}))});
+ const status=(ready=false)=>({authorized:true,running:!ready,policy,completedAt:ready?1793790000:null,report:{state:ready?'complete':'running'},members:policy.members.map((m,i)=>({id:m.descriptor.vaultId,name:'server-'+i+'.example',local:i===0,authorized:true,fresh:true,backupReady:false,ready,details:{links:[],queuedMessages:0,conflicts:0,errors:[]}}))});
  let runs=0;
  f.dom.window.fetch=async(url,options)=>{
   const r=JSON.parse(options.body);
@@ -17,7 +17,7 @@ const {fixture,tick}=require('./ui-native.cjs');
  assert.match($('setupProgress').textContent,/running.*0 of 4/);assert.doesNotMatch($('setupMembers').textContent,/Authorize on this server|device step/);
  n.automaticSetup=status(true);f.dom.window.document.querySelector('[data-tab=nativeMailbox]').click();await tick();await tick();
  assert.match($('setupProgress').textContent,/OK.*all 4 servers/,'Browser backup keys blocked mesh completion');
- n.automaticSetup.members[2].fresh=false;f.dom.window.document.querySelector('[data-tab=nativeMailbox]').click();await tick();await tick();assert.doesNotMatch($('setupProgress').textContent,/^OK/,'Stale peer result displayed OK');
+ n.automaticSetup.members[2].fresh=false;f.dom.window.document.querySelector('[data-tab=nativeMailbox]').click();await tick();await tick();assert.doesNotMatch($('setupProgress').textContent,/^OK/,'Stale peer result displayed OK');assert.match($('setupProgress').textContent,/setup completed.*checks need refreshing/,'A completed run was mislabeled as unfinished setup');
  n.automaticSetup.report={errors:[{server:'server-2.example',direction:'node-0 → node-2',step:'SETUP_ADVANCE',code:'timeout',attempts:[{route:'https://server-2.example/hook/secrets_peer_102',elapsedMs:45000,httpStatus:0}]}]};
  f.dom.window.document.querySelector('[data-tab=nativeMailbox]').click();await tick();await tick();assert.match($('setupMembers').textContent,/SETUP_ADVANCE/);assert.match($('setupMembers').textContent,/45000/);assert.ok($('setupReport'));
  // Download must read the latest backend state, not relabel the cached UI with a new time.
