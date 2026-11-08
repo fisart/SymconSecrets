@@ -66,7 +66,7 @@ declare(strict_types=1);
                             || IPS_GetProperty($id, 'Enabled') !== true) continue;
                         $portalVault = self::vaultForPortal((int)IPS_GetProperty($id, 'VaultInstanceID'));
                         if ($portalVault === 0 || ($vault > 0 && (!self::validVault($vault)||self::identity($portalVault)!==self::identity($vault)))) continue;
-                        $path = '/hook/alarm_portal_' . $id;
+                        $path = '/hook/portal';
                         $matches = array_values(array_filter($hooks, static fn($hook) => is_array($hook) && ($hook['Hook'] ?? '') === $path));
                         if (count($matches) === 1 && (int)($matches[0]['TargetID'] ?? 0) === $id) $eligible[$id] = $path;
                     } catch (Throwable $e) { continue; }
