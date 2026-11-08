@@ -1,8 +1,12 @@
 # Native Secrets — current release status
 
-Reviewed 7 November 2026. Runtime baseline **5.4.6 build 16**, `051f61a635fd4cc6fbb95a21f4f1e97d128ede15`, installed branch **migration/legacy-sec-replacement**. This is the native-only replacement preserving the original module GUID, SEC prefix and installed instance IDs. Main/coexistence history is not this branch's active implementation.
+Reviewed 8 November 2026. Current release **5.4.6 build 20**, based on installed build-19 commit `58049e54b4f7e403f2698d033bf7bb82d30b4ae2`; installed branch **migration/legacy-sec-replacement**. This is the native-only replacement preserving the original module GUID, SEC prefix and installed instance IDs. Main/coexistence history is not this branch's active implementation.
 
 The native vault is in production use. Supplied four-node reports record completed setup; the later Heartbeat Overview reports Production system, Vault ready, three synchronized connections and full Magic access. Production labels derive from the saved local unfrozen application-write grant, not audit certification. Production121, Heartbeat and Test Hermitage migration were owner-confirmed. Hermitage's native participation is observed; its final unchanged-SEC application acceptance is not separately recorded.
+
+## Build 20: compact authorization
+
+Protected scripts/pages using existing login-URL APIs open the separate approximately 6 KiB **Confirm access** view instead of the approximately 256 KiB administration page. Valid full sessions return after one read-only check without extending expiry; fresh sign-in automatically invokes WebAuthn and returns after challenge/verification. A single Continue button handles gesture-required browsers and cancellation. The view requests no hierarchy, mesh or dashboard data. Same-origin HTTPS, full-Magic restrictions, replay, expiry, revocation and cancellation checks remain. Direct administration still opens the full page. The 8 November canonical `/hook/portal` navigation from build 19 is retained.
 
 ## Implemented
 
@@ -20,7 +24,7 @@ The native vault is in production use. Supplied four-node reports record complet
 
 ## Executed evidence
 
-For the pinned runtime commit, hosted runs [frontend/backend](https://github.com/fisart/SymconSecrets/actions/runs/42390333793), [Portal navigation](https://github.com/fisart/SymconSecrets/actions/runs/42390333815) and [Native production acceptance](https://github.com/fisart/SymconSecrets/actions/runs/42390333817) passed. Tests cover supplied crypto with no database drivers, bounded memory, synthetic WebAuthn, encrypted recovery/faults, four-node sharing and protected browser behavior. Fifty focused listener checks include five actual dual-stack loopback sockets. This does not claim a physical key, external saved-file restore or real primary-outage login.
+For the earlier pinned build-16 runtime commit, hosted runs [frontend/backend](https://github.com/fisart/SymconSecrets/actions/runs/42390333793), [Portal navigation](https://github.com/fisart/SymconSecrets/actions/runs/42390333815) and [Native production acceptance](https://github.com/fisart/SymconSecrets/actions/runs/42390333817) passed. Tests cover supplied crypto with no database drivers, bounded memory, synthetic WebAuthn, encrypted recovery/faults, four-node sharing and protected browser behavior. Fifty focused listener checks include five actual dual-stack loopback sockets. This does not claim a physical key, external saved-file restore or real primary-outage login.
 
 ## Open work and qualification
 

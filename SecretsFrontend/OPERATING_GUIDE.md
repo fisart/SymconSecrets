@@ -1,6 +1,6 @@
 # Secrets administration — operating and recovery manual
 
-Reviewed 7 November 2026. Runtime baseline: SymconSecrets 5.4.6 build 16, migration/legacy-sec-replacement, 051f61a635fd4cc6fbb95a21f4f1e97d128ede15. Implemented behavior, supplied deployment observations and remaining acceptance are distinguished explicitly.
+Reviewed 8 November 2026. Current release: SymconSecrets 5.4.6 build 20 on migration/legacy-sec-replacement. The earlier documented runtime baseline is build 16, 051f61a635fd4cc6fbb95a21f4f1e97d128ede15. Implemented behavior, supplied deployment observations and remaining acceptance are distinguished explicitly.
 
 ## Contents
 
@@ -141,6 +141,12 @@ A passkey signs in at the selected exact HTTPS origin. A successful sign-in auth
 Select Lock this session after inactivity: 1 minute, 5 minutes or 15 minutes. This selection lasts until sign-out. A session also requires sign-in again after one hour. Metadata polling does not count as user activity and must not keep an unattended session alive. Runtime restart and relevant authority changes invalidate sessions/approvals; sign in again rather than reusing an old popup.
 
 Primary and Magic have separate host-only cookies, CSRF tokens, passkeys and sessions. Knowing the URL alone grants no enrollment, secret access or approval rights. A pending candidate remains unprivileged. An existing administrator or the independently trusted console must approve the exact candidate through the applicable flow. A new candidate cannot approve itself.
+
+### Fast authorization for protected scripts and HTML
+
+From build 20, callers using the SEC/native login-URL APIs open **Confirm access**, a separate small authorization view. Symcon checks an existing origin-bound full session; if it is valid, the page returns immediately without another passkey prompt or prolonging the session. Otherwise it automatically opens the passkey chooser. If the browser requires a user gesture or you cancel, select **Continue with passkey** to retry. After success it returns directly to the protected local hook, without loading the vault dashboard, secret hierarchy, mesh reports or administration controls. A fresh sign-in uses two API requests; session reuse uses one.
+
+The original HTTPS, actual passkey verification, expiry, revocation, restart and full-Magic authorization rules still apply. Limited backup credentials cannot authorize protected pages. No credential/token travels in a return URL; external, query-bearing and recursive Secrets targets are rejected. Cancel stops navigation and further requests; it cannot undo a sign-in already verified by Symcon. Returning through browser history requires an explicit retry. To administer the vault, open its normal address directly.
 
 ## 8. Register a passkey on a new device
 

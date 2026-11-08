@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Confirm access</title>
+<style nonce="%%NONCE%%">
+:root{color-scheme:light dark;font:16px system-ui,sans-serif;background:#f2f5f4;color:#172c25}body{margin:0;min-height:100dvh;display:grid;place-items:center}main{box-sizing:border-box;width:min(100%,25rem);padding:1.5rem}h1{font-size:1.4rem;margin:0 0 .5rem}p{line-height:1.45;overflow-wrap:anywhere}#target{font-size:.85rem;opacity:.7}button{font:inherit;border:1px solid #55786b;border-radius:.5rem;padding:.7rem 1rem;cursor:pointer}#continue{background:#1c6048;color:white}button:disabled{opacity:.6;cursor:wait}.actions{display:flex;gap:.6rem;flex-wrap:wrap}#message{min-height:3rem}#message.error{color:#ab2929}[hidden]{display:none!important}@media(prefers-color-scheme:dark){:root{background:#10221b;color:#edf5f0}#message.error{color:#ffb6ac}}
+</style></head><body><main><h1>Confirm access</h1><p id="target"></p><p id="message" role="status" aria-live="polite">Checking authorization…</p><div class="actions"><button id="continue" type="button">Continue with passkey</button><button id="cancel" type="button">Cancel</button></div></main>
+<script nonce="%%NONCE%%">
+'use strict';
+(()=>{
+const boot=%%BOOT%%;
+const button=document.getElementById('continue'),cancel=document.getElementById('cancel'),message=document.getElementById('message');
+let target='',busy=false,active=true,controller=null,attempt=0;
+const secure=()=>location.protocol==='https:'&&location.origin===boot.origin&&window.isSecureContext===true;
+function show(text,error=false){message.textContent=text;message.classList.toggle('error',error);message.setAttribute('role',error?'alert':'status');}
+try{const entries=[...new URLSearchParams(location.hash.slice(1))];if(entries.length===1&&entries[0][0]==='legacy-return'&&/^\/hook\/[A-Za-z0-9_-]+$/.test(entries[0][1])&&!/^\/hook\/secrets(?:_frontend|_peer)?_/.test(entries[0][1]))target=entries[0][1];}catch{}
+if(!secure()||!target||window.top!==window.self){button.disabled=true;cancel.hidden=true;show(!secure()?'Open the approved HTTPS address.':!target?'Open authorization from the protected page.':'Open authorization in its own browser window.',true);return;}
+document.getElementById('target').textContent='Continue to '+target;
+function ensure(id){if(!active||id!==attempt)throw new DOMException('Authorization cancelled.','AbortError');}
+function decode(value){return Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));}
+function encode(value){return btoa(String.fromCharCode(...new Uint8Array(value))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/g,'');}
+async function api(action,data,id){ensure(id);const response=await fetch(boot.path,{method:'POST',credentials:'same-origin',cache:'no-store',redirect:'error',signal:controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({action,data})});let result;try{result=await response.json();}catch{throw Error('The server did not complete authorization. Try again.');}ensure(id);if(!response.ok)throw Error(result.error||'Authorization was refused.');return result;}
+function finish(id){ensure(id);show('Authorized. Opening your page…');location.replace(target);}
+async function authorize(){if(busy||!active)return;busy=true;button.disabled=true;button.setAttribute('aria-busy','true');const currentController=new AbortController();controller=currentController;const id=++attempt;const timer=setTimeout(()=>currentController.abort(),300000);show('Checking authorization…');try{
+ const result=await api('portalAuthOptions',{},id);if(result.authenticated===true){finish(id);return;}
+ if(!window.PublicKeyCredential||!navigator.credentials?.get)throw Error('Passkeys are unavailable in this browser.');
+ if(!result.options||typeof result.challengeId!=='string')throw Error('The server did not supply a passkey request.');
+ const publicKey={...result.options,challenge:decode(result.options.challenge)};if(publicKey.allowCredentials)publicKey.allowCredentials=publicKey.allowCredentials.map(c=>({...c,id:decode(c.id)}));
+ show('Confirm with your passkey.');const credential=await navigator.credentials.get({publicKey,signal:controller.signal});ensure(id);if(!credential)throw Error('No passkey was selected.');
+ const verified=await api('authVerify',{challengeId:result.challengeId,credential:{type:credential.type,rawId:encode(credential.rawId),response:{clientDataJSON:encode(credential.response.clientDataJSON),authenticatorData:encode(credential.response.authenticatorData),signature:encode(credential.response.signature),userHandle:credential.response.userHandle?encode(credential.response.userHandle):null}}},id);
+ if(verified.authenticated!==true||verified.portalAuthenticated!==true)throw Error('This passkey is not approved for protected-page access.');finish(id);
+ }catch(error){if(active&&id===attempt)show(['NotAllowedError','AbortError'].includes(error.name)?'Tap Continue with passkey to confirm access.':error.message,true);}
+ finally{clearTimeout(timer);if(id===attempt){busy=false;controller=null;button.disabled=false;button.removeAttribute('aria-busy');}}
+}
+button.addEventListener('click',authorize);
+cancel.addEventListener('click',()=>{attempt++;controller?.abort();controller=null;busy=false;button.disabled=false;button.removeAttribute('aria-busy');show('Authorization cancelled. You can close this page or try again.');});
+window.addEventListener('pagehide',()=>{active=false;attempt++;controller?.abort();});
+window.addEventListener('pageshow',event=>{if(event.persisted){active=true;busy=false;controller=null;button.disabled=false;button.removeAttribute('aria-busy');show('Tap Continue with passkey to confirm access.');}});
+// One automatic attempt only. Browsers requiring a gesture get the same single button.
+authorize();
+})();
+</script></body></html>

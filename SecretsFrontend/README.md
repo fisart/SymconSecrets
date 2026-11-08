@@ -4,6 +4,12 @@ The native **SecretsFrontend (SECF)** and **SecretsBackend (SECB)** provide pass
 
 Start with the [operating and recovery manual](OPERATING_GUIDE.md). It covers all tabs, initial setup, production permissions, Mailbox, primary/Magic access, monitoring, backup/restore, configuration backup, migration, limits, troubleshooting and the current parameter/child-variable inventory. [Current release status](RELEASE_STATUS.md) distinguishes shipped code, owner-supplied deployment observations, executed CI and outstanding acceptance. Older checkpoint files are historical.
 
+## Compact protected-page authorization · build 20
+
+Scripts and protected HTML pages now open a small **Confirm access** view, not the administration dashboard. A valid full session returns directly without a new passkey ceremony or extending its expiry. Otherwise the browser starts the usual passkey prompt automatically; if a gesture is required, use **Continue with passkey** once. Successful verification returns immediately to the original local hook. The page contains no secrets, hierarchy, mesh status or administration navigation. Existing SEC/native login-URL APIs select it automatically; no consumer-script change is required when those APIs are used.
+
+The view is selected by the exact GET-only `?authorize=1`; the bounded local return hook remains in the fragment. POST authorization retains independent HTTPS, same-origin JSON, WebAuthn user verification, one-use challenges, active credential/revocation checks and secure HttpOnly cookies. Full Magic credentials stay on the Magic origin; limited backup credentials cannot authorize protected pages. Cancellation and navigation never replay a mutation. Directly opening the Secrets administration address still opens administration.
+
 ## Existing installations
 
 Update this branch through Module Control and reload the existing page. Keep instance IDs, data/key folders, credentials and approved bindings. Completed mesh setup remains completed; use Overview for current health. Confirm required native/SEC applications and protected pages after an update. Full browser administration uses separately enrolled passkeys at each approved origin.

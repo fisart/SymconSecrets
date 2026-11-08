@@ -3,6 +3,7 @@
 $magicApproved=static function(array $op)use($invoke,$backupKey,$origin,&$backupCounter):array{$p=$invoke('prepare',['operation'=>$op])['data'];return $invoke('approve',['challengeId'=>$p['challengeId'],'credential'=>secAssertion($backupKey,$p['options']['challenge'],++$backupCounter,$origin)])['data'];};
 $magicLogin=static function(array $which,int &$n)use($invoke,&$request,$origin):void{$request=['origin'=>$origin,'cookie'=>'','csrf'=>'','remote'=>'connect-test'];$o=$invoke('authOptions')['data'];$login=$invoke('authVerify',['challengeId'=>$o['challengeId'],'credential'=>secAssertion($which,$o['options']['challenge'],++$n,$origin)]);$request['cookie']=explode(';',$login['cookie'])[0];$request['csrf']=$login['data']['csrf'];};
 secExpect($invoke('session')['data']['native']['fullAdministrator']===true,'Magic did not receive the explicitly approved full rights.');
+secExpect($invoke('portalAuthOptions')['data']===['authenticated'=>true],'Full Magic session did not use compact authorization locally.');
 secExpect($invoke('session')['data']['native']['peerDescriptor']['endpoint']===$origin.'/hook/secrets_peer_5201','Magic presentation endpoint contacts primary.');
 $magicApproved(['kind'=>'save','scope'=>'global','path'=>['Magic folder'],'mode'=>'create','json'=>'{}','revision'=>$invoke('session')['data']['revision']]);
 $magicApproved(['kind'=>'rename','scope'=>'global','path'=>['Magic folder'],'newName'=>'Renamed folder','revision'=>$invoke('session')['data']['revision']]);

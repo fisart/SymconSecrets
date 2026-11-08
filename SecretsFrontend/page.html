@@ -243,6 +243,8 @@ if(!secureOrigin()){
  if(location.protocol!=='https:'||location.origin!==boot.origin)location.replace(link.href);
  return;
 }
+// Existing bookmarked login links also switch to the compact authorization view.
+if(legacyReturn){location.replace(boot.path+'?authorize=1'+location.hash);return;}
 document.body.classList.add(boot.theme);
 const $=id=>document.getElementById(id);
 let csrf='', revision='', selected=null, snapshot=null, approval=null, clearTimer=null, editMaskTimer=null;

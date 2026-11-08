@@ -9,7 +9,7 @@ final class SecretsBackendRequestDiagnostics
     public const STAGES=['envelope','origin','rate','storage','configuration','login','session','csrf','action','prepare','approval','commit','result'];
     public static function action($value): string
     {
-        return is_string($value)&&in_array($value,['status','authOptions','authVerify','session','list','sessionReveal','sessionTimeout','prepare','approve','logout','configurationPreview','nativeSetupPreview','nativeSetupRun','nativeSupportStatus','nativeSupportUpload','nativeSupportUploadStatus','nativeOverviewStatus','nativeGlobalStatus','nativePairingStatus','nativeRetryPeerDelivery','nativeOperationStatus','nativeCandidateOptions','nativeCandidateSubmit','legacySources','legacyPreview','nativeUploadBegin','nativeUploadChunk','nativeUploadFinish','connectDiscovery','connectOptions','connectSubmit','connectProof','connectStatus','connectCandidateReview'],true)?$value:'other';
+        return is_string($value)&&in_array($value,['status','authOptions','portalAuthOptions','authVerify','session','list','sessionReveal','sessionTimeout','prepare','approve','logout','configurationPreview','nativeSetupPreview','nativeSetupRun','nativeSupportStatus','nativeSupportUpload','nativeSupportUploadStatus','nativeOverviewStatus','nativeGlobalStatus','nativePairingStatus','nativeRetryPeerDelivery','nativeOperationStatus','nativeCandidateOptions','nativeCandidateSubmit','legacySources','legacyPreview','nativeUploadBegin','nativeUploadChunk','nativeUploadFinish','connectDiscovery','connectOptions','connectSubmit','connectProof','connectStatus','connectCandidateReview'],true)?$value:'other';
     }
     public static function operation($value): ?string
     {

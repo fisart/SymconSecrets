@@ -228,6 +228,18 @@ final class SecretsBackendApplication
         if ($this->store instanceof SecretsBackendNativeStore && in_array($action,['enrollmentOptions','enrollmentVerify'],true)) throw new RuntimeException('Code-based enrollment is closed.');
         if ($action === 'enrollmentOptions') return ['data' => $this->enrollmentOptions($data)];
         if ($action === 'enrollmentVerify') return ['data' => $this->enrollmentVerify($data)];
+        if ($action === 'portalAuthOptions') {
+            self::exact($data, []);
+            // Reuse only a currently valid, origin-bound full session. This
+            // predicate neither extends its lifetime nor builds a vault view.
+            if ($this->portalAuthenticated($request)) return ['data'=>['authenticated'=>true]];
+            $eligible = array_filter($current['state']['identity']['credentials'], fn(array $entry): bool => $this->settings['origin'] === $this->primaryOrigin() || SecretsBackendBackupOriginPolicy::credentialFull($current['state'], $entry));
+            if (!$eligible) throw new RuntimeException('No full-access passkey is approved at this address.');
+            // New login challenges share the existing limit; ordinary session
+            // reuse does not consume the passkey ceremony allowance.
+            $this->store->rate(hash('sha256', ($request['remote'] ?? '') . ':authOptions'), 10);
+            return ['data'=>$this->challenge($current, $eligible, false, 'login', [])];
+        }
         if ($action === 'authOptions') { self::exact($data, []); return ['data' => $this->challenge($current, $current['state']['identity']['credentials'], false, 'login', [])]; }
         if ($action === 'authVerify') {
             $this->requestContext['stage']='login';
@@ -246,7 +258,7 @@ final class SecretsBackendApplication
              $raw = SecretsBackendCodec::b64(random_bytes(32)); $csrf = SecretsBackendCodec::b64(random_bytes(32));
             $this->store->put(hash('sha256', $raw), 'session', ['credential' => $id, 'administrator' => $entry['administrator'], 'revocation' => $current['state']['identity']['revocation'], 'csrf' => $csrf,
                 'origin' => $this->settings['origin'], 'originGeneration'=>$this->originGeneration($current['state']), 'created' => time(), 'last' => time()], time() + 3600);
-            return ['data' => ['authenticated' => true, 'csrf' => $csrf], 'cookie' => $this->cookieName() . '=' . $raw . '; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=3600'];
+            return ['data' => ['authenticated' => true, 'portalAuthenticated' => $this->settings['origin'] === $this->primaryOrigin() || SecretsBackendBackupOriginPolicy::credentialFull($current['state'], $entry), 'csrf' => $csrf], 'cookie' => $this->cookieName() . '=' . $raw . '; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=3600'];
         }
         $this->requestContext['stage']='session';
         $session = $this->session($request, $current);

@@ -20,8 +20,11 @@ final class SecretsFrontendHttp
         $method = $server['REQUEST_METHOD'] ?? '';
         if (!in_array($method, ['GET', 'HEAD', 'POST'], true)) return $reply(405, 'Unsupported method.', ['Allow' => 'GET, HEAD, POST']);
         foreach (['HTTP_X_HTTP_METHOD_OVERRIDE','HTTP_X_METHOD_OVERRIDE','HTTP_X_HTTP_METHOD'] as $override) if (isset($server[$override])) return $reply(405, 'Method override is not accepted.');
-        // Never interpret a query as an operation, file name, redirect or module function.
-        if (($server['QUERY_STRING'] ?? '') !== '') return $reply(400, 'Query parameters are not supported.');
+        // One fixed GET-only view selector; targets remain bounded local hook paths
+        // in the fragment, never server-side operations or arbitrary redirects.
+        $query = (string)($server['QUERY_STRING'] ?? '');
+        $authorization = $query === 'authorize=1' && in_array($method, ['GET', 'HEAD'], true);
+        if ($query !== '' && !$authorization) return $reply(400, 'Query parameters are not supported.');
         $requestPath = parse_url((string)($server['REQUEST_URI'] ?? ''), PHP_URL_PATH);
         if ($requestPath !== $path) return $reply(404, 'Not found.');
         $origin = SecretsFrontendConfiguration::origin($settings['AdminOrigin']);
@@ -79,7 +82,7 @@ final class SecretsFrontendHttp
                 || !in_array($server['HTTP_SEC_FETCH_SITE'] ?? 'same-origin', ['same-origin', 'none'], true)) return $reply(403, 'Same-origin JSON requests are required.');
             try {
                 $body = SecretsFrontendConfiguration::decode($input);
-                $allowed = ['bootstrapPrepare','bootstrapSubmit','bootstrapProof','bootstrapResumeOptions','nativeCandidateOptions','nativeCandidateSubmit', 'guidedDiscover', 'guidedPreview', 'guidedApply', 'guidedCancel', 'status', 'setupPreview', 'setupCreate', 'authOptions', 'authVerify', 'enrollmentOptions', 'enrollmentVerify', 'session', 'list', 'sessionReveal', 'sessionTimeout', 'configurationPreview', 'legacySources','legacyPreview','connectDiscovery','connectOptions','connectSubmit','connectProof','connectStatus','connectCandidateReview', 'nativeUploadBegin', 'nativeUploadChunk', 'nativeUploadFinish', 'nativeOperationStatus', 'nativeSetupPreview','nativeSetupRun','nativeSupportStatus','nativeSupportUpload','nativeSupportUploadStatus','nativeOverviewStatus','nativeGlobalStatus','nativePairingStatus','nativeRetryPeerDelivery', 'prepare', 'approve', 'logout'];
+                $allowed = ['bootstrapPrepare','bootstrapSubmit','bootstrapProof','bootstrapResumeOptions','nativeCandidateOptions','nativeCandidateSubmit', 'guidedDiscover', 'guidedPreview', 'guidedApply', 'guidedCancel', 'status', 'setupPreview', 'setupCreate', 'authOptions', 'portalAuthOptions', 'authVerify', 'enrollmentOptions', 'enrollmentVerify', 'session', 'list', 'sessionReveal', 'sessionTimeout', 'configurationPreview', 'legacySources','legacyPreview','connectDiscovery','connectOptions','connectSubmit','connectProof','connectStatus','connectCandidateReview', 'nativeUploadBegin', 'nativeUploadChunk', 'nativeUploadFinish', 'nativeOperationStatus', 'nativeSetupPreview','nativeSetupRun','nativeSupportStatus','nativeSupportUpload','nativeSupportUploadStatus','nativeOverviewStatus','nativeGlobalStatus','nativePairingStatus','nativeRetryPeerDelivery', 'prepare', 'approve', 'logout'];
                 if (count($body) !== 2 || !is_string($body['action'] ?? null) || !in_array($body['action'], $allowed, true) || !is_array($body['data'] ?? null) || $gateway === null) return $reply(400, 'Unsupported API request.');
                 $result = $gateway(['action' => $body['action'], 'data' => $body['data'], 'origin' => $origin,
                     'remote' => (string)($server['REMOTE_ADDR'] ?? ''), 'cookie' => (string)($server['HTTP_COOKIE'] ?? ''), 'csrf' => (string)($server['HTTP_X_CSRF_TOKEN'] ?? '')]);
@@ -93,6 +96,11 @@ final class SecretsFrontendHttp
             } catch (Throwable $exception) { return $reply(503, 'Backend request could not be completed. Check the backend status.'); }
         }
         if ($method === 'HEAD') return ['status' => 200, 'headers' => $headers, 'body' => ''];
+        if ($authorization) {
+            $boot = json_encode(['origin'=>$origin, 'path'=>$path], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_THROW_ON_ERROR);
+            $html = str_replace(['%%NONCE%%', '%%BOOT%%'], [htmlspecialchars($nonce, ENT_QUOTES, 'UTF-8'), $boot], (string)file_get_contents(__DIR__ . '/authorize.html'));
+            return ['status'=>200, 'headers'=>$headers, 'body'=>$html];
+        }
         $boot = json_encode(['vaultInitialized'=>($ui['vaultInitialized']??false)===true,'setupMode'=>($ui['setupMode']??'')==='recovery'?'recovery':'initial','primaryOrigin'=>$primaryOrigin,'backupEnrollment'=>$origin!==$primaryOrigin&&($backup['status']??'')==='pending','originGeneration'=>$origin!==$primaryOrigin?($backup['generation']??''):'','origin' => $origin, 'path' => $path, 'theme' => $settings['Theme'], 'guidedV2Only' => ($ui['guidedV2Only'] ?? false) === true], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_THROW_ON_ERROR);
         $escape = static fn(string $text): string => htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $links = '';

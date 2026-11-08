@@ -59,6 +59,8 @@ try{
  secReject(static fn()=>$invoke('authVerify',['challengeId'=>$options['challengeId'],'credential'=>secAssertion($key,$options['options']['challenge'],10,$origin)]),'Primary credential logged in at backup.');
  $options=$invoke('authOptions')['data'];$logged=$invoke('authVerify',['challengeId'=>$options['challengeId'],'credential'=>secAssertion($backupKey,$options['options']['challenge'],2,$origin)]);
  $request['cookie']=explode(';',$logged['cookie'])[0];$request['csrf']=$logged['data']['csrf'];$backupSession=$request;$backupCounter=2;
+ secExpect($logged['data']['portalAuthenticated']===($GLOBALS['fullConnectTest']??false),'Limited Magic login gained protected-page authority.');
+ if(!($GLOBALS['fullConnectTest']??false))secReject(static fn()=>$invoke('portalAuthOptions'),'Limited Magic credential entered the protected-page login flow.');
  secExpect($invoke('session')['data']['native']['backupOrigin']['status']==='active','Backup session unavailable.');
  $revealed=$invoke('sessionReveal',['operation'=>['kind'=>'reveal','scope'=>'local','path'=>['Connect-test'],'revision'=>$invoke('session')['data']['revision']]])['data'];secExpect(str_contains(json_encode($revealed),'CONNECT-TEST-VALUE'),'Backup could not access the existing vault value.');
  if($GLOBALS['upgradeMagicTest']??false){require __DIR__.'/full-connect-upgrade-operations.php';}

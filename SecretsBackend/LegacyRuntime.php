@@ -142,10 +142,10 @@ trait SecretsBackendLegacyRuntime
     {
         if(strlen($ServerJSON)>16384)throw new InvalidArgumentException('Browser context too large.');
         $server=json_decode($ServerJSON,true,8,JSON_THROW_ON_ERROR);
-        if(!preg_match('~^/hook/[A-Za-z0-9_-]+$~D',$ReturnPath))throw new InvalidArgumentException('Return to one local hook path without query parameters.');
+        if(!preg_match('~^/hook/[A-Za-z0-9_-]+$~D',$ReturnPath)||preg_match('~^/hook/secrets(?:_frontend|_peer)?_~',$ReturnPath))throw new InvalidArgumentException('Return to one local application hook path without query parameters.');
         $service=$this->legacyService($SourceInstanceID);$service->permission($this->nativeStore()->read()['state'],'portal');
         $origin=$this->legacyOrigin($server);
-        return $origin.'/hook/secrets_frontend_'.$this->ReadPropertyInteger('FrontendInstanceID').'#legacy-return='.rawurlencode($ReturnPath);
+        return $origin.'/hook/secrets_frontend_'.$this->ReadPropertyInteger('FrontendInstanceID').'?authorize=1#legacy-return='.rawurlencode($ReturnPath);
     }
     /** Native browser-session integration; no old manager or old credential store is involved. */
     public function IsNativePortalAuthenticated(): bool
@@ -157,7 +157,7 @@ trait SecretsBackendLegacyRuntime
         $this->nativeApplication();if(strlen($ServerJSON)>16384)throw new InvalidArgumentException('Browser context too large.');
         if($ReturnPath!==''&&(!preg_match('~^/hook/[A-Za-z0-9_-]+$~D',$ReturnPath)||preg_match('~^/hook/secrets(?:_frontend|_peer)?_~',$ReturnPath)))throw new InvalidArgumentException('Choose a plain local application hook.');
         $server=json_decode($ServerJSON,true,8,JSON_THROW_ON_ERROR);$origin=$this->legacyOrigin($server);
-        return $origin.'/hook/secrets_frontend_'.$this->ReadPropertyInteger('FrontendInstanceID').($ReturnPath===''?'':'#legacy-return='.rawurlencode($ReturnPath));
+        return $origin.'/hook/secrets_frontend_'.$this->ReadPropertyInteger('FrontendInstanceID').($ReturnPath===''?'':'?authorize=1#legacy-return='.rawurlencode($ReturnPath));
     }
     public function IsPortalAuthenticated(): bool { return $this->CheckLegacyPortalSession($this->InstanceID,self::legacyServerJSON()); }
     public static function legacyServerJSON(): string
