@@ -4,7 +4,7 @@ declare(strict_types=1);
 require __DIR__.'/../../tests/system_portal_navigation.php';
 require __DIR__.'/../PortalNavigation.php';
 require __DIR__.'/../Http.php';
-baseline();
+baseline();$GLOBALS['native'][5]['props']['Hooks']=json_encode([['Hook'=>'/hook/alarm_portal_43','TargetID'=>43],['Hook'=>'/hook/portal','TargetID'=>43]]);
 expect(SecretsFrontendPortalNavigation::path(0,43)==='/hook/portal','Frontend keeps old manager Portal discovery');
 $GLOBALS['native'][18]=['guid'=>'{52165EDD-B2C0-40EC-8A59-42A97319B6E2}','props'=>['Enabled'=>true,'AdminOrigin'=>'https://system.example']];$GLOBALS['native'][43]['props']['VaultInstanceID']=18;
 expect(AFSystemPortalNavigationV1::path(0,43)==='','Fixture must reproduce old helper hiding a native Portal');
@@ -21,7 +21,7 @@ expect(str_contains($response['body'],'id="portalLinkUnavailable"'),'Unavailable
 $invalid=SecretsFrontendHttp::response($settings,5200,$server,'/hook/secrets_frontend_5200','https://evil.example','');
 expect(!str_contains($invalid['body'],'href="https://evil.example"'),'Unsafe Portal target was rendered');
 $GLOBALS['native'][18]['props']['Enabled']=false;expect(SecretsFrontendPortalNavigation::path(0,43)==='','Disabled native backend accepted');$GLOBALS['native'][18]['props']['Enabled']=true;
-$GLOBALS['native'][5]['props']['Hooks']='[]';expect(SecretsFrontendPortalNavigation::path(0,43)==='','Unregistered Portal hook accepted');baseline();
+$GLOBALS['native'][5]['props']['Hooks']='[]';expect(SecretsFrontendPortalNavigation::path(0,43)==='','Unregistered Portal hook accepted');baseline();$GLOBALS['native'][5]['props']['Hooks']=json_encode([['Hook'=>'/hook/alarm_portal_43','TargetID'=>43],['Hook'=>'/hook/portal','TargetID'=>43]]);
 if (!function_exists('SEC_GetReplacementInfo')) {
  function SEC_GetReplacementInfo(int $id):string {return json_encode(['engine'=>'native-only','ready'=>!($GLOBALS['bindingFailed']??false),'backend'=>18],JSON_THROW_ON_ERROR);}
 }
