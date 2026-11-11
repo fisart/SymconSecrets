@@ -1,0 +1,106 @@
+{
+  "contract": "CoreUserIntent/v1",
+  "publicTestSeedHex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+  "publicKey": "Kay64UG8yvCyLhqU000LxzYeUm0L_hLIl5S8kyKWbdc",
+  "intentDigest": "70355359ccc5fd0834222fac37be41414ef7faf40770671acd66525d4933c9f8",
+  "approved": {
+    "intent": {
+      "version": "1",
+      "newScopeDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "userOperationId": "000000f2-1111-4111-8111-111111111111",
+      "expectedHead": {
+        "clusterId": "00000001-1111-4111-8111-111111111111",
+        "realmId": "00000002-1111-4111-8111-111111111111",
+        "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+        "index": "7",
+        "commitId": "00000046-1111-4111-8111-111111111111",
+        "coreDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "manifestDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "keyEpoch": "1"
+      },
+      "owner": {
+        "nodeId": "00000006-1111-4111-8111-111111111111",
+        "bootId": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+        "nodeFence": "1"
+      },
+      "policyRef": {
+        "id": "00000001-1111-4111-8111-111111111111",
+        "version": "1",
+        "digest": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "membershipRef": {
+        "id": "00000002-1111-4111-8111-111111111111",
+        "version": "1",
+        "digest": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "permissionRef": {
+        "id": "00000003-1111-4111-8111-111111111111",
+        "version": "1",
+        "digest": "3333333333333333333333333333333333333333333333333333333333333333"
+      },
+      "sessionRef": {
+        "id": "00000004-1111-4111-8111-111111111111",
+        "version": "1",
+        "digest": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "credentialRef": {
+        "id": "00000005-1111-4111-8111-111111111111",
+        "version": "1",
+        "digest": "5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      "scope": {
+        "scopeId": "000000f1-1111-4111-8111-111111111111",
+        "kind": "GLOBAL",
+        "ownerNodeId": null,
+        "keyId": "CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg",
+        "revision": "1",
+        "objectDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "newRevision": "2",
+      "changeClass": "GLOBAL_EDIT",
+      "permittedDiffDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "candidateHead": {
+        "clusterId": "00000001-1111-4111-8111-111111111111",
+        "realmId": "00000002-1111-4111-8111-111111111111",
+        "incarnation": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+        "index": "8",
+        "commitId": "000000f0-1111-4111-8111-111111111111",
+        "coreDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "manifestDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "keyEpoch": "1"
+      },
+      "bundle": {
+        "ref": {
+          "id": "000000f0-1111-4111-8111-111111111111",
+          "version": "1",
+          "digest": "ab2ca4a723bfa20f1e5ff3ace18fe2d93b6f865b9d600f6c6c848f145028eb5c"
+        },
+        "descriptor": {
+          "commitId": "000000f0-1111-4111-8111-111111111111",
+          "bundleDigest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "manifestDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "bundleLength": "256"
+        },
+        "indexDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "protected": false
+      },
+      "outbox": [
+        {
+          "recipientId": "000000f3-1111-4111-8111-111111111111",
+          "pairingRef": {
+            "id": "00000006-1111-4111-8111-111111111111",
+            "version": "1",
+            "digest": "6666666666666666666666666666666666666666666666666666666666666666"
+          }
+        }
+      ]
+    },
+    "approvalRef": {
+      "id": "00000007-1111-4111-8111-111111111111",
+      "version": "1",
+      "digest": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    "keyId": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk",
+    "signature": "J85-YMkTVFSWxFGRHgV6gpMO5OKajGOOL4QQZh4BJJQ5rE818P-HibLDMh8Cb1V09rM7VVrTEa0b44yUtRw-CA"
+  }
+}

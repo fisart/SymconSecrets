@@ -1,0 +1,205 @@
+{
+  "elements": [
+    {
+      "type": "ExpansionPanel",
+      "caption": "Advanced settings / existing development installation",
+      "items": [
+        {
+          "type": "Label",
+          "caption": "Secrets Frontend — separate development system; existing SecretsManager is unchanged."
+        },
+        {
+          "type": "CheckBox",
+          "name": "Enabled",
+          "caption": "Enable frontend"
+        },
+        {
+          "type": "SelectInstance",
+          "name": "BackendInstanceID",
+          "caption": "Separate SecretsBackend instance",
+          "validModules": [
+            "{52165EDD-B2C0-40EC-8A59-42A97319B6E2}"
+          ]
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "AdminOrigin",
+          "caption": "Exact administrator HTTPS origin, e.g. https://secrets.example.com"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "TrustedHTTPSProxyIPs",
+          "caption": "Trusted TLS proxy IPs as JSON array; otherwise []"
+        },
+        {
+          "type": "SelectInstance",
+          "name": "PortalInstanceID",
+          "caption": "Portal instance",
+          "validModules": [
+            "{922E5A10-A048-463D-A973-97B4BBD9096B}"
+          ]
+        },
+        {
+          "type": "SelectInstance",
+          "name": "DocumentationInstanceID",
+          "caption": "Dokumentation instance",
+          "validModules": [
+            "{FBEB2EF6-8D23-49D7-A256-6D0C8D973B24}"
+          ]
+        },
+        {
+          "type": "Select",
+          "name": "Theme",
+          "caption": "Appearance",
+          "options": [
+            {
+              "caption": "System",
+              "value": "system"
+            },
+            {
+              "caption": "Light",
+              "value": "light"
+            },
+            {
+              "caption": "Dark",
+              "value": "dark"
+            }
+          ]
+        },
+        {
+          "type": "CheckBox",
+          "name": "DebugEnabled",
+          "caption": "Sanitized Debug variable below the instance"
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "type": "Label",
+      "caption": "First-time setup: follow steps 1–5 in order. Steps 1 and 3 are here; steps 2, 4 and 5 are in the browser."
+    },
+    {
+      "type": "ValidationTextBox",
+      "name": "SetupAddress",
+      "caption": "Trusted Symcon HTTPS address (including public port)",
+      "width": "100%",
+      "onChange": "SECF_PreviewWizardURL($id, $SetupAddress);"
+    },
+    {
+      "type": "Label",
+      "name": "SetupAddressStatus",
+      "caption": "Include https:// at the start and the public port if required, for example https://secrets.example.com:46910. You can paste the full Symcon console address."
+    },
+    {
+      "type": "CheckBox",
+      "name": "BootstrapJournalStorage",
+      "caption": "Setup records use private persistent storage",
+      "value": false
+    },
+    {
+      "type": "Button",
+      "name": "OpenBootstrap",
+      "caption": "Step 1: Open setup",
+      "onClick": "echo SECF_OpenBootstrapFromConsole($id, $SetupAddress, $BootstrapJournalStorage, false);",
+      "enabled": false
+    },
+    {
+      "type": "ValidationTextBox",
+      "name": "WizardURL",
+      "caption": "Complete administration URL",
+      "width": "100%"
+    },
+    {
+      "type": "Button",
+      "name": "RefreshCandidates",
+      "caption": "Step 3: Refresh approval requests",
+      "onClick": "SECF_RefreshBootstrapForm($id);"
+    },
+    {
+      "type": "Button",
+      "name": "OpenRecoveryBootstrap",
+      "caption": "Recover administrator access",
+      "onClick": "echo SECF_OpenBootstrapFromConsole($id, \"\", false, true);"
+    },
+    {
+      "type": "Label",
+      "name": "RecoveryAvailability",
+      "caption": "Administrator recovery is available after setup. For a new vault, start with Step 1: Open setup."
+    },
+    {
+      "type": "Button",
+      "caption": "Cancel unaccepted setup",
+      "onClick": "echo SECF_CancelBootstrap($id);"
+    },
+    {
+      "type": "Button",
+      "caption": "Resolve accepted setup",
+      "onClick": "SECF_RecoverBootstrap($id);"
+    },
+    {
+      "type": "Button",
+      "caption": "Validate configuration / register webhook",
+      "onClick": "SECF_Refresh($id);"
+    },
+    {
+      "type": "Button",
+      "caption": "Add to Portal → Administration",
+      "onClick": "SECF_AddToPortal($id);"
+    },
+    {
+      "type": "ExpansionPanel",
+      "caption": "Configuration export / import (no vault, keys or sessions)",
+      "items": [
+        {
+          "type": "Button",
+          "caption": "Export configuration",
+          "onClick": "SECF_ExportConfiguration($id);"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "ExportJSON",
+          "caption": "Configuration export",
+          "multiline": true
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "ImportJSON",
+          "caption": "Configuration to import",
+          "multiline": true
+        },
+        {
+          "type": "Button",
+          "caption": "Import configuration — leave disabled",
+          "onClick": "SECF_ImportConfiguration($id, $ImportJSON);"
+        }
+      ]
+    },
+    {
+      "type": "Button",
+      "caption": "Clear Debug",
+      "onClick": "SECF_ClearDebug($id);"
+    },
+    {
+      "type": "Label",
+      "caption": "Connect platforms once in Connections. Global then synchronizes automatically; Local stays private. Resolve different versions in Conflicts."
+    }
+  ],
+  "status": [
+    {
+      "code": 102,
+      "icon": "active",
+      "caption": "Frontend registered; separate backend owns authorization"
+    },
+    {
+      "code": 104,
+      "icon": "inactive",
+      "caption": "Disabled"
+    },
+    {
+      "code": 200,
+      "icon": "error",
+      "caption": "Check frontend settings and backend binding"
+    }
+  ]
+}

@@ -1,0 +1,256 @@
+{
+  "elements": [
+    {
+      "type": "Label",
+      "caption": "Configure this new backend from the SecretsFrontend HTML wizard. It detects instances, suggests private storage and creates the native encrypted vault when initialization is selected. Standalone is the default; peers are optional. No added database or anchor service is required. Development acceptance is pending."
+    },
+    {
+      "type": "ValidationTextBox",
+      "name": "BackendWizardURL",
+      "caption": "Paired HTML wizard (otherwise open SecretsFrontend)",
+      "enabled": false
+    },
+    {
+      "type": "ExpansionPanel",
+      "caption": "Advanced: earlier V1 settings / independent recovery",
+      "items": [
+        {
+          "type": "Label",
+          "caption": "Earlier V1 prototype only: PHP 8.2+, sodium, OpenSSL, curl, PDO SQLite and SQLite 3.51.3+ for WAL. These historical dependencies do not apply to native setup. The existing SecretsManager remains unchanged."
+        },
+        {
+          "type": "Label",
+          "caption": "Initial provisioning must be explicitly sealed before enrolling administrators. After sealing, foundation settings are pinned; hardware trust edits/imports are staged and need exact passkey approval on the HTML page. Changing a file behind an approved path locks management."
+        },
+        {
+          "type": "CheckBox",
+          "name": "Enabled",
+          "caption": "Enable backend after independent anchor provisioning"
+        },
+        {
+          "type": "CheckBox",
+          "name": "DebugEnabled",
+          "caption": "Sanitized Debug variable below the instance"
+        },
+        {
+          "type": "SelectInstance",
+          "name": "FrontendInstanceID",
+          "caption": "Paired SecretsFrontend",
+          "validModules": [
+            "{8D6AE8F7-EA3A-4513-AA14-C3F9613B0E83}"
+          ]
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "DataDirectory",
+          "caption": "Vault database directory (absolute, private, new directory)"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "KeyDirectory",
+          "caption": "Separate key directory (absolute, private, new directory)"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "AdminOrigin",
+          "caption": "Exact administrator HTTPS origin (default: not configured)"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "AnchorURL",
+          "caption": "Independent anchor HTTPS URL ending /v1/anchor (default: not configured)"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "AnchorPublicKey",
+          "caption": "Pinned anchor Ed25519 public key (base64url) (default: not configured)"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "AnchorKeyID",
+          "caption": "Pinned anchor key ID (base64url) (default: not configured)"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "ClientCertificatePath",
+          "caption": "Client TLS certificate PEM path (default: not configured)"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "ClientKeyPath",
+          "caption": "Private TLS client key path; file contents are never imported/exported (default: not configured)"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "AnchorCAFile",
+          "caption": "Anchor TLS CA PEM path (default: not configured)"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "HardwareRootsDirectory",
+          "caption": "Reviewed hardware attestation roots directory (.pem) (default: not configured)"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "HardwareAAGUIDs",
+          "caption": "Reviewed hardware AAGUIDs as JSON array (32 lowercase hex each)"
+        },
+        {
+          "type": "ValidationTextBox",
+          "name": "HardwareTrustVersion",
+          "caption": "Hardware trust-profile revision"
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "type": "ExpansionPanel",
+      "caption": "Advanced: earlier V1 development tools · not native setup",
+      "items": [
+        {
+          "type": "ExpansionPanel",
+          "caption": "1. Authorize the storage wizard (credential lives for ten minutes)",
+          "items": [
+            {
+              "type": "Label",
+              "caption": "Apply settings first. Use this console-only credential in the HTML wizard to review and create vault and key storage. It is consumed before file creation and never saved in properties, exports or Debug."
+            },
+            {
+              "type": "Button",
+              "caption": "Issue one-use setup credential",
+              "onClick": "SECB_BeginStorageSetup($id);"
+            },
+            {
+              "type": "ValidationTextBox",
+              "name": "SetupCredential",
+              "caption": "Temporary setup credential (copy once; do not save)",
+              "enabled": false
+            },
+            {
+              "type": "Button",
+              "caption": "Cancel setup credential",
+              "onClick": "SECB_CancelStorageSetup($id);"
+            }
+          ]
+        },
+        {
+          "type": "ExpansionPanel",
+          "caption": "2. Explicit initial security provisioning (before administrator enrollment only)",
+          "items": [
+            {
+              "type": "Label",
+              "caption": "Apply the exact HTTPS/mTLS/anchor settings, provision the independent witness, and recover. Review the digest; sealing pins this deployment and records the profile in the anchored vault. This action is unavailable once administrators exist."
+            },
+            {
+              "type": "Button",
+              "caption": "Review provisioning digest",
+              "onClick": "SECB_SecurityConfigurationDigest($id);"
+            },
+            {
+              "type": "ValidationTextBox",
+              "name": "ProvisioningDigest",
+              "caption": "Reviewed security configuration digest (SHA-256)"
+            },
+            {
+              "type": "Button",
+              "caption": "Seal this initial provisioning",
+              "onClick": "SECB_SealInitialSecurityConfiguration($id, $ProvisioningDigest);"
+            }
+          ]
+        },
+        {
+          "type": "Button",
+          "caption": "2. Recover / check independent anchor",
+          "onClick": "SECB_Recover($id);"
+        },
+        {
+          "type": "ExpansionPanel",
+          "caption": "3. Independent administrator enrollment / recovery",
+          "items": [
+            {
+              "type": "ValidationTextBox",
+              "name": "AdminLabel",
+              "caption": "Administrator/key label"
+            },
+            {
+              "type": "CheckBox",
+              "name": "HardwareEnrollment",
+              "caption": "Require verified hardware attestation for this new credential"
+            },
+            {
+              "type": "Button",
+              "caption": "Issue temporary enrollment credential",
+              "onClick": "SECB_BeginAdminEnrollment($id, $AdminLabel, $HardwareEnrollment);"
+            },
+            {
+              "type": "ValidationTextBox",
+              "name": "EnrollmentCredential",
+              "caption": "Temporary enrollment credential (not configuration)",
+              "enabled": false
+            },
+            {
+              "type": "Label",
+              "caption": "Use the enrollment credential in the HTML page. This is the independent console recovery path, not an ordinary web approver-enrollment bypass."
+            }
+          ]
+        },
+        {
+          "type": "ExpansionPanel",
+          "caption": "Configuration export / import (no vault, keys or sessions)",
+          "items": [
+            {
+              "type": "Button",
+              "caption": "Export configuration",
+              "onClick": "SECB_ExportConfiguration($id);"
+            },
+            {
+              "type": "ValidationTextBox",
+              "name": "ExportJSON",
+              "caption": "Configuration export",
+              "multiline": true
+            },
+            {
+              "type": "ValidationTextBox",
+              "name": "ImportJSON",
+              "caption": "Configuration to import",
+              "multiline": true
+            },
+            {
+              "type": "Button",
+              "caption": "Import configuration — leave disabled",
+              "onClick": "SECB_ImportConfiguration($id, $ImportJSON);"
+            }
+          ]
+        },
+        {
+          "type": "Button",
+          "caption": "Clear Debug",
+          "onClick": "SECB_ClearDebug($id);"
+        }
+      ]
+    }
+  ],
+  "status": [
+    {
+      "code": 102,
+      "icon": "active",
+      "caption": "Development backend active; acceptance review pending"
+    },
+    {
+      "code": 104,
+      "icon": "inactive",
+      "caption": "Disabled"
+    },
+    {
+      "code": 200,
+      "icon": "error",
+      "caption": "Backend unavailable; see the Backend status variable for details"
+    },
+    {
+      "code": 201,
+      "icon": "inactive",
+      "caption": "Native vault awaiting initialization or recovery; see Backend status"
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "schema": "SECF.CentralBackupHandoff.v1",
+  "status": "registration-and-native-adapter-review-required",
+  "modules": [
+    {
+      "id": "{8D6AE8F7-EA3A-4513-AA14-C3F9613B0E83}",
+      "name": "SecretsFrontend",
+      "repository": "fisart/SymconSecrets",
+      "path": "SecretsFrontend/module.php",
+      "prefix": "SECF",
+      "schema": "SECF.Config.v2",
+      "exportFunction": "SECF_ExportConfiguration",
+      "importFunction": "SECF_ImportConfiguration",
+      "configuration": {
+        "Enabled": false,
+        "DebugEnabled": false,
+        "BackendInstanceID": 0,
+        "PortalInstanceID": 0,
+        "DocumentationInstanceID": 0,
+        "AdminOrigin": "",
+        "TrustedHTTPSProxyIPs": [],
+        "Theme": "system"
+      },
+      "attributes": [],
+      "state": "configuration-only; native central support is not active",
+      "acceptedSchemas": [
+        "SECF.Config.v1",
+        "SECF.Config.v2"
+      ],
+      "deploymentDraft": "Optional non-authoritative placement draft in native SECF.Config.v2 exports; restore through the importer only, disabled and V2-only."
+    },
+    {
+      "id": "{52165EDD-B2C0-40EC-8A59-42A97319B6E2}",
+      "name": "SecretsBackend",
+      "repository": "fisart/SymconSecrets",
+      "path": "SecretsBackend/module.php",
+      "prefix": "SECB",
+      "schema": "SECB.Config.v1",
+      "exportFunction": "SECB_ExportConfiguration",
+      "importFunction": "SECB_ImportConfiguration",
+      "configuration": {
+        "Enabled": false,
+        "DebugEnabled": false,
+        "FrontendInstanceID": 0,
+        "DataDirectory": "",
+        "KeyDirectory": "",
+        "AdminOrigin": "",
+        "AnchorURL": "",
+        "AnchorPublicKey": "",
+        "AnchorKeyID": "",
+        "ClientCertificatePath": "",
+        "ClientKeyPath": "",
+        "AnchorCAFile": "",
+        "HardwareRootsDirectory": "",
+        "HardwareAAGUIDs": "[]",
+        "HardwareTrustVersion": "none"
+      },
+      "attributes": [],
+      "state": "configuration-only; native central support is not active"
+    }
+  ],
+  "excludes": [
+    "vault contents",
+    "master/private keys",
+    "credentials",
+    "setup/enrollment credentials",
+    "sessions",
+    "Debug values",
+    "pending approvals"
+  ],
+  "restoreRule": "Use the native importer; leave Enabled=false; never restore protected identity/policy from ordinary settings."
+}
