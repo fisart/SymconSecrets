@@ -20,14 +20,15 @@ explicit settings are never bypassed after a verification failure.
 
 ## Let’s Encrypt issuer completion
 
-`letsencrypt-issuers.pem` contains the public YE2 certificate and the cross-signed
+`letsencrypt-issuers.pem` contains the public YE1 and YE2 certificates and the cross-signed
 Root YE / ISRG Root X2 issuer certificates obtained from the CA's official site:
 
+- https://letsencrypt.org/certs/gen-y/int-ye1.pem
 - https://letsencrypt.org/certs/gen-y/int-ye2.pem
 - https://letsencrypt.org/certs/gen-y/root-ye-by-x2.pem
 - https://letsencrypt.org/certs/gen-y/root-x2-by-x1.pem
 
-SHA-256: `3b91762c45be2dbc4a5fe358b03ce40df2541c6c857fc8329c4a6dc4c3f09d7e`.
+SHA-256: `8f8f4ace3cef83be4bbd48e77f08959e4ec32aa6c70c5eb472f6dd6a4908d02b`.
 They are chain-building material, not new trusted roots. Each issuer is checked
 against a snapshot of the already configured OpenSSL CA file before use. Only
 validated issuers are added to a temporary per-request copy, deleted afterwards.

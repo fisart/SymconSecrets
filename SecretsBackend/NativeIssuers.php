@@ -3,7 +3,7 @@ declare(strict_types=1);
 /** Complete known public chains using only issuers that validate to the configured CA roots. */
 final class SecretsBackendNativeIssuers
 {
-    public const SHA256='3b91762c45be2dbc4a5fe358b03ce40df2541c6c857fc8329c4a6dc4c3f09d7e';
+    public const SHA256='8f8f4ace3cef83be4bbd48e77f08959e4ec32aa6c70c5eb472f6dd6a4908d02b';
     public static function run(array $ssl,callable $request,?string $issuerFile=null,?string $expectedHash=null)
     {
         if(!($ssl['verify_peer']??false))return $request($ssl);

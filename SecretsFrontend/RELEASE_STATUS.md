@@ -1,8 +1,12 @@
 # Native Secrets — current release status
 
-Reviewed 8 November 2026. Current release **5.4.6 build 20**, based on installed build-19 commit `58049e54b4f7e403f2698d033bf7bb82d30b4ae2`; installed branch **migration/legacy-sec-replacement**. This is the native-only replacement preserving the original module GUID, SEC prefix and installed instance IDs. Main/coexistence history is not this branch's active implementation.
+Current branch release **5.4.6 build 22** on **migration/legacy-sec-replacement**. This is the native-only replacement preserving the original module GUID, SEC prefix and installed instance IDs.
 
 The native vault is in production use. Supplied four-node reports record completed setup; the later Heartbeat Overview reports Production system, Vault ready, three synchronized connections and full Magic access. Production labels derive from the saved local unfrozen application-write grant, not audit certification. Production121, Heartbeat and Test Hermitage migration were owner-confirmed. Hermitage's native participation is observed; its final unchanged-SEC application acceptance is not separately recorded.
+
+## Build 22: automatic completion for YE1 and YE2
+
+For servers that present only a Let's Encrypt YE1 or YE2 leaf, the module completes the chain and verifies it against the configured trust roots. Leave certificate chain verification enabled. Fingerprint entry is unnecessary for these issuers.
 
 ## Build 20: compact authorization
 
@@ -20,7 +24,7 @@ Protected scripts/pages using existing login-URL APIs open the separate approxim
 - Encrypted snapshot/marker storage, complete encrypted backups, conflict-preserving Local recovery, current-authority retention, atomic verified receipt compaction and bounded recovery allowance.
 - Module-owned versioned configuration export/read-only validation, separate from secret-value recovery.
 - Local-only rotating OAuth refresh credentials with exact-intent/captured-result/quarantine controls.
-- Native Symcon HTTPS recognition without standard PHP flags, including NAT/Docker and IPv4-mapped tcp6 sockets; strict peer TLS and validated YE2 issuer completion retained.
+- Native Symcon HTTPS recognition without standard PHP flags, including NAT/Docker and IPv4-mapped tcp6 sockets, with strict peer TLS and validated YE1 and YE2 issuer completion.
 
 ## Executed evidence
 
