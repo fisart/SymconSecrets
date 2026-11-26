@@ -82,7 +82,32 @@ if(require.main===module)(async()=>{
  const pending=await fixture(false),p=pending.$;pending.n.peers=[peer(false,'PENDING_REMOTE')];pending.n.outbox=[];p('refresh').click();await tick();pending.open();p('peerResumeSelect').value=a;p('peerResumeSelect').dispatchEvent(new pending.dom.window.Event('change'));p('peerResume').click();await tick();assert.equal(pending.step(),4);const timer=[...pending.timers].reverse().find(t=>!t.cancelled);Object.defineProperty(pending.dom.window.document,'hidden',{value:true,configurable:true});pending.dom.window.document.dispatchEvent(new pending.dom.window.Event('visibilitychange'));const beforeHidden=pending.calls.length;await timer.fn();await tick();assert.equal(pending.calls.length,beforeHidden);Object.defineProperty(pending.dom.window.document,'hidden',{value:false,configurable:true});pending.dom.window.document.dispatchEvent(new pending.dom.window.Event('visibilitychange'));
  let release;pending.defer(new Promise(resolve=>{release=resolve}));p('peerCheckProgress').click();await tick();p('peerLeaveWizard').click();assert.equal(pending.step(),1);release({peers:[peer(false,'ACTIVE')],pairingReceived:[received(false)],pairingSent:[sent(false)],outbox:[],globalWritable:true,globalRevision:'0',globalTreeId:tb});await tick();await tick();assert.equal(pending.step(),1,'Late status reply restored an abandoned wizard.');assert.equal(p('nativeSensitiveValue').value,'');p('peerResumeSelect').value=a;p('peerResumeSelect').dispatchEvent(new pending.dom.window.Event('change'));p('peerResume').click();await tick();pending.failStatus(true);await pending.check();assert.equal(p('peerSignInAgain').hidden,false);assert.match(p('peerProgressMessage').textContent,/checking paused/);assert.equal(pending.calls.some(r=>r.action==='approve'),false);p('peerSignInAgain').click();await tick();assert.equal(p('login').hidden,false);
  for(const f of [first,second,resume,pending]){assert.equal(f.dom.window.localStorage.length,0);assert.equal(f.dom.window.sessionStorage.length,0);assert.equal(f.errors.length,0,f.errors.map(e=>e.message).join('\n'));f.dom.window.close();}
- console.log('PASS six-step two-platform wizard: invitation handoff, exact code approval, automatic progress, current-pair receipts, real scope navigation, resume, cancellation and hidden/late cleanup');
+ const pin='ab'.repeat(32);
+ const tls=await fixture(true,{tlsSummary:{tlsMode:'pinned',tlsFingerprint:pin}});
+ const connection=peer(true,'ACTIVE');
+ tls.n.peers=[connection];
+ tls.$('refresh').click();await tick();tls.open();
+ const tlsButton=()=>[...tls.$('nativePeerList').querySelectorAll('button')].find(button=>button.textContent==='HTTPS settings');
+ tlsButton().click();await tick();
+ assert.equal(tls.$('peerHTTPSChain').checked,true);
+ tls.$('peerHTTPSChain').click();
+ tls.$('peerHTTPSReview').click();await tick();
+ assert.equal(tls.calls.some(r=>r.action==='prepare'),false,'A missing fingerprint reached review.');
+ tls.$('peerHTTPSPin').value=pin.match(/../g).join(':').toUpperCase();
+ tls.$('peerHTTPSReview').click();await tick();
+ assert.deepEqual(tls.calls.filter(r=>r.action==='prepare').at(-1).data.operation,
+  {kind:'nativePeerHTTPSPolicy',peerId:b,pairingId:pair,endpoint:connection.descriptor.endpoint,policy:{mode:'pinned',fingerprint:pin}});
+ assert.match(tls.$('reviewText').textContent,new RegExp(pin));
+ tls.next(()=>{connection.httpsPolicy={mode:'pinned',fingerprint:pin};return {nativeChanged:true};});
+ await confirm(tls);
+ tlsButton().click();await tick();
+ assert.equal(tls.$('peerHTTPSChain').checked,false);
+ tls.$('peerHTTPSChain').click();
+ tls.$('peerHTTPSReview').click();await tick();
+ assert.deepEqual(tls.calls.filter(r=>r.action==='prepare').at(-1).data.operation.policy,{mode:'strict'});
+ assert.equal(tls.errors.length,0,tls.errors.map(e=>e.message).join('\n'));
+ tls.dom.window.close();
+ console.log('PASS six-step two-platform wizard, exact approval, automatic progress, hidden/late cleanup and per-peer HTTPS settings');
 })().catch(e=>{process.stderr.write(e.stack+'\n');process.exitCode=1});
 
 module.exports={fixture,tick,confirm,peer,descriptor,received,sent,a,b,pair,code};

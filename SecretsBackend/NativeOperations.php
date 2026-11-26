@@ -90,6 +90,12 @@ final class SecretsBackendNativeOperations
             case 'nativePair':SecretsBackendNativePeer::exact($op,['kind','invitation','name']);$op=$this->peer->pairOperation($op['invitation'],$op['name']);if($op['pair']['scope']===SecretsBackendSharedGlobal::SCOPE)SecretsBackendSharedGlobal::enable($state);elseif(isset($state['native']['sharedGlobal']))throw new RuntimeException('Use a new shared Global invitation from the updated module.');$op['httpsReview']=SecretsBackendNativeLegacyHTTPS::proposal($op['pair']['a']['endpoint'],$state['pairing']['peers']);break;
             case 'nativeAcceptPair':SecretsBackendNativePeer::exact($op,['kind','peerId']);$p=$state['pairing']['peers'][$op['peerId']]??null;if(!is_array($p)||$p['state']!=='PENDING_APPROVAL')throw new RuntimeException('Select the exact pending pairing request.');$op['httpsReview']=SecretsBackendNativeLegacyHTTPS::proposal($p['descriptor']['endpoint'],$state['pairing']['peers']);$op['pairDigest']=SecretsBackendNativePeer::digest($p['pair']);$op['peerReview']=['sharingScope'=>$p['pair']['scope'],'peerURL'=>$p['descriptor']['endpoint'],'peerVault'=>$p['id'],'comparison'=>SecretsBackendNativePeer::comparison($p['pair'])];break;
             case 'nativeRevokePeer':SecretsBackendNativePeer::exact($op,['kind','peerId']);$p=$state['pairing']['peers'][$op['peerId']]??null;if(!is_array($p))throw new RuntimeException('Unknown peer.');$op['peerReview']=['sharingScope'=>$p['pair']['scope'],'peerURL'=>$p['descriptor']['endpoint'],'peerVault'=>$p['id'],'comparison'=>SecretsBackendNativePeer::comparison($p['pair'])];break;
+            case 'nativePeerHTTPSPolicy':
+                SecretsBackendNativePeer::exact($op,['kind','peerId','pairingId','endpoint','policy']);
+                self::requirePrimaryPeer($state,$op);
+                if(!is_array($op['policy']))throw new RuntimeException('Choose a valid HTTPS certificate policy.');
+                $op['policy']=SecretsBackendNativeLegacyHTTPS::policy($op['policy']);
+                break;
             case 'nativeProductionCheck':SecretsBackendNativePeer::exact($op,['kind']);break;
             case 'nativeRotateKey':SecretsBackendNativePeer::exact($op,['kind']);$op['keyId']=SecretsBackendCodec::uuid();break;
             case 'nativeBackup':SecretsBackendNativePeer::exact($op,['kind']);$op['recoveryKey']=SecretsBackendCodec::b64(random_bytes(32));break;
@@ -151,11 +157,26 @@ final class SecretsBackendNativeOperations
         $current=SecretsBackendNativeLegacyHTTPS::proposal($endpoint,$state['pairing']['peers']);
         if($current!==$op['httpsReview'])throw new RuntimeException('HTTPS settings changed after review. Review this connection again.');
     }
+    private static function requirePrimaryPeer(array $state,array $op): void
+    {
+        SecretsBackendNativePeer::uuid($op['peerId']);
+        $peer=$state['pairing']['peers'][$op['peerId']]??null;
+        if(!($peer['active']??false)||$peer['state']!=='ACTIVE'||$peer['pairingId']!==$op['pairingId']
+            ||$peer['descriptor']['endpoint']!==$op['endpoint']
+            ||str_ends_with(strtolower((string)parse_url($peer['descriptor']['endpoint'],PHP_URL_HOST)),'.ipmagic.de')) {
+            throw new RuntimeException('Select the current direct HTTPS connection to an approved peer.');
+        }
+    }
     public function apply(array $op,array $s,bool $delegatedSetup=false): array
     {
         $kind=$op['kind'];
         if(!$delegatedSetup&&str_starts_with($kind,'nativeEmergency')&&isset($s['native']['automaticSetup']))$s['native']['automaticSetup']['enabled']=false;
 
+        if($kind==='nativePeerHTTPSPolicy'){
+            self::requirePrimaryPeer($s,$op);
+            $s['pairing']['peers'][$op['peerId']]['httpsPolicy']=SecretsBackendNativeLegacyHTTPS::policy($op['policy']);
+            return $s;
+        }
         if($kind==='nativeSetupAuthorize'){
             if($s['identity']['revocation']!==$op['revocation']||!($s['identity']['credentials'][$op['credential']]['active']??false))throw new RuntimeException('Setup administrator authority changed.');
             return (new SecretsBackendAutomaticSetup($this->store,$this->peer))->authorize($s,$op['policy'],['credential'=>$op['credential']]);
@@ -446,6 +467,7 @@ final class SecretsBackendNativeOperations
         foreach(['label','hardware','probe','name','newName','scope','path','write','peerId','mode','sourceVault','sourceAt','backupDigest','treeId','transferId','newTreeId']as$key)if(isset($op[$key]))$out[$key]=$op[$key];
         if(isset($op['peerReview']))$out+=$op['peerReview'];
         if(isset($op['httpsReview']))$out+=['tlsMode'=>$op['httpsReview']['policy']['mode'],'tlsFingerprint'=>$op['httpsReview']['policy']['fingerprint']??'','tlsSource'=>$op['httpsReview']['source']];
+        if($op['kind']==='nativePeerHTTPSPolicy')$out+=['peerURL'=>$op['endpoint'],'tlsMode'=>$op['policy']['mode'],'tlsFingerprint'=>$op['policy']['fingerprint']??''];
         if(isset($op['pair']))$out['comparison']=SecretsBackendNativePeer::comparison($op['pair']);
         if(isset($op['pair']))$out+=['peerURL'=>$op['pair']['a']['endpoint'],'peerVault'=>$op['pair']['a']['vaultId'],'peerFingerprint'=>hash('sha256',$op['pair']['a']['signKey']),'pairingDigest'=>SecretsBackendNativePeer::digest($op['pair'])];
         if(in_array($op['kind'],['nativePair','nativeAcceptPair'],true)&&($op['pair']['scope']??$op['peerReview']['sharingScope']??'global')!==SecretsBackendSharedGlobal::SCOPE)$out['sharing']='Legacy separate read-only trees. This does not merge Global secrets. Update both modules and create a new shared Global invitation.';

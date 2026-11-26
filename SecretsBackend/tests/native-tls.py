@@ -207,7 +207,11 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
             if options == dict(chain=False):
                 assert completed['ok'], completed
                 assert len(counts) == before + 1, counts
+                pinned = request(url, mode='pin:' + server.fingerprint)
+                assert pinned['ok'] and len(counts) == before + 2, pinned
                 before = len(counts)
+                mismatched_pin = request(url, mode='pin:' + '0' * 64)
+                assert not mismatched_pin['ok'] and len(counts) == before, mismatched_pin
             else:
                 assert not completed['ok'], completed
                 assert len(counts) == before, 'Issuer completion bypassed name or date validation.'
@@ -217,5 +221,5 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
         finally:
             server.shutdown()
             server.server_close()
-    assert counts == [b'TLS-REQUEST-CANARY'] * 16, counts
+    assert counts == [b'TLS-REQUEST-CANARY'] * 17, counts
 print('PASS real HTTPS: reused original PHP streams; explicit approved pin succeeds and mismatch sends no HTTP; separate cURL CA file cannot override OpenSSL;  reproduced unknown-issuer failure, recovered through PHP/env trust, accepted valid chains, rejected wrong roots/hostname/expiry/incomplete chain before POST, no trust-policy bypass')

@@ -639,6 +639,8 @@ Shared Global SECB.SharedGlobal.1 stores bounded writer clocks, per-path version
 
 Remote peer transport is bounded PHP HTTPS streams/OpenSSL with hostname and chain validation and no redirects. The supported module-local checksum-pinned Let's Encrypt YE2 intermediate completion still validates the chain to configured trust roots; an observed untrusted leaf never becomes a trust anchor. Optional explicit primary certificate pinning is reviewed and origin-specific. Neither historical success nor the user browser's trust store disables strict checking.
 
+For a temporary chain incident, open **Connections → Your connections → HTTPS settings** on the installation that makes the outgoing request. Clear **Verify the certificate chain**, enter the SHA-256 fingerprint from the remote server's installed certificate file, and approve the exact change with a passkey. The connection authenticates that specific certificate even when the server omits intermediates. Renewal that changes the fingerprint requires new approval. After the server supplies the full chain, select **Verify the certificate chain** and approve to restore standard validation. Apply the setting separately on each sending installation that needs it. The peer itself and its backup address keep their existing TLS settings.
+
 ROUTES binds at most two exact approved endpoints, revision and pair/epoch inside the authenticated channel. Stale/conflicting announcements fail. Magic-first and primary-second use the same immutable signed/sealed operation, and per-host policy remains separate. No unsolicited redirect, DNS observation or remote discovery creates trust. HEALTH uses this same route logic with fresh request binding and encrypted observations.
 
 ### 30.5 Browser confidentiality
