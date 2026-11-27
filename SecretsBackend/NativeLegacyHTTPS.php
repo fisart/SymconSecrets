@@ -2,7 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__.'/NativeIssuers.php';
 
-/** Reuses SecretsManager's PHP-stream strict/pinned transport, without its legacy protocol or credentials. */
+/** Strict PHP-stream HTTPS, without legacy protocol, credentials or certificate-pin exceptions. */
 final class SecretsBackendNativeLegacyHTTPS
 {
     private const MODULE='{7C5A3841-3F7B-4D2A-9E1C-5B6D8F9A0E12}';
@@ -16,9 +16,14 @@ final class SecretsBackendNativeLegacyHTTPS
     public static function policy(array $policy): array
     {
         if(($policy['mode']??'strict')==='strict'&&array_diff(array_keys($policy),['mode'])===[])return ['mode'=>'strict'];
-        $fingerprint=$policy['fingerprint']??'';
-        if(($policy['mode']??'')!=='pinned'||!is_string($fingerprint)||array_diff(array_keys($policy),['mode','fingerprint'])||!preg_match('/^[a-f0-9]{64}$/D',$fingerprint))throw new RuntimeException('Invalid approved HTTPS certificate fingerprint.');
-        return ['mode'=>'pinned','fingerprint'=>$fingerprint];
+        throw new RuntimeException('Certificate chain and hostname verification are required. Certificate pin exceptions are no longer supported.');
+    }
+    /** Read compatibility only: old saved pins now use strict verification, including emergency capsules. */
+    public static function effectivePolicy(array $policy): array
+    {
+        if(($policy['mode']??'')==='pinned'&&is_string($policy['fingerprint']??null)
+            &&array_diff(array_keys($policy),['mode','fingerprint'])===[]&&preg_match('/^[a-f0-9]{64}$/D',$policy['fingerprint']))return ['mode'=>'strict'];
+        return self::policy($policy);
     }
     /** Public applied settings only: never read/decrypt a vault, token or password. */
     public static function proposal(string $endpoint,array $peers=[]): array
@@ -28,7 +33,7 @@ final class SecretsBackendNativeLegacyHTTPS
         $retained=[];foreach($peers as$peer){
             if(!isset($peer['httpsPolicy'],$peer['descriptor']['endpoint']))continue;
             if(self::origin($peer['descriptor']['endpoint'])!==$origin)continue;
-            $policy=self::policy($peer['httpsPolicy']);$retained[json_encode($policy)]=$policy;
+            $policy=self::effectivePolicy($peer['httpsPolicy']);$retained[json_encode($policy)]=$policy;
         }
         if(count($retained)>1)throw new RuntimeException('Saved connections have conflicting HTTPS settings for this platform.');
         return ['policy'=>$retained?array_values($retained)[0]:['mode'=>'strict'],'source'=>$retained?'saved connection':'PHP streams'];
@@ -39,15 +44,12 @@ final class SecretsBackendNativeLegacyHTTPS
     }
     public static function post(string $endpoint,string $bytes,array $policy=['mode'=>'strict'],float $timeout=15.0): string
     {
-        SecretsBackendNativePeer::endpoint($endpoint);$policy=self::policy($policy);
+        SecretsBackendNativePeer::endpoint($endpoint);$policy=self::effectivePolicy($policy);
         if(!is_finite($timeout)||$timeout<0.1||$timeout>90.0)throw new InvalidArgumentException('Invalid HTTPS timeout.');
         $deadline=microtime(true)+$timeout;
         if(!self::available())throw new SecretsBackendNativePeerDeliveryFailure('transport');
-        $host=parse_url($endpoint,PHP_URL_HOST);$pinned=$policy['mode']==='pinned';
-        // PHP verifies peer_fingerprint during TLS setup, before its HTTP wrapper sends request bytes.
-        // Pinned mode authenticates the exact previously approved leaf certificate, as in SecretsManager.
-        $ssl=['verify_peer'=>!$pinned,'verify_peer_name'=>!$pinned,'allow_self_signed'=>$pinned,'SNI_enabled'=>true,'peer_name'=>$host];
-        if($pinned)$ssl['peer_fingerprint']=['sha256'=>$policy['fingerprint']];
+        $host=parse_url($endpoint,PHP_URL_HOST);
+        $ssl=['verify_peer'=>true,'verify_peer_name'=>true,'allow_self_signed'=>false,'SNI_enabled'=>true,'peer_name'=>$host];
         return SecretsBackendNativeIssuers::run($ssl,static fn(array $options):string=>self::send($endpoint,$bytes,$policy,$options,$deadline));
     }
     private static function send(string $endpoint,string $bytes,array $policy,array $ssl,float $deadline): string
@@ -85,9 +87,9 @@ final class SecretsBackendNativeLegacyHTTPS
         elseif(str_contains($w,'getaddrinfo'))$problem='dns';
         elseif(str_contains($w,'certificate')||str_contains($w,'peer_fingerprint')||str_contains($w,'peer certificate')){
             $problem='certificate';
-            if(str_contains($w,'did not match')||str_contains($w,'fingerprint'))$reason=$policy['mode']==='pinned'?'pin-mismatch':'hostname-mismatch';
+            if(str_contains($w,'did not match'))$reason='hostname-mismatch';
         }elseif(str_contains($w,'crypto')||str_contains($w,'ssl'))$problem='tls';
         $file=(string)ini_get('openssl.cafile');$directory=(string)ini_get('openssl.capath');
-        return new SecretsBackendNativePeerDeliveryFailure($problem,0,0,-1,$reason,['fileSpecified'=>$file!=='','fileReadable'=>$file!==''?is_readable($file):null,'directorySpecified'=>$directory!=='','directoryReadable'=>$directory!==''?is_readable($directory):null,'source'=>$policy['mode']==='pinned'?'certificate-pinned':($file!==''||$directory!==''?'openssl-configured':'openssl-default')]);
+        return new SecretsBackendNativePeerDeliveryFailure($problem,0,0,-1,$reason,['fileSpecified'=>$file!=='','fileReadable'=>$file!==''?is_readable($file):null,'directorySpecified'=>$directory!=='','directoryReadable'=>$directory!==''?is_readable($directory):null,'source'=>$file!==''||$directory!==''?'openssl-configured':'openssl-default']);
     }
 }

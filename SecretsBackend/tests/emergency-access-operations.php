@@ -20,9 +20,12 @@ foreach([1,2]as$i){
     $bad=json_decode($package,true);$bad['source']=SecretsBackendCodec::uuid();$no(fn()=>SecretsBackendEmergency::importGrant($stores[0]->read()['state'],json_encode($bad)),'Wrong source accepted emergency grant.');
     $operation(0,['kind'=>'nativeEmergencyImport','package'=>$package]);
 }
+// An already issued emergency capsule may contain a retired pin exception after an upgrade.
+$cur=$stores[0]->read();$stores[0]->change($cur['head'],SecretsBackendCodec::uuid(),hash('sha256','old-emergency-pin'),static function($state){foreach($state['pairing']['peers']as&$p)$p['httpsPolicy']=['mode'=>'pinned','fingerprint'=>str_repeat('a',64)];unset($p);return $state;});
 $sync=static function(bool $create=false)use($stores,$capsule,$binding):bool{$s=$stores[0]->read()['state'];return $capsule->synchronize($s,$binding,SecretsBackendEmergency::clients($s),true,SecretsBackendNativeHealth::stamp($s),$create);};
 $sync(true);$calls=[];$offline=[];
 $transport=static function($url,$body,$policy,$timeout)use($stores,$peers,&$calls,&$offline):string{
+    if($policy!==['mode'=>'strict'])throw new RuntimeException('Emergency capsule retained a certificate bypass.');
     $calls[]=$url;foreach($peers as$i=>$p)if($p->descriptor()['endpoint']===$url){if(isset($offline[$i]))throw new SecretsBackendNativePeerDeliveryFailure('connect');return SecretsBackendEmergency::serve($stores[$i],$body);}throw new RuntimeException('Unexpected transport target.');
 };
 $client=static fn(array $backoff=[])=>new SecretsBackendEmergencyClient($capsule,$binding,$transport,$backoff);

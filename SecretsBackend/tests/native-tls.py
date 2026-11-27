@@ -166,11 +166,13 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
         assert not unrelated['ok'] and unrelated['problem'] == 'certificate', unrelated
         assert len(counts) == before, 'A request was sent after failed certificate verification.'
         pinned = request(url, mode='pin:' + server.fingerprint)
-        assert pinned['ok'], pinned
+        assert not pinned['ok'], 'A saved pin bypassed CA validation.'
+        migrated = request(url, ['openssl.cafile=' + str(ca_path)], mode='pin:' + server.fingerprint)
+        assert migrated['ok'], migrated
         before = len(counts)
         mismatch = request(url, mode='pin:' + '0' * 64)
         assert not mismatch['ok'] and mismatch['problem'] == 'certificate', mismatch
-        assert len(counts) == before, 'Fingerprint mismatch sent HTTP data before authentication.'
+        assert len(counts) == before, 'A retired pin exception sent HTTP data without CA authentication.'
         server.reply_mode = 'slow-headers'
         short = request(url, ['openssl.cafile=' + str(ca_path)], mode='timeout:1.5')
         assert not short['ok'] and short['problem'] == 'timeout', short
@@ -208,18 +210,21 @@ with tempfile.TemporaryDirectory(prefix='sec-native-tls-') as raw:
                 assert completed['ok'], completed
                 assert len(counts) == before + 1, counts
                 pinned = request(url, mode='pin:' + server.fingerprint)
-                assert pinned['ok'] and len(counts) == before + 2, pinned
+                assert not pinned['ok'] and len(counts) == before + 1, pinned
                 before = len(counts)
                 mismatched_pin = request(url, mode='pin:' + '0' * 64)
                 assert not mismatched_pin['ok'] and len(counts) == before, mismatched_pin
             else:
                 assert not completed['ok'], completed
                 assert len(counts) == before, 'Issuer completion bypassed name or date validation.'
+            before = len(counts)
+            saved_pin = request(url, ['openssl.cafile=' + str(ca_path)], mode='pin:' + server.fingerprint)
+            assert not saved_pin['ok'] and len(counts) == before, 'A saved pin bypassed name, date or chain validation.'
             untrusted = request(url, ['openssl.cafile=' + str(other_path)], mode='issuers:' + str(issuer_path))
             assert not untrusted['ok'], untrusted
             assert len(counts) == before, 'A supplied intermediate became a new trust anchor.'
         finally:
             server.shutdown()
             server.server_close()
-    assert counts == [b'TLS-REQUEST-CANARY'] * 17, counts
-print('PASS real HTTPS: reused original PHP streams; explicit approved pin succeeds and mismatch sends no HTTP; separate cURL CA file cannot override OpenSSL;  reproduced unknown-issuer failure, recovered through PHP/env trust, accepted valid chains, rejected wrong roots/hostname/expiry/incomplete chain before POST, no trust-policy bypass')
+    assert counts == [b'TLS-REQUEST-CANARY'] * 16, counts
+print('PASS real HTTPS: reused original PHP streams; retired pins require full CA/name/date validation and send no HTTP on failure; separate cURL CA file cannot override OpenSSL;  reproduced unknown-issuer failure, recovered through PHP/env trust, accepted valid chains, rejected wrong roots/hostname/expiry/incomplete chain before POST, no trust-policy bypass')

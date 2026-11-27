@@ -5,7 +5,7 @@ final class SecretsBackendNativeTLSDiagnostics
 {
     public static function inspect(string $endpoint,array $policy): array
     {
-        SecretsBackendNativePeer::endpoint($endpoint);$policy=SecretsBackendNativeLegacyHTTPS::policy($policy);
+        SecretsBackendNativePeer::endpoint($endpoint);$policy=SecretsBackendNativeLegacyHTTPS::effectivePolicy($policy);
         $host=parse_url($endpoint,PHP_URL_HOST);$port=parse_url($endpoint,PHP_URL_PORT)??443;
         $out=['version'=>1,'checkedAt'=>time(),'php'=>PHP_VERSION,'openssl'=>OPENSSL_VERSION_TEXT,'targetHost'=>$host,'targetPort'=>$port,'httpDataSent'=>false,'configuredPolicy'=>$policy];
         try{$out['legacyProposal']=SecretsBackendNativeLegacyHTTPS::proposal($endpoint);}catch(Throwable $e){$out['legacyProposal']=['status'=>'conflicting-or-invalid-settings'];}
@@ -23,8 +23,7 @@ final class SecretsBackendNativeTLSDiagnostics
         }
         // First probe uses the exact delivery authentication policy. Never send application bytes.
         foreach([true,false]as$verified){
-            $ssl=['SNI_enabled'=>true,'peer_name'=>$host,'capture_peer_cert'=>true,'capture_peer_cert_chain'=>true,'verify_peer'=>$verified&&$policy['mode']==='strict','verify_peer_name'=>$verified&&$policy['mode']==='strict','allow_self_signed'=>!$verified||$policy['mode']==='pinned'];
-            if($verified&&$policy['mode']==='pinned')$ssl['peer_fingerprint']=['sha256'=>$policy['fingerprint']];
+            $ssl=['SNI_enabled'=>true,'peer_name'=>$host,'capture_peer_cert'=>true,'capture_peer_cert_chain'=>true,'verify_peer'=>$verified,'verify_peer_name'=>$verified,'allow_self_signed'=>!$verified];
             $context=stream_context_create(['ssl'=>$ssl]);$warnings='';$socket=false;
             for($i=0;$i<32&&openssl_error_string()!==false;++$i){}
             set_error_handler(static function(int $n,string $text)use(&$warnings):bool{$warnings=substr($warnings.' '.$text,0,8192);return true;});

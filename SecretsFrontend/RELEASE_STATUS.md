@@ -1,12 +1,18 @@
 # Native Secrets — current release status
 
-Current branch release **5.4.6 build 22** on **migration/legacy-sec-replacement**. This is the native-only replacement preserving the original module GUID, SEC prefix and installed instance IDs.
+Current branch release **5.4.6 build 23** on **migration/legacy-sec-replacement**. This is the native-only replacement preserving the original module GUID, SEC prefix and installed instance IDs.
 
 The native vault is in production use. Supplied four-node reports record completed setup; the later Heartbeat Overview reports Production system, Vault ready, three synchronized connections and full Magic access. Production labels derive from the saved local unfrozen application-write grant, not audit certification. Production121, Heartbeat and Test Hermitage migration were owner-confirmed. Hermitage's native participation is observed; its final unchanged-SEC application acceptance is not separately recorded.
 
+## Build 23: mandatory strict peer HTTPS
+
+After the owner corrected the served certificate chains and reported strict cURL success on all four servers, native peer delivery and emergency reads always require certificate chain and hostname verification. Existing saved pin exceptions are interpreted as strict, including emergency capsules; new exceptions are rejected. The chain-verification checkbox and fingerprint dialog have been removed. No re-pairing or per-connection approval is required. Update all four installations. Validated YE1/YE2 issuer completion, native HTTPS listener recognition, generous transport timeouts and compact passkey authorization are retained. The isolated certificate-observation diagnostic still sends no HTTP or secrets and grants no trust.
+
+Regression coverage includes old stored exceptions, primary/Magic failover, emergency reads, rejection of new pin requests and removal of browser controls. Real loopback TLS checks require valid chains, roots, names and dates even with old pin metadata. These automated checks do not constitute a new live deployment test.
+
 ## Build 22: automatic completion for YE1 and YE2
 
-For servers that present only a Let's Encrypt YE1 or YE2 leaf, the module completes the chain and verifies it against the configured trust roots. Leave certificate chain verification enabled. Fingerprint entry is unnecessary for these issuers.
+For servers that present only a Let's Encrypt YE1 or YE2 leaf, the module completes the chain and verifies it against the configured trust roots. Leave certificate chain verification enabled. No fingerprint exception is available from build 23.
 
 ## Build 20: compact authorization
 
@@ -27,6 +33,8 @@ Protected scripts/pages using existing login-URL APIs open the separate approxim
 - Native Symcon HTTPS recognition without standard PHP flags, including NAT/Docker and IPv4-mapped tcp6 sockets, with strict peer TLS and validated YE1 and YE2 issuer completion.
 
 ## Executed evidence
+
+Build 23 local verification on 27 November 2026: the complete native-runtime suite (PHP 8.4.28), real loopback HTTPS certificate suite and all browser regression fixtures passed. The TLS suite confirms that saved pins cannot bypass root, hostname, expiry or chain validation. Native tests cover strict emergency reads from old capsules and primary/Magic failover. No live module installation was changed by these tests.
 
 For the earlier pinned build-16 runtime commit, hosted runs [frontend/backend](https://github.com/fisart/SymconSecrets/actions/runs/42390333793), [Portal navigation](https://github.com/fisart/SymconSecrets/actions/runs/42390333815) and [Native production acceptance](https://github.com/fisart/SymconSecrets/actions/runs/42390333817) passed. Tests cover supplied crypto with no database drivers, bounded memory, synthetic WebAuthn, encrypted recovery/faults, four-node sharing and protected browser behavior. Fifty focused listener checks include five actual dual-stack loopback sockets. This does not claim a physical key, external saved-file restore or real primary-outage login.
 

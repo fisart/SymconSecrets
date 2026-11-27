@@ -14,15 +14,17 @@ $no(fn()=>$peers[0]->exchange($peer,'ROUTES',['revision'=>'2','endpoints'=>['htt
 // Exact same sealed operation can retry through the primary after a lost Magic ACK.
 $blockPrimary=false;$targetId=$peers[0]->descriptor()['vaultId'];$s=$stores[1];$pin=str_repeat('a',64);
 $target=$s->read()['state']['pairing']['peers'][$targetId];
-$tlsOperation=['kind'=>'nativePeerHTTPSPolicy','peerId'=>$targetId,'pairingId'=>$target['pairingId'],'endpoint'=>$target['descriptor']['endpoint'],'policy'=>['mode'=>'pinned','fingerprint'=>$pin]];
-$no(fn()=>$operation(1,array_replace($tlsOperation,['policy'=>['mode'=>'pinned']])),'An unpinned bypass was accepted.');
+$tlsOperation=['kind'=>'nativePeerHTTPSPolicy','peerId'=>$targetId,'pairingId'=>$target['pairingId'],'endpoint'=>$target['descriptor']['endpoint'],'policy'=>['mode'=>'strict']];
+$no(fn()=>$operation(1,array_replace($tlsOperation,['policy'=>['mode'=>'pinned','fingerprint'=>$pin]])),'The retired pin exception could be enabled.');
 $no(fn()=>$operation(1,array_replace($tlsOperation,['pairingId'=>SecretsBackendCodec::uuid()])),'Stale pairing was accepted for a trust change.');
-$no(fn()=>$operation(1,array_replace($tlsOperation,['endpoint'=>$magic[0]])),'A primary pin was accepted for an alternative endpoint.');
-$approved=$operation(1,$tlsOperation);
-$ok(SecretsBackendNativeOperations::actionClass($approved['kind'])==='identity'&&$ops[1]->summary($approved)['tlsFingerprint']===$pin,'The administrator review did not bind the certificate fingerprint.');
-$ok($s->read()['state']['pairing']['peers'][$targetId]===array_replace($target,['httpsPolicy'=>$tlsOperation['policy']]),'Changing the primary TLS policy changed the peer identity or routes.');
+$no(fn()=>$operation(1,array_replace($tlsOperation,['endpoint'=>$magic[0]])),'A trust change targeted an alternative endpoint.');
+// Simulate an installation upgraded with an old saved exception, without rewriting pair identity.
+$cur=$s->read();$s->change($cur['head'],SecretsBackendCodec::uuid(),hash('sha256','old-pin-fixture'),static function($state)use($targetId,$pin){$state['pairing']['peers'][$targetId]['httpsPolicy']=['mode'=>'pinned','fingerprint'=>$pin];return $state;});
+$public=(new ReflectionMethod($ops[1],'pairingStatus'))->invoke($ops[1],$s->read()['state']);
+$publicPeer=array_values(array_filter($public['peers'],static fn($p)=>$p['id']===$targetId))[0];
+$ok($publicPeer['httpsPolicy']===['mode'=>'strict'],'An old saved pin was advertised as active.');
 $edit(1,['Magic transport'],'"IMMUTABLE-RETRY"');$drop=$targetId;$start=count($wire);$policyStart=count($tlsPolicies);$peers[1]->dispatch(1,$targetId,true);
-$attempts=array_slice($wire,$start);$policies=array_slice($tlsPolicies,$policyStart);$ok(count($attempts)===2&&$attempts[0]===$attempts[1],'Failover changed the immutable operation.');$ok($policies[0]['policy']===['mode'=>'strict']&&$policies[1]['policy']===$tlsOperation['policy'],'Primary pin was copied to the Magic hostname or lost during fallback.');$pump();
+$attempts=array_slice($wire,$start);$policies=array_slice($tlsPolicies,$policyStart);$ok(count($attempts)===2&&$attempts[0]===$attempts[1],'Failover changed the immutable operation.');$ok($policies[0]['policy']===['mode'=>'strict']&&$policies[1]['policy']===['mode'=>'strict'],'An old saved pin bypassed strict verification during primary/Magic failover.');$pump();
 $operation(1,array_replace($tlsOperation,['policy'=>['mode'=>'strict']]));
 $ok($s->read()['state']['pairing']['peers'][$targetId]['httpsPolicy']===['mode'=>'strict'],'Standard certificate verification could not be restored.');
 echo "PASS Magic peer outage: signed address publication, immutable pair identity, zero-primary synchronization and new pairing, stale/wrong route refusal, lost-ACK failover and per-host TLS policy\n";

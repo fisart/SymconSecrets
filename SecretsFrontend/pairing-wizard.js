@@ -100,37 +100,6 @@ function renderPeerWizard(){const n=snapshot?.native;if(!n){peerWizardPause();re
  if(Date.now()>peerWizardDeadline&&step>=3&&step<=5)$('peerProgressMessage').textContent='Automatic checking paused after 15 minutes. Select Check progress to continue.';
  peerWizardSchedule();
 }
-let peerHTTPSSelection = null;
-function openPeerHTTPS(peer) {
- if (!fullAdministration()) throw Error('Full administrator access is required.');
- peerHTTPSSelection = {peerId:peer.id,pairingId:peer.pairingId,endpoint:peer.descriptor.endpoint};
- $('peerHTTPSTarget').textContent = peer.name+' · '+peerHTTPSSelection.endpoint;
- $('peerHTTPSChain').checked = peer.httpsPolicy?.mode !== 'pinned';
- $('peerHTTPSPin').value = peer.httpsPolicy?.fingerprint || '';
- $('peerHTTPSPin').setCustomValidity('');
- $('peerHTTPSPinField').hidden = $('peerHTTPSChain').checked;
- $('peerHTTPSDialog').showModal();
-}
-$('peerHTTPSChain').addEventListener('change',()=>{
- $('peerHTTPSPinField').hidden = $('peerHTTPSChain').checked;
-});
-$('peerHTTPSPin').addEventListener('input',()=>$('peerHTTPSPin').setCustomValidity(''));
-$('peerHTTPSCancel').addEventListener('click',()=>$('peerHTTPSDialog').close());
-run($('peerHTTPSReview'),ticket=>{
- if (!peerHTTPSSelection || !fullAdministration()) throw Error('Select an approved peer first.');
- const verifyChain = $('peerHTTPSChain').checked;
- const input = $('peerHTTPSPin');
- const fingerprint = input.value.trim().replaceAll(':','').toLowerCase();
- if (!verifyChain && !/^[a-f0-9]{64}$/.test(fingerprint)) {
-  input.setCustomValidity('Enter a verified SHA-256 certificate fingerprint (64 hexadecimal digits).');
-  input.reportValidity();
-  return;
- }
- const policy = verifyChain ? {mode:'strict'} : {mode:'pinned',fingerprint};
- const operation = {kind:'nativePeerHTTPSPolicy',...peerHTTPSSelection,policy};
- $('peerHTTPSDialog').close();
- return review(operation,'Apply only to outgoing HTTPS for this exact direct connection.',ticket);
-});
 function renderPeerConnections(){
  const n=snapshot?.native;
  if(!n)return;
@@ -141,24 +110,15 @@ function renderPeerConnections(){
   const actions=[];
   if(p.state!=='REVOKED'){
    actions.push(['Connection status',()=>peerWizardResume(p.id)]);
-   if (p.active && fullAdministration() && !new URL(p.descriptor.endpoint).hostname.endsWith('.ipmagic.de')) {
-    actions.push(['HTTPS settings',()=>openPeerHTTPS(p)]);
-   }
    actions.push(['Remove connection',()=>review({kind:'nativeRevokePeer',peerId:p.id},'Stop this exact connection. Received copies already held by the other platform remain there.')]);
   }
-  const tls = p.active && p.httpsPolicy?.mode === 'pinned' ? ' · HTTPS certificate pinned' : '';
+  const tls = p.active ? ' · HTTPS chain and hostname verification required' : '';
   nativeRow(holder,p.name+' · '+peerConnectionLabel(p),p.descriptor.endpoint+' · last received '+(p.lastSync||'not yet')+tls+(p.health?' · '+peerHealthDetail(p):''),actions);
  }
  if(!n.peers.length)holder.textContent='No connections yet. Start with Step 1 above.';
 }
 function peerWizardApprovalText(summary){
- if (summary?.kind === 'nativePeerHTTPSPolicy') {
-  const mode = summary.tlsMode === 'pinned'
-   ? 'Chain verification off. Authenticate the exact certificate with SHA-256 '+summary.tlsFingerprint+'.'
-   : 'Chain verification on. Verify the certificate chain and hostname.';
-  return summary.peerURL+'\n'+mode;
- }
- if(!['nativeInvite','nativePair','nativeAcceptPair','nativeRevokePeer'].includes(summary?.kind))return '';const lines=[summary.kind==='nativeRevokePeer'?'Approve removal of this connection':summary.kind==='nativeInvite'?'Step 2 of 6 · Create the invitation':summary.kind==='nativePair'?'Step 3 of 6 · Request connection':'Step 4 of 6 · Approve connection',summary.kind==='nativeRevokePeer'?'Stop this connection. Received copies remain; your own Global and Local secrets are retained.':'Share: each platform’s complete Global section. Local secrets remain private.'];if(summary.peerURL)lines.push('Other platform: '+summary.peerURL);if(summary.peerVault)lines.push('Other vault: '+summary.peerVault);if(summary.tlsMode)lines.push('HTTPS: '+(summary.tlsMode==='pinned'?'approved certificate fingerprint':'normal certificate validation')+' · '+summary.tlsSource);if(summary.tlsFingerprint)lines.push('Certificate SHA-256: '+summary.tlsFingerprint);if(summary.comparison)lines.push('Connection check code: '+summary.comparison);return lines.join('\n');}
+ if(!['nativeInvite','nativePair','nativeAcceptPair','nativeRevokePeer'].includes(summary?.kind))return '';const lines=[summary.kind==='nativeRevokePeer'?'Approve removal of this connection':summary.kind==='nativeInvite'?'Step 2 of 6 · Create the invitation':summary.kind==='nativePair'?'Step 3 of 6 · Request connection':'Step 4 of 6 · Approve connection',summary.kind==='nativeRevokePeer'?'Stop this connection. Received copies remain; your own Global and Local secrets are retained.':'Share: each platform’s complete Global section. Local secrets remain private.'];if(summary.peerURL)lines.push('Other platform: '+summary.peerURL);if(summary.peerVault)lines.push('Other vault: '+summary.peerVault);if(summary.tlsMode)lines.push('HTTPS: certificate chain and hostname verification · '+summary.tlsSource);if(summary.comparison)lines.push('Connection check code: '+summary.comparison);return lines.join('\n');}
 run($('peerStartFirst'),()=>peerWizardStart('first'));run($('peerStartSecond'),()=>peerWizardStart('second'));run($('peerLeaveWizard'),()=>peerWizardStart(''));run($('peerNewInvitation'),()=>peerWizardStart('first'));
 $('peerResumeSelect').addEventListener('change',()=>{$('peerResume').disabled=!$('peerResumeSelect').value;});run($('peerResume'),()=>peerWizardResume($('peerResumeSelect').value));
 run($('peerInvitationNext'),()=>{if(!$('nativeInvitation').value.trim().startsWith('SECBPAIR1.'))throw Error('Paste the complete one-use invitation from Step 2 on the first platform.');peerWizardSetStep(3);renderPeerWizard();peerFeedback('Invitation accepted for review. Select 3 · Review and request pairing below.');});

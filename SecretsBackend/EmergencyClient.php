@@ -17,7 +17,7 @@ final class SecretsBackendEmergencyClient
             SecretsBackendNativePeer::endpoint($url);
             if(parse_url($url,PHP_URL_PATH)!=='/hook/secrets_peer_'.$c['descriptor']['backend'])throw new SecretsBackendEmergencyRefused('ENDPOINT_BINDING');
             $left=$deadline-microtime(true);if($left<0.1)throw new SecretsBackendNativePeerDeliveryFailure('timeout');
-            $policy=SecretsBackendNativeLegacyHTTPS::origin($url)===SecretsBackendNativeLegacyHTTPS::origin($c['descriptor']['endpoint'])?$c['httpsPolicy']:['mode'=>'strict'];
+            $policy=SecretsBackendNativeLegacyHTTPS::origin($url)===SecretsBackendNativeLegacyHTTPS::origin($c['descriptor']['endpoint'])?SecretsBackendNativeLegacyHTTPS::effectivePolicy($c['httpsPolicy']??['mode'=>'strict']):['mode'=>'strict'];
             try{$raw=($this->transport)($url,$bytes,$policy,min(6.0,SecretsBackendNativeLegacyHTTPS::timeout($url),$left));}
             catch(SecretsBackendNativePeerDeliveryFailure $e){
                 if($e->problem==='http'&&!in_array($e->httpStatus,[429,502,503,504],true))throw new SecretsBackendEmergencyRefused('REMOTE_REFUSED');

@@ -203,7 +203,7 @@ final class SecretsBackendNativePeer
                     $row=self::peerRecord($pair,$pair['b'],SecretsBackendPeerName::address($pair['b']['endpoint']),'PENDING_APPROVAL');$row+=['requestDigest'=>$digest,'requestId'=>$m['id'],'invitationId'=>$payload['invitationId'],'expires'=>$payload['expires']];
                     // Preserve only an already approved local TLS policy for this exact HTTPS authority.
                     $previous=$s['pairing']['peers'][$m['sender']]??null;
-                    if(isset($previous['httpsPolicy'])&&SecretsBackendNativeLegacyHTTPS::origin($previous['descriptor']['endpoint'])===SecretsBackendNativeLegacyHTTPS::origin($row['descriptor']['endpoint']))$row['httpsPolicy']=$previous['httpsPolicy'];
+                    if(isset($previous['httpsPolicy'])&&SecretsBackendNativeLegacyHTTPS::origin($previous['descriptor']['endpoint'])===SecretsBackendNativeLegacyHTTPS::origin($row['descriptor']['endpoint']))$row['httpsPolicy']=SecretsBackendNativeLegacyHTTPS::effectivePolicy($previous['httpsPolicy']);
                     $s['pairing']['peers'][$m['sender']]=$row;unset($s['stream']['next'][$m['sender']],$s['stream']['queuedDigest'][$m['sender']],$s['native']['deliveryReceipts'][$m['sender']]);return $s;
                 },['action'=>'peer-request','actor'=>$m['sender'],'target'=>$pair['id']]);
             }
@@ -327,7 +327,7 @@ final class SecretsBackendNativePeer
         $target=$peer['descriptor'];$m=$this->envelope($target,$kind,$peer['pairingId'],$peer['epoch'],$id,$sequence,$payload);$bytes=SecretsBackendCodec::json($m);
         if($this->transport===null)throw new SecretsBackendNativePeerDeliveryFailure('transport');
         $routes=$peer['routes']['endpoints']??[$target['endpoint']];$failure=null;$attempts=[];foreach($routes as$endpoint){$route=$target;$route['endpoint']=$endpoint;
-        $started=microtime(true);$responded=false;try{$policy=SecretsBackendNativeLegacyHTTPS::origin($endpoint)===SecretsBackendNativeLegacyHTTPS::origin($target['endpoint'])?($peer['httpsPolicy']??['mode'=>'strict']):['mode'=>'strict'];$response=($this->transport)($route,$bytes,$policy);$responded=true;
+        $started=microtime(true);$responded=false;try{$policy=SecretsBackendNativeLegacyHTTPS::origin($endpoint)===SecretsBackendNativeLegacyHTTPS::origin($target['endpoint'])?SecretsBackendNativeLegacyHTTPS::effectivePolicy($peer['httpsPolicy']??['mode'=>'strict']):['mode'=>'strict'];$response=($this->transport)($route,$bytes,$policy);$responded=true;
 $reply=SecretsFrontendConfiguration::decodeBounded($response,65536,32);self::exact($reply,['format','kind','sender','receiver','pairingId','epoch','id','sequence','payload','signature']);
         if($reply['format']!=='SECB.Peer.1'||$reply['kind']!=='REPLY'||$reply['sender']!==$target['vaultId']||$reply['receiver']!==$this->descriptor()['vaultId']||$reply['pairingId']!==$peer['pairingId']||$reply['epoch']!==$peer['epoch']||$reply['id']!==$id||$reply['sequence']!==$sequence)throw new RuntimeException('Peer reply was misbound.');
         self::verify($reply,$target['signKey']);$body=SecretsFrontendConfiguration::decode($this->store->openPeer($reply['payload']));
